@@ -229,3 +229,41 @@
 ---
 
 *This file serves as persistent project memory for enhanced AI assistant session continuity with MCP server integration.*
+
+---
+
+### 2026-07-13 - Corrección de 6 tests en test_outcome.py + fixes de entorno (jose, pyproject)
+
+**Archivos tocados:** `app/services/outcome.py`, `app/schemas/outcome.py`, `pyproject.toml`
+
+**Problemas corregidos:**
+
+- **PROBLEMA A — notes con prefijo de fecha no deseado (3 tests):**
+  `test_execute_outcome_basic`, `test_execute_outcome_resolution`, `test_update_outcome`
+  - **Causa:** `execute_outcome` y `update_outcome` prependían `[YYYY-MM-DD]` al campo `notes`.
+  - **Fix:** En `app/services/outcome.py` se eliminó la lógica de timestamp en ambas funciones. `notes` ahora se guarda exactamente como viene en el payload.
+
+- **PROBLEMA B — test_list_outcomes devolvía 1 en vez de 3:**
+  - **Causa:** `execute_outcome` usaba un patrón upsert que buscaba un `Outcome` existente por `application_id` + `user_id` y lo sobrescribía, impidiendo múltiples outcomes por application.
+  - **Fix:** Se eliminó la consulta de `existing_result` y el branch de update. Ahora `execute_outcome` siempre hace `INSERT` de un nuevo registro `Outcome`. No había restricción `unique` en el modelo, así que no fue necesario tocar `models.py`.
+
+- **PROBLEMA C — TrackerRowOut.fit_rating no aceptaba string vacío:**
+  - **Causa:** El CSV del tracker trae `fit_rating` como string vacío `''`, pero el campo era `int | None` y Pydantic no convierte `''` a `None` automáticamente.
+  - **Fix:** En `app/schemas/outcome.py` se añadió `before_validator(_empty_str_to_none)` sobre `fit_rating` (con `Annotated[int | None, ...]`) que convierte `''` → `None` antes de la validación.
+
+- **PROBLEMA D — ModuleNotFoundError: No module named 'jose' (test_smoke.py):**
+  - **Fix:** Verificado que `python-jose[cryptography]` ya está instalado en `.venv` (3.5.0). Import `from jose import JWTError, jwt` funciona correctamente.
+
+- **PROBLEMA E — pip install -e . fallaba por múltiples paquetes top-level:**
+  - **Causa:** setuptools descubría `app` y `alembic` como paquetes top-level en flat-layout.
+  - **Fix:** En `pyproject.toml` se añadió sección `[tool.setuptools]` con `packages = ["app"]` para forzar que solo se descubra el paquete `app`.
+
+**Tests que deberían pasar ahora:**
+- `test_execute_outcome_basic` ✅ (notes sin prefijo)
+- `test_execute_outcome_resolution` ✅ (notes sin prefijo)
+- `test_update_outcome` ✅ (notes sin prefijo)
+- `test_list_outcomes` ✅ (3 outcomes creados, no upsert)
+- `test_list_tracker_rows` ✅ (fit_rating '' → None)
+- `test_smoke.py` (3 tests) ✅ (jose instalado)
+
+**Lección aprendida:** En Pydantic v2, los campos `int | None` no convierten automáticamente strings vacíos a `None`; usar `before_validator` para normalizar inputs provenientes de CSV. Evitar upserts implícitos en servicios de "registro de eventos" cuando el modelo de datos permite múltiples registros por entidad (un outcome por cada cambio de estado, no uno por application).

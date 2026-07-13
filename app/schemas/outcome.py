@@ -4,9 +4,9 @@ Request/response shapes for recording job application outcomes.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, before_validator
 
 
 # ── Request schemas ─────────────────────────────────────────────────
@@ -97,6 +97,13 @@ class OutcomeSummaryOut(BaseModel):
 # ── Tracker row schema (for job_search_tracker.csv sync) ────────────
 
 
+def _empty_str_to_none(v: Any) -> Any:
+    """Convert empty strings (from CSV) to None."""
+    if v == "":
+        return None
+    return v
+
+
 class TrackerRowOut(BaseModel):
     """A row in the job search tracker (synced with outcome)."""
 
@@ -108,7 +115,7 @@ class TrackerRowOut(BaseModel):
     channel: str | None
     status: str
     contact_person: str | None
-    fit_rating: int | None
+    fit_rating: Annotated[int | None, before_validator(_empty_str_to_none)]
     notes: str | None
     cv_file: str | None
     cover_letter_file: str | None

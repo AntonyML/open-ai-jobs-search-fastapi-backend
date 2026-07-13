@@ -132,26 +132,13 @@ async def execute_outcome(
     if job is None:
         raise NotFoundError("Job posting not found.")
 
-    # 4. Check if outcome already exists (upsert pattern)
-    existing_result = await db.execute(
-        select(Outcome).where(
-            Outcome.application_id == payload.application_id,
-            Outcome.user_id == user_id,
-        )
+    # 4. Always create a new outcome record (one per status change / progress update)
+    outcome = Outcome(
+        user_id=user_id,
+        application_id=payload.application_id,
+        status=payload.status,
     )
-    outcome = existing_result.scalar_one_or_none()
-
-    if outcome is None:
-        # Create new outcome
-        outcome = Outcome(
-            user_id=user_id,
-            application_id=payload.application_id,
-            status=payload.status,
-        )
-        db.add(outcome)
-    else:
-        # Update existing outcome
-        outcome.status = payload.status
+    db.add(outcome)
 
     # 5. Update fields from payload
     if payload.date_resolved:
@@ -167,13 +154,8 @@ async def execute_outcome(
     if payload.offer_received_date:
         outcome.offer_received_date = payload.offer_received_date
     if payload.notes is not None:
-        # Append to existing notes with timestamp
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        new_note = f"\n\n[{timestamp}] {payload.notes}"
-        if outcome.notes:
-            outcome.notes += new_note
-        else:
-            outcome.notes = f"[{timestamp}] {payload.notes}"
+        # Store notes exactly as received, no timestamp prefix
+        outcome.notes = payload.notes
     if payload.lessons_learned is not None:
         outcome.lessons_learned = payload.lessons_learned
     if payload.valued_signals is not None:
@@ -247,12 +229,8 @@ async def update_outcome(
     if payload.offer_received_date:
         outcome.offer_received_date = payload.offer_received_date
     if payload.notes is not None:
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        new_note = f"\n\n[{timestamp}] {payload.notes}"
-        if outcome.notes:
-            outcome.notes += new_note
-        else:
-            outcome.notes = f"[{timestamp}] {payload.notes}"
+        # Store notes exactly as received, no timestamp prefix
+        outcome.notes = payload.notes
     if payload.lessons_learned is not None:
         outcome.lessons_learned = payload.lessons_learned
     if payload.valued_signals is not None:
