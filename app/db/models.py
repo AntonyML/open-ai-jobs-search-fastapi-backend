@@ -554,3 +554,66 @@ class Outcome(Base, TimestampMixin):
 
     # ── Relationships ───────────────────────────────────────────
     application: Mapped["Application"] = relationship(backref="outcomes")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COMPETENCY EXPANSION  (maps to /expand command)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class CompetencyExpansion(Base, TimestampMixin):
+    """Record of a competency expansion run — discovers hidden skills from documents and online presence.
+
+    Created by the /expand workflow. Scans documents (CV, LinkedIn, diplomas, references),
+    GitHub profile, and other URLs in the candidate profile. For each "experience item"
+    found, searches the web to extract implied competencies (direct lookup + inference).
+    Additive only — never modifies existing profile content, only extends it.
+    """
+
+    __tablename__ = "competency_expansions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    candidate_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("candidate_profiles.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # ── Sources scanned ──────────────────────────────────────────
+    # Which document folders were scanned
+    scanned_cv: Mapped[bool] = mapped_column(default=False)
+    scanned_linkedin: Mapped[bool] = mapped_column(default=False)
+    scanned_diplomas: Mapped[bool] = mapped_column(default=False)
+    scanned_references: Mapped[bool] = mapped_column(default=False)
+    scanned_github: Mapped[bool] = mapped_column(default=False)
+    scanned_other_urls: Mapped[bool] = mapped_column(default=False)
+
+    # ── Discovered experience items ──────────────────────────────
+    # Each item represents something that implies skills/competencies
+    # [{"source": "cv|linkedin|diplomas|references|github|other_url",
+    #   "type": "course|certification|job_bullet|project|volunteer|repo",
+    #   "title": "...", "description": "...", "date": "...", "source_file": "..."}]
+    experience_items: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Web-enriched competencies ────────────────────────────────
+    # For each experience item, the competencies discovered via web search
+    # [{"experience_item_id": "...", "competencies": ["...", "..."],
+    #   "source": "direct_lookup|inferred", "source_urls": ["..."]}]
+    enriched_competencies: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Proposed additions to profile ────────────────────────────
+    # Competencies ready to be added to the candidate profile (pending user approval)
+    # [{"category": "programming_ml|domain_expertise|software_tools",
+    #   "skill": "...", "proficiency": "...", "evidence": "...", "source": "..."}]
+    proposed_additions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Status ───────────────────────────────────────────────────
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, completed, failed
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    # ── Raw LLM response (for debugging) ─────────────────────────
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+    # ── Relationships ────────────────────────────────────────────
+    candidate: Mapped["CandidateProfile"] = relationship(backref="competency_expansions")
