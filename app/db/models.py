@@ -120,40 +120,40 @@ class CandidateProfile(Base, TimestampMixin):
     email: Mapped[str | None] = mapped_column(String(255))
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
     github_url: Mapped[str | None] = mapped_column(String(500))
-    languages: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)  # [{"language": "...", "proficiency": "..."}]
+    languages: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)  # [{"language": "...", "proficiency": "..."}]
     employment_status: Mapped[str | None] = mapped_column(String(100))
     constraints: Mapped[str | None] = mapped_column(Text)
 
     # ── Education ─────────────────────────────────────────────
     # [{"degree": "...", "period": "...", "institution": "...", "key_topics": "..."}]
-    education: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    education: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Professional Experience ───────────────────────────────
     # [{"title": "...", "company": "...", "start_date": "...", "end_date": "...",
     #   "location": "...", "bullets": ["...", "..."]}]
-    experience: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    experience: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Independent Projects ──────────────────────────────────
     # [{"name": "...", "description": "..."}]
-    projects: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    projects: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Technical Skills ──────────────────────────────────────
     # {"programming_ml": [{"language": "...", "proficiency": "...", "frameworks": ["..."]}],
     #  "domain_expertise": ["..."],
     #  "software_tools": ["..."]}
-    skills: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    skills: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
     # ── Publications ──────────────────────────────────────────
     # [{"authors": "...", "year": "...", "title": "...", "journal": "...", "doi": "..."}]
-    publications: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    publications: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Awards ────────────────────────────────────────────────
     # [{"award": "...", "event": "...", "year": "..."}]
-    awards: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    awards: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── References ────────────────────────────────────────────
     # [{"name": "...", "title": "...", "company": "...", "email": "...", "phone": "..."}]
-    references: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    references: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Profile statement (generated / tailored) ──────────────
     profile_statement: Mapped[str | None] = mapped_column(Text)
@@ -187,25 +187,25 @@ class BehavioralProfile(Base, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text)
 
     # Core drives: [{"drive": "...", "level": "...", "meaning": "..."}]
-    drives: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    drives: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # Strongest behaviors: [{"behavior": "...", "description": "..."}]
-    behaviors: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    behaviors: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # Work preferences: ["...", "..."]
-    work_preferences: Mapped[list[str] | None] = mapped_column(JSONB)
+    work_preferences: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # Growth areas: [{"area": "...", "positive_frame": "..."}]
-    growth_areas: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    growth_areas: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # Keywords that indicate strong fit: ["...", "..."]
-    strong_fit_keywords: Mapped[list[str] | None] = mapped_column(JSONB)
+    strong_fit_keywords: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # Keywords that indicate friction: ["...", "..."]
-    friction_keywords: Mapped[list[str] | None] = mapped_column(JSONB)
+    friction_keywords: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # Management style preferences: {"works_with": ["..."], "doesnt_work": ["..."]}
-    management_preferences: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    management_preferences: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -232,7 +232,7 @@ class StarExample(Base, TimestampMixin):
     result: Mapped[str] = mapped_column(Text)
 
     # Question types this example is useful for: ["teamwork", "technical challenge", ...]
-    use_for: Mapped[list[str] | None] = mapped_column(JSONB)
+    use_for: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -269,7 +269,7 @@ class JobPosting(Base, TimestampMixin):
 
     # Full posting text (from detail fetch)
     description: Mapped[str | None] = mapped_column(Text)
-    requirements: Mapped[list[str] | None] = mapped_column(JSONB)
+    requirements: Mapped[list[str] | None] = mapped_column(FlexJSON)
     employment_type: Mapped[str | None] = mapped_column(String(50))  # full-time, part-time, ...
 
     # ── Language ─────────────────────────────────────────────
@@ -282,7 +282,7 @@ class JobPosting(Base, TimestampMixin):
     rank_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # ── Raw scraper output (for debugging / re-parsing) ──────
-    raw_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    raw_data: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
 
 class ScrapeRun(Base, TimestampMixin):
@@ -305,7 +305,7 @@ class ScrapeRun(Base, TimestampMixin):
     broad: Mapped[bool] = mapped_column(default=False)
 
     # ── Results ───────────────────────────────────────────────
-    portals_queried: Mapped[list[str]] = mapped_column(JSONB)  # ["linkedin", "jobindex", ...]
+    portals_queried: Mapped[list[str]] = mapped_column(FlexJSON)  # ["linkedin", "jobindex", ...]
     jobs_found: Mapped[int] = mapped_column(default=0)
     jobs_new: Mapped[int] = mapped_column(default=0)  # after dedup
     jobs_expired: Mapped[int] = mapped_column(default=0)
@@ -357,16 +357,16 @@ class RankEvaluation(Base, TimestampMixin):
     deadline_urgent: Mapped[bool] = mapped_column(default=False)
 
     # ── LLM-generated insights ────────────────────────────────
-    strengths: Mapped[list[str] | None] = mapped_column(JSONB)  # max 3
-    gaps: Mapped[list[str] | None] = mapped_column(JSONB)  # max 3
-    missing_keywords: Mapped[list[str] | None] = mapped_column(JSONB)  # max 5
-    red_flags: Mapped[list[str] | None] = mapped_column(JSONB)  # max 3
+    strengths: Mapped[list[str] | None] = mapped_column(FlexJSON)  # max 3
+    gaps: Mapped[list[str] | None] = mapped_column(FlexJSON)  # max 3
+    missing_keywords: Mapped[list[str] | None] = mapped_column(FlexJSON)  # max 5
+    red_flags: Mapped[list[str] | None] = mapped_column(FlexJSON)  # max 3
 
     # ── Language ──────────────────────────────────────────────
     language: Mapped[str | None] = mapped_column(String(10))
 
     # ── Raw LLM response (for debugging) ──────────────────────
-    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
     # ── Relationships ─────────────────────────────────────────
     job_posting: Mapped["JobPosting"] = relationship(backref="rank_evaluation")
@@ -399,11 +399,11 @@ class Application(Base, TimestampMixin):
 
     # ── Tailored content ──────────────────────────────────────
     # The rewritten experience section using X-Y-Z formula
-    tailored_experience: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    tailored_experience: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
     # Missing keywords that were incorporated (and where)
-    incorporated_keywords: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    incorporated_keywords: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
     # Red flags that were addressed
-    addressed_red_flags: Mapped[list[str] | None] = mapped_column(JSONB)
+    addressed_red_flags: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # ── Generated files ───────────────────────────────────────
     cv_tex_path: Mapped[str | None] = mapped_column(String(500))
@@ -454,45 +454,45 @@ class InterviewPrep(Base, TimestampMixin):
     stage: Mapped[str] = mapped_column(String(50))  # phone_screen, technical, case, final_round
     interview_date: Mapped[str | None] = mapped_column(String(20))  # YYYY-MM-DD
     interview_format: Mapped[str | None] = mapped_column(String(20))  # phone, video, onsite
-    interviewer_names: Mapped[list[str] | None] = mapped_column(JSONB)
+    interviewer_names: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # ── Company research (interview-focused) ──────────────────
-    company_research: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    company_research: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
     # Verified conversation hooks: [{"topic": "...", "source_url": "..."}]
-    conversation_hooks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    conversation_hooks: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Likely questions ──────────────────────────────────────
     # [{"question": "...", "source": "feedback|gaps|requirements|stage", "priority": "high|medium|low"}]
-    likely_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    likely_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── STAR answer mapping ───────────────────────────────────
     # [{"question": "...", "star_example_id": "...", "star_example_title": "..."}]
-    star_mapping: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    star_mapping: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── New STAR drafts (for questions not covered by existing examples) ────
     # [{"question": "...", "draft_situation": "...", "draft_task": "...", "draft_action": "...", "draft_result": "..."}]
-    new_star_drafts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    new_star_drafts: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Consistency brief ─────────────────────────────────────
     # Claims from submitted CV/cover letter that interviewer will probe
-    consistency_brief: Mapped[list[str] | None] = mapped_column(JSONB)
+    consistency_brief: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # ── Tough questions (customized) ──────────────────────────
     # [{"question": "...", "answer": "..."}]
-    tough_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    tough_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Questions to ask interviewer ──────────────────────────
     # [{"question": "...", "category": "role|team|tech|culture", "why_ask": "..."}]
-    questions_to_ask: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    questions_to_ask: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Logistics ─────────────────────────────────────────────
-    logistics: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    logistics: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
     # ── Mock interview transcript (optional) ──────────────────
     mock_transcript: Mapped[str | None] = mapped_column(Text)
 
     # ── Raw LLM response (for debugging) ──────────────────────
-    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
     # ── Relationships ─────────────────────────────────────────
     application: Mapped["Application"] = relationship(backref="interview_preps")
@@ -553,7 +553,7 @@ class Outcome(Base, TimestampMixin):
 
     # ── Signals about what the company valued ───────────────────
     # Concrete observations from the process — feeds /setup calibration
-    valued_signals: Mapped[list[str] | None] = mapped_column(JSONB)
+    valued_signals: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # ── Relationships ───────────────────────────────────────────
     application: Mapped["Application"] = relationship(backref="outcomes")
@@ -597,26 +597,26 @@ class CompetencyExpansion(Base, TimestampMixin):
     # [{"source": "cv|linkedin|diplomas|references|github|other_url",
     #   "type": "course|certification|job_bullet|project|volunteer|repo",
     #   "title": "...", "description": "...", "date": "...", "source_file": "..."}]
-    experience_items: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    experience_items: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Web-enriched competencies ────────────────────────────────
     # For each experience item, the competencies discovered via web search
     # [{"experience_item_id": "...", "competencies": ["...", "..."],
     #   "source": "direct_lookup|inferred", "source_urls": ["..."]}]
-    enriched_competencies: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    enriched_competencies: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Proposed additions to profile ────────────────────────────
     # Competencies ready to be added to the candidate profile (pending user approval)
     # [{"category": "programming_ml|domain_expertise|software_tools",
     #   "skill": "...", "proficiency": "...", "evidence": "...", "source": "..."}]
-    proposed_additions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    proposed_additions: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Status ───────────────────────────────────────────────────
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, completed, failed
     error_message: Mapped[str | None] = mapped_column(Text)
 
     # ── Raw LLM response (for debugging) ─────────────────────────
-    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
     # ── Relationships ────────────────────────────────────────────
     candidate: Mapped["CandidateProfile"] = relationship(backref="competency_expansions")
@@ -660,31 +660,31 @@ class Upskill(Base, TimestampMixin):
     # ── Hard skill gaps (Pass 1) ──────────────────────────────────
     # [{"skill": "...", "type": "hard", "priority": "Critical|High|Medium|Low",
     #   "source_jobs": ["job_id1", "job_id2"], "frequency": 3, "fit_weight": 2.5}]
-    hard_skill_gaps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    hard_skill_gaps: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Synthesized gaps (Pass 2) ─────────────────────────────────
     # [{"skill": "...", "type": "domain|soft|tooling|credential", "priority": "Critical|High|Medium|Low",
     #   "source": "LLM synthesis", "evidence": "..."}]
-    synthesized_gaps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    synthesized_gaps: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Combined gap heatmap ──────────────────────────────────────
     # [{"skill": "...", "type": "hard|domain|soft|tooling|credential", "priority": "Critical|High|Medium|Low",
     #   "gap_source": "4/5 jobs, score 3.2 | LLM synthesis"}]
-    gap_heatmap: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    gap_heatmap: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Learning plan ─────────────────────────────────────────────
     # [{"skill": "...", "type": "...", "priority": "...",
     #   "resources": [{"title": "...", "url": "...", "format": "course|video|article|certification",
     #                 "duration_hours": 10, "cost": "free|paid", "quality_score": 8}],
     #   "study_order": 1, "prerequisites": ["..."], "estimated_weeks": 4}]
-    learning_plan: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    learning_plan: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Status ────────────────────────────────────────────────────
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, completed, failed
     error_message: Mapped[str | None] = mapped_column(Text)
 
     # ── Raw LLM response (for debugging) ──────────────────────────
-    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
     # ── Relationships ─────────────────────────────────────────────
     candidate: Mapped["CandidateProfile"] = relationship(backref="upskills")

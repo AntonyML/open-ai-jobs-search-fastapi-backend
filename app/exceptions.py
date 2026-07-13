@@ -35,7 +35,7 @@ class ProviderAuthError(AppError):
 class ProfileIncompleteError(AppError):
     """The candidate profile is missing required fields for the operation."""
 
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "profile_incomplete"
 
 
@@ -84,7 +84,7 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
     if isinstance(exc, RequestValidationError):
         details = exc.errors()
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={
                 "error": "validation_error",
                 "message": "Request validation failed",
