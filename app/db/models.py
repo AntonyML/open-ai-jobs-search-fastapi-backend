@@ -617,3 +617,72 @@ class CompetencyExpansion(Base, TimestampMixin):
 
     # ── Relationships ────────────────────────────────────────────
     candidate: Mapped["CandidateProfile"] = relationship(backref="competency_expansions")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# UPSKILL  (maps to /upskill command)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class Upskill(Base, TimestampMixin):
+    """Record of an upskill analysis run — identifies skill gaps from tracked jobs and generates a learning plan.
+
+    Created by the /upskill workflow. Analyses jobs in job_search_tracker.csv (or a single job URL)
+    against the candidate profile to identify skill gaps, then produces a heatmap of those gaps
+    and a prioritized learning plan with concrete, web-searched study resources and a recommended
+    study order.
+    """
+
+    __tablename__ = "upskills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    candidate_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("candidate_profiles.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # ── Mode ──────────────────────────────────────────────────────
+    # "aggregate" = analyse all jobs in job_search_tracker.csv
+    # "targeted"  = analyse a single job posting URL
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)  # "aggregate" | "targeted"
+
+    # ── Target job (for targeted mode) ───────────────────────────
+    target_job_posting_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("job_postings.id", ondelete="SET NULL")
+    )
+    target_job_url: Mapped[str | None] = mapped_column(String(1000))
+
+    # ── Hard skill gaps (Pass 1) ──────────────────────────────────
+    # [{"skill": "...", "type": "hard", "priority": "Critical|High|Medium|Low",
+    #   "source_jobs": ["job_id1", "job_id2"], "frequency": 3, "fit_weight": 2.5}]
+    hard_skill_gaps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Synthesized gaps (Pass 2) ─────────────────────────────────
+    # [{"skill": "...", "type": "domain|soft|tooling|credential", "priority": "Critical|High|Medium|Low",
+    #   "source": "LLM synthesis", "evidence": "..."}]
+    synthesized_gaps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Combined gap heatmap ──────────────────────────────────────
+    # [{"skill": "...", "type": "hard|domain|soft|tooling|credential", "priority": "Critical|High|Medium|Low",
+    #   "gap_source": "4/5 jobs, score 3.2 | LLM synthesis"}]
+    gap_heatmap: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Learning plan ─────────────────────────────────────────────
+    # [{"skill": "...", "type": "...", "priority": "...",
+    #   "resources": [{"title": "...", "url": "...", "format": "course|video|article|certification",
+    #                 "duration_hours": 10, "cost": "free|paid", "quality_score": 8}],
+    #   "study_order": 1, "prerequisites": ["..."], "estimated_weeks": 4}]
+    learning_plan: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Status ────────────────────────────────────────────────────
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, completed, failed
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    # ── Raw LLM response (for debugging) ──────────────────────────
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+    # ── Relationships ─────────────────────────────────────────────
+    candidate: Mapped["CandidateProfile"] = relationship(backref="upskills")
+    target_job_posting: Mapped["JobPosting | None"] = relationship()

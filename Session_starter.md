@@ -84,6 +84,7 @@
 | 2026-07-12 | ✅ FASE 3.5 — Interview (preparación entrevistas) completado |
 | 2026-07-12 | ✅ FASE 3.5 — Outcome (registro resultados) completado |
 | 2026-07-12 | ✅ FASE 3.5 — Expand (expansión competencias) completado |
+| 2026-07-12 | ✅ FASE 3.5 — Upskill (plan aprendizaje) completado |
 
 ---
 
@@ -98,7 +99,7 @@
 - [x] ✅ FASE 3.5 — Interview (preparación entrevistas)
 - [x] ✅ FASE 3.5 — Outcome (registro resultados)
 - [x] ✅ FASE 3.5 — Expand (expansión competencias)
-- [ ] ⏸️ FASE 3.5 — Upskill (plan aprendizaje)
+- [x] ✅ FASE 3.5 — Upskill (plan aprendizaje)
 - [ ] ⏸️ FASE 3.5 — Add-portal / Add-template / Reset
 - [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase
 - [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase
