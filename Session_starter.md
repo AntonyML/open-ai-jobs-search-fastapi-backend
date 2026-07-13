@@ -93,6 +93,7 @@
 ## 🚀 Recent Achievements
 | Date | Achievement |
 |------|-------------|
+| 2026-07-13 | ✅ FASE 4 completada: migración inicial de Alembic aplicada contra Supabase |
 | 2026-07-13 | ✅ Fix DATABASE_URL (.env) y router apply (import ApplicationOut + indentación) |
 | 2026-07-13 | ✅ Corrección de errores en fixtures de outcome tests, lógica de borrado en reset y SyntaxError en f-strings de LaTeX |
 | 2026-07-12 | ✅ Project initialized with session continuity infrastructure |
@@ -203,7 +204,7 @@
 - [x] ✅ FASE 3.5 — Expand (expansión competencias)
 - [x] ✅ FASE 3.5 — Upskill (plan aprendizaje)
 - [x] ✅ FASE 3.5 — Add-portal / Add-template / Reset (ya implementados)
-- [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase (generar migraciones Alembic)
+- [x] ✅ FASE 4 — Esquema de base de datos Supabase (migraciones Alembic generadas y aplicadas)
 
 ---
 

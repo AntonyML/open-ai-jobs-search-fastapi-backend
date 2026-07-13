@@ -82,3 +82,29 @@ uvicorn app.main:create_app --factory --reload
 - **NO usar Transaction Pooler** de PgBouncer con asyncpg (rompe prepared statements). Usar Session Pooler o Direct Connection.
 - **DATABASE_URL debe usar `postgresql+asyncpg://`** cuando se emplea `create_async_engine()` de SQLAlchemy 2.x. El scheme `postgresql://` hace que SQLAlchemy intente cargar `psycopg2` (síncrono) y falla con `InvalidRequestError`.
 - **Los routers deben importar schemas desde `app.schemas.*`**, no desde `app.services.*`, para los `response_model` de FastAPI.
+
+## Ejecutar el servidor
+Con el entorno virtual activado:
+`powershell
+uvicorn app.main:create_app --factory --reload
+`
+
+O usando la ruta directa al ejecutable del venv (sin activar previamente):
+`powershell
+.venv\Scripts\uvicorn app.main:create_app --factory --reload
+`
+
+El servidor se levanta en http://127.0.0.1:8000.
+Healthcheck: GET http://127.0.0.1:8000/api/v1/health
+
+## Migraciones de base de datos (Alembic)
+`ash
+# Generar nueva migración autogenerada
+alembic revision --autogenerate -m "Initial schema"
+
+# Aplicar migraciones pendientes
+alembic upgrade head
+
+# Ver historial de migraciones
+alembic history
+`
