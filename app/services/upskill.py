@@ -474,6 +474,114 @@ async def _run_learning_plan(
         raise LLMError(f"Learning plan generation failed: {e}") from e
 
 
+async def _execute_upskill_background(upskill_id: str) -> None:
+    """Background task to execute upskill analysis.
+
+    This function runs in a background task with its own database session.
+    """
+    from app.db.session import async_session_factory
+
+    async with async_session_factory() as db:
+        try:
+            # Get the upskill record
+            result = await db.execute(
+                select(Upskill).where(Upskill.id == upskill_id)
+            )
+            upskill = result.scalar_one_or_none()
+            if upskill is None:
+                return
+
+            # Get candidate profile
+            candidate_result = await db.execute(
+                select(CandidateProfile).where(CandidateProfile.user_id == upskill.user_id)
+            )
+            candidate = candidate_result.scalar_one_or_none()
+            if candidate is None:
+                upskill.status = "failed"
+                upskill.error_message = "Candidate profile not found"
+                await db.commit()
+                return
+
+            # Get candidate skills
+            candidate_skills = _extract_skills_from_profile(candidate)
+
+            # Select jobs to analyze
+            if upskill.mode == "targeted" and upskill.target_job_posting_id:
+                job_result = await db.execute(
+                    select(JobPosting).where(
+                        JobPosting.id == upskill.target_job_posting_id,
+                        JobPosting.user_id == upskill.user_id,
+                    )
+                )
+                jobs = [job_result.scalar_one_or_none()]
+                if not jobs[0]:
+                    upskill.status = "failed"
+                    upskill.error_message = "Target job posting not found"
+                    await db.commit()
+                    return
+            else:
+                # Aggregate mode: all ranked jobs for this user
+                job_result = await db.execute(
+                    select(JobPosting)
+                    .where(JobPosting.user_id == upskill.user_id)
+                    .where(JobPosting.status == "ranked")
+                    .order_by(JobPosting.rank_score.desc().nullslast())
+                )
+                jobs = list(job_result.scalars().all())
+
+            if not jobs:
+                upskill.status = "failed"
+                upskill.error_message = "No ranked jobs found"
+                await db.commit()
+                return
+
+            upskill.status = "running"
+            await db.flush()
+
+            # 5. Pass 1: Hard skill diff
+            job_requirements = []
+            for job in jobs:
+                eval_result = await db.execute(
+                    select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
+                )
+                evaluation = eval_result.scalar_one_or_none()
+                fit_rating = evaluation.overall_score if evaluation else 50
+
+                job_requirements.append({
+                    "id": job.id,
+                    "company": job.company,
+                    "title": job.title,
+                    "requirements": _extract_requirements_from_job(job),
+                    "fit_rating": fit_rating,
+                })
+
+            hard_gaps = await _run_pass1(db, candidate_skills, job_requirements)
+            upskill.hard_skill_gaps = hard_gaps
+            await db.flush()
+
+            # 6. Pass 2: LLM synthesis
+            job_context = "\n".join(f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements)
+            synthesized_gaps = await _run_pass2(db, candidate_skills, hard_gaps, job_context)
+            upskill.synthesized_gaps = synthesized_gaps
+            await db.flush()
+
+            # 7. Pass 3: Heatmap
+            heatmap = await _run_heatmap(db, hard_gaps, synthesized_gaps)
+            upskill.gap_heatmap = heatmap
+            await db.flush()
+
+            # 8. Pass 4: Learning plan
+            learning_plan = await _run_learning_plan(db, candidate, heatmap)
+            upskill.learning_plan = learning_plan
+            upskill.status = "completed"
+            await db.commit()
+
+        except Exception as e:
+            upskill.status = "failed"
+            upskill.error_message = str(e)
+            await db.commit()
+
+
 # ── Query helpers ───────────────────────────────────────────────────
 
 

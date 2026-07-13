@@ -505,6 +505,125 @@ async def execute_expand(
     return expansion
 
 
+async def _execute_expand_background(expansion_id: str) -> None:
+    """Background task to execute competency expansion.
+
+    This function runs in a background task with its own database session.
+    """
+    from app.db.session import async_session_factory
+
+    async with async_session_factory() as db:
+        try:
+            # Get the expansion record
+            result = await db.execute(
+                select(CompetencyExpansion).where(CompetencyExpansion.id == expansion_id)
+            )
+            expansion = result.scalar_one_or_none()
+            if expansion is None:
+                return
+
+            # Get candidate profile
+            candidate_result = await db.execute(
+                select(CandidateProfile).where(CandidateProfile.user_id == expansion.user_id)
+            )
+            candidate = candidate_result.scalar_one_or_none()
+            if candidate is None:
+                expansion.status = "failed"
+                expansion.error_message = "Candidate profile not found"
+                await db.commit()
+                return
+
+            expansion.status = "running"
+            await db.flush()
+
+            # 3. Scan all sources for experience items
+            all_items = []
+
+            if expansion.scanned_cv:
+                cv_items = _scan_cv_folder()
+                for item in cv_items:
+                    item["id"] = f"cv_{len(all_items)}"
+                all_items.extend(cv_items)
+
+            if expansion.scanned_linkedin:
+                li_items = _scan_linkedin_folder()
+                for item in li_items:
+                    item["id"] = f"li_{len(all_items)}"
+                all_items.extend(li_items)
+
+            if expansion.scanned_diplomas:
+                dip_items = _scan_diplomas_folder()
+                for item in dip_items:
+                    item["id"] = f"dip_{len(all_items)}"
+                all_items.extend(dip_items)
+
+            if expansion.scanned_references:
+                ref_items = _scan_references_folder()
+                for item in ref_items:
+                    item["id"] = f"ref_{len(all_items)}"
+                all_items.extend(ref_items)
+
+            if expansion.scanned_github:
+                gh_items = _scan_github_profile(candidate)
+                for item in gh_items:
+                    item["id"] = f"gh_{len(all_items)}"
+                all_items.extend(gh_items)
+
+            if expansion.scanned_other_urls:
+                url_items = _scan_other_urls(candidate)
+                for item in url_items:
+                    item["id"] = f"url_{len(all_items)}"
+                all_items.extend(url_items)
+
+            # Store experience items
+            expansion.experience_items = all_items
+            await db.flush()
+
+            # 4. Enrich competencies via LLM (if items found)
+            enriched = []
+            if all_items:
+                messages = build_competency_enrichment_prompt(all_items)
+                try:
+                    result: EnrichedCompetenciesLLMOutput = await llm_completion_structured(
+                        messages=messages,
+                        output_schema=EnrichedCompetenciesLLMOutput,
+                        provider=settings.llm_default_provider,
+                        temperature=0.3,
+                        max_tokens=3000,
+                    )
+                    enriched = result.enrichments
+                except Exception as e:
+                    raise LLMError(f"Competency enrichment failed: {e}") from e
+
+            # 5. Propose additions to profile
+            proposed = []
+            if enriched:
+                messages = build_proposed_additions_prompt(candidate, enriched)
+                try:
+                    result: ProposedAdditionsLLMOutput = await llm_completion_structured(
+                        messages=messages,
+                        output_schema=ProposedAdditionsLLMOutput,
+                        provider=settings.llm_default_provider,
+                        temperature=0.3,
+                        max_tokens=2000,
+                    )
+                    proposed = result.additions
+                except Exception as e:
+                    raise LLMError(f"Proposed additions failed: {e}") from e
+
+            # 6. Update expansion record
+            expansion.experience_items = all_items
+            expansion.enriched_competencies = [e.model_dump() for e in enriched]
+            expansion.proposed_additions = [p.model_dump() for p in proposed]
+            expansion.status = "completed"
+            await db.commit()
+
+        except Exception as e:
+            expansion.status = "failed"
+            expansion.error_message = str(e)
+            await db.commit()
+
+
 # ── Query helpers ───────────────────────────────────────────────────
 
 

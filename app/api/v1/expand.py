@@ -1,10 +1,13 @@
 """Expand router — endpoints for competency expansion from documents and online presence."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.db.models import CandidateProfile, CompetencyExpansion
 from app.db.session import get_db as _get_db
+from app.exceptions import ProfileIncompleteError
 from app.schemas.expand import (
     CompetencyExpansionOut,
     CompetencyExpansionSummaryOut,
@@ -22,6 +25,7 @@ router = APIRouter(prefix="/expand", tags=["expand"])
 )
 async def trigger_expand(
     payload: ExpandRequest,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
@@ -31,19 +35,37 @@ async def trigger_expand(
     for experience items, enriches them with competencies via web search, and proposes
     additions to the candidate profile.
 
-    Runs synchronously in the request. For production, consider moving to a background task.
+    Runs as a background task. Returns immediately with the expansion record (status=pending).
+    Poll GET /expand/{expansion_id} to check completion.
     """
-    result = await expand.execute_expand(
-        db=db,
-        user_id=user["sub"],
-        scan_cv=payload.scan_cv,
-        scan_linkedin=payload.scan_linkedin,
-        scan_diplomas=payload.scan_diplomas,
-        scan_references=payload.scan_references,
-        scan_github=payload.scan_github,
-        scan_other_urls=payload.scan_other_urls,
+    # 1. Get candidate profile
+    candidate_result = await db.execute(
+        select(CandidateProfile).where(CandidateProfile.user_id == user["sub"])
     )
-    return result
+    candidate = candidate_result.scalar_one_or_none()
+    if candidate is None:
+        raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
+
+    # 2. Create expansion record with pending status
+    expansion = CompetencyExpansion(
+        user_id=user["sub"],
+        candidate_id=candidate.id,
+        scanned_cv=payload.scan_cv,
+        scanned_linkedin=payload.scan_linkedin,
+        scanned_diplomas=payload.scan_diplomas,
+        scanned_references=payload.scan_references,
+        scanned_github=payload.scan_github,
+        scanned_other_urls=payload.scan_other_urls,
+        status="pending",
+    )
+    db.add(expansion)
+    await db.commit()
+    await db.refresh(expansion)
+
+    # 3. Add background task
+    background_tasks.add_task(expand._execute_expand_background, expansion.id)
+
+    return expansion
 
 
 @router.get("/{expansion_id}", response_model=CompetencyExpansionOut)
