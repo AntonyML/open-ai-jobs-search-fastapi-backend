@@ -45,14 +45,25 @@ async def db_session():
 # ── Helper: mock subprocess ─────────────────────────────────────────
 
 
+class MockProcess:
+    """Simple mock for asyncio subprocess."""
+    def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0):
+        self.returncode = returncode
+        self._stdout = stdout.encode() if isinstance(stdout, str) else stdout
+        self._stderr = stderr.encode() if isinstance(stderr, str) else stderr
+    
+    def __await__(self):
+        async def _await():
+            return self
+        return _await().__await__()
+    
+    async def communicate(self):
+        return self._stdout, self._stderr
+
+
 def mock_subprocess_run(stdout: str = "", stderr: str = "", returncode: int = 0):
     """Create a mock for asyncio.create_subprocess_exec."""
-    mock_proc = AsyncMock()
-    mock_proc.returncode = returncode
-    mock_proc.communicate = AsyncMock(return_value=(stdout.encode(), stderr.encode()))
-    # Make the mock awaitable and return itself when awaited
-    mock_proc.return_value = mock_proc
-    return mock_proc
+    return MockProcess(stdout=stdout, stderr=stderr, returncode=returncode)
 
 
 # ── Tests ───────────────────────────────────────────────────────────
@@ -165,28 +176,40 @@ async def test_execute_scrape_deduplicates(db_session):
 @pytest.mark.asyncio
 async def test_execute_scrape_handles_cli_error(db_session):
     """execute_scrape continues if a CLI tool fails."""
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        # First portal succeeds
-        linkedin_output = {
-            "meta": {"count": 1, "page": 1},
-            "results": [
-                {
-                    "id": "job-1",
-                    "title": "Python Dev",
-                    "company": "Acme",
-                    "location": "Copenhagen",
-                    "date": "2026-07-10",
-                    "url": "https://linkedin.com/jobs/1",
-                }
-            ],
-        }
-        # Second portal fails
-        mock_exec.side_effect = [
-            mock_subprocess_run(stdout=__import__("json").dumps(linkedin_output)),
-            mock_subprocess_run(stderr="API rate limited", returncode=1),
-        ]
-
-        run = await scrape.execute_scrape(
+    from app.schemas.scrape import ScraperOutput, ScraperResultItem
+    
+    # First portal succeeds
+    linkedin_output = ScraperOutput(
+        meta={"count": 1, "page": 1},
+        results=[
+            ScraperResultItem(
+                id="job-1",
+                title="Python Dev",
+                company="Acme",
+                location="Copenhagen",
+                date="2026-07-10",
+                url="https://linkedin.com/jobs/1",
+            )
+        ],
+    )
+    
+    # Second portal fails
+    from app.exceptions import ScraperError
+    
+    call_count = 0
+    
+    async def mock_run_scraper(portal, query=None, jobage_days=14, limit=20, extra_flags=None):
+        nonlocal call_count
+        if call_count == 0:
+            call_count += 1
+            return linkedin_output
+        else:
+            call_count += 1
+            raise ScraperError(f"Scraper '{portal}' failed: API rate limited")
+    
+    with patch("app.services.scrape.run_scraper", side_effect=mock_run_scraper):
+        with patch("app.services.scrape.check_bun_available", return_value=True):
+            run = await scrape.execute_scrape(
             db=db_session,
             user_id="test-user-id",
             portals=["linkedin", "jobindex"],

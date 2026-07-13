@@ -559,6 +559,7 @@ async def test_extract_addressed_red_flags():
 @pytest.mark.asyncio
 async def test_compile_latex_success():
     """compile_latex returns PDF path and page count on success."""
+    import tempfile
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
@@ -569,7 +570,7 @@ async def test_compile_latex_success():
             with patch("pathlib.Path.exists", return_value=True):
                 pdf_path, pages = await apply.compile_latex(
                     "dummy tex content",
-                    Path("/tmp"),
+                    Path(tempfile.gettempdir()),
                     "test_cv",
                     "lualatex",
                     2,
@@ -582,6 +583,7 @@ async def test_compile_latex_success():
 @pytest.mark.asyncio
 async def test_compile_latex_failure():
     """compile_latex raises LatexCompileError on compilation failure."""
+    import tempfile
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -591,7 +593,7 @@ async def test_compile_latex_failure():
         with pytest.raises(LatexCompileError):
             await apply.compile_latex(
                 "dummy tex content",
-                Path("/tmp"),
+                Path(tempfile.gettempdir()),
                 "test_cv",
                 "lualatex",
                 2,
@@ -601,6 +603,7 @@ async def test_compile_latex_failure():
 @pytest.mark.asyncio
 async def test_compile_latex_wrong_page_count():
     """compile_latex raises LatexCompileError on wrong page count."""
+    import tempfile
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
@@ -612,7 +615,7 @@ async def test_compile_latex_wrong_page_count():
                 with pytest.raises(LatexCompileError):
                     await apply.compile_latex(
                         "dummy tex content",
-                        Path("/tmp"),
+                        Path(tempfile.gettempdir()),
                         "test_cv",
                         "lualatex",
                         2,

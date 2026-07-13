@@ -558,7 +558,7 @@ async def test_compile_latex_success():
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
         mock_exec.return_value = mock_proc
 
-        with patch("app.services.expand._get_pdf_page_count", return_value=2):
+        with patch("app.services.apply._get_pdf_page_count", return_value=2):
             with patch("pathlib.Path.exists", return_value=True):
                 pdf_path, pages = await expand.compile_latex(
                     "dummy tex content",
@@ -575,6 +575,7 @@ async def test_compile_latex_success():
 @pytest.mark.asyncio
 async def test_compile_latex_failure():
     """compile_latex raises LatexCompileError on compilation failure."""
+    import tempfile
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         mock_proc = AsyncMock()
         mock_proc.returncode = 1
@@ -584,7 +585,7 @@ async def test_compile_latex_failure():
         with pytest.raises(expand.LatexCompileError):
             await expand.compile_latex(
                 "dummy tex content",
-                Path("/tmp"),
+                Path(tempfile.gettempdir()),
                 "test_cv",
                 "lualatex",
                 2,
@@ -605,7 +606,7 @@ async def test_compile_latex_wrong_page_count():
                 with pytest.raises(expand.LatexCompileError):
                     await expand.compile_latex(
                         "dummy tex content",
-                        Path("/tmp"),
+                        Path(tempfile.gettempdir()),
                         "test_cv",
                         "lualatex",
                         2,

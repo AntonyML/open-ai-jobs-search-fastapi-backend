@@ -180,7 +180,13 @@ def search_company(data, query, city=None):
     scored.sort(key=lambda x: (-x[0], x[1]["company"]))
 
     min_score = 30
-    return [entry for score, entry in scored if score >= min_score]
+    result = []
+    for score, entry in scored:
+        if score >= min_score:
+            entry_copy = entry.copy()
+            entry_copy["_match_score"] = score
+            result.append(entry_copy)
+    return result
 
 
 def format_entry(entry, metadata):

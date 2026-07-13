@@ -56,7 +56,11 @@ def _sync_lookup(company_name: str, city: str | None) -> dict[str, Any]:
         )
 
     data = load_data()
-    matches = search_company(data, company_name, city=city, top_n=1, threshold=70.0)
+    matches = search_company(data, company_name, city=city)
+
+    # Apply threshold and limit
+    matches = [m for m in matches if m.get("_match_score", 0) >= 70.0]
+    matches = matches[:1]
 
     if not matches:
         raise NotFoundError(f"No salary data found for '{company_name}'")
