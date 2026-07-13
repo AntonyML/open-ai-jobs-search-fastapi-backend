@@ -3,6 +3,7 @@
 Uses an in-memory SQLite database and mocks the LLM calls and web searches.
 """
 
+import re
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
@@ -268,9 +269,9 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
                 # First call: competency enrichment
                 # Parse the user message to find which item IDs are being enriched
                 user_msg = messages[1]["content"] if len(messages) > 1 else ""
-                # Extract item IDs from the message (they appear as "ID: cv_0")
-                import re
-                item_ids = re.findall(r'ID: (\w+)', user_msg)
+                # Extract item IDs from all messages (they appear in system prompt as "ID: cv_0")
+                full_text = " ".join(m.get("content", "") for m in messages)
+                item_ids = re.findall(r'ID:\s*(\w+)', full_text)
                 
                 # Return enrichments only for those items
                 all_enrichments = [
