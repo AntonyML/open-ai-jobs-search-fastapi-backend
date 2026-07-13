@@ -33,7 +33,6 @@ from app.schemas.upskill import (
     HardSkillGapsLLMOutput,
     LearningPlanLLMOutput,
     SynthesizedGapsLLMOutput,
-    UpskillRequest,
 )
 
 settings = get_settings()

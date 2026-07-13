@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user
+from app.db.session import get_db as _get_db
 from app.schemas.upskill import (
     UpskillOut,
     UpskillRequest,
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/upskill", tags=["upskill"])
 async def trigger_upskill(
     payload: UpskillRequest,
     user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(_get_db),
 ):
     """Trigger an upskill analysis run.
 
@@ -47,7 +48,7 @@ async def trigger_upskill(
 async def get_upskill(
     upskill_id: str,
     user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(_get_db),
 ):
     """Get an upskill analysis by ID."""
     return await upskill.get_upskill(db, upskill_id, user["sub"])
@@ -58,7 +59,7 @@ async def list_upskills(
     limit: int = 20,
     offset: int = 0,
     user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(_get_db),
 ):
     """List all upskill analyses for the authenticated user."""
     return await upskill.list_upskills(db, user["sub"], limit=limit, offset=offset)
