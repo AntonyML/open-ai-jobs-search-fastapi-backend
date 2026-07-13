@@ -4,6 +4,13 @@
 
 ---
 
+### 2026-07-13 - Fix .env DATABASE_URL y router apply
+- **Archivos tocados:** `.env`, `app/api/v1/apply.py`
+- **Solución:**
+  1. Se corrigió `.env` porque la `DATABASE_URL` usaba `postgresql://` en vez de `postgresql+asyncpg://`. SQLAlchemy 2.x con `create_async_engine()` requiere el driver explícito; sin él intentaba cargar `psycopg2` (síncrono) y fallaba con `InvalidRequestError: The asyncio extension requires an async driver to be used. The loaded 'psycopg2' is not async.`
+  2. Se corrigió `app/api/v1/apply.py` porque usaba `apply.ApplicationOut` (del servicio) en los `response_model` en vez de importar `ApplicationOut` desde `app.schemas.apply`, y además tenía indentación mixta (tabs + espacios) que causaba `IndentationError` al importar el módulo.
+- **Lección aprendida:** Con SQLAlchemy 2.x + asyncpg, la URL siempre debe usar el scheme `postgresql+asyncpg://` cuando se emplea `create_async_engine()`. Los routers deben importar los schemas de respuesta desde `app.schemas.*`, no desde `app.services.*`. Evitar mezclar tabs y espacios en archivos Python.
+
 ### 2026-07-13 - Corrección de tests de outcome, borrado en reset y SyntaxError en apply
 - **Archivos tocados:** `tests/unit/test_outcome.py`, `app/services/reset.py`, `app/services/apply.py`
 - **Solución:**
@@ -86,6 +93,7 @@
 ## 🚀 Recent Achievements
 | Date | Achievement |
 |------|-------------|
+| 2026-07-13 | ✅ Fix DATABASE_URL (.env) y router apply (import ApplicationOut + indentación) |
 | 2026-07-13 | ✅ Corrección de errores en fixtures de outcome tests, lógica de borrado en reset y SyntaxError en f-strings de LaTeX |
 | 2026-07-12 | ✅ Project initialized with session continuity infrastructure |
 | 2026-07-12 | ✅ FASE 0 — Auditoría del repo fuente completada |

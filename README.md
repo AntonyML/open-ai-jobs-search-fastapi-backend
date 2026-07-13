@@ -80,3 +80,5 @@ uvicorn app.main:create_app --factory --reload
 - **Hard stop al final de cada fase** — esperar aprobación.
 - **Secrets en `.env`**, nunca hardcodeados ni commiteados.
 - **NO usar Transaction Pooler** de PgBouncer con asyncpg (rompe prepared statements). Usar Session Pooler o Direct Connection.
+- **DATABASE_URL debe usar `postgresql+asyncpg://`** cuando se emplea `create_async_engine()` de SQLAlchemy 2.x. El scheme `postgresql://` hace que SQLAlchemy intente cargar `psycopg2` (síncrono) y falla con `InvalidRequestError`.
+- **Los routers deben importar schemas desde `app.schemas.*`**, no desde `app.services.*`, para los `response_model` de FastAPI.
