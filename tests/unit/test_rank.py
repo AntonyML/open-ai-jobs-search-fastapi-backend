@@ -43,7 +43,7 @@ async def db_session():
 
 
 @pytest.fixture
-def sample_candidate(db_session):
+async def sample_candidate(db_session):
     """Create a sample candidate profile."""
     candidate = CandidateProfile(
         user_id="test-user-id",
@@ -106,13 +106,13 @@ def sample_candidate(db_session):
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
-    db_session.commit()
-    db_session.refresh(candidate)
+    await db_session.commit()
+    await db_session.refresh(candidate)
     return candidate
 
 
 @pytest.fixture
-def sample_job(db_session, sample_candidate):
+async def sample_job(db_session, sample_candidate):
     """Create a sample job posting."""
     job = JobPosting(
         user_id="test-user-id",
@@ -137,8 +137,8 @@ def sample_job(db_session, sample_candidate):
         status="new",
     )
     db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
+    await db_session.commit()
+    await db_session.refresh(job)
     return job
 
 
@@ -262,7 +262,7 @@ async def test_execute_rank_llm_error_continues(db_session, sample_candidate, sa
         status="new",
     )
     db_session.add(job2)
-    db_session.commit()
+    await db_session.commit()
 
     with patch("app.services.rank.llm_completion_structured") as mock_llm:
         # First call succeeds, second fails
@@ -324,7 +324,7 @@ async def test_execute_rank_focus_area(db_session, sample_candidate):
         status="new",
     )
     db_session.add_all([job1, job2])
-    db_session.commit()
+    await db_session.commit()
 
     with patch("app.services.rank.llm_completion_structured") as mock_llm:
         mock_llm.return_value = mock_llm_output()
@@ -353,7 +353,7 @@ async def test_execute_rank_location_fail(db_session, sample_candidate):
         status="new",
     )
     db_session.add(job)
-    db_session.commit()
+    await db_session.commit()
 
     with patch("app.services.rank.llm_completion_structured") as mock_llm:
         mock_llm.return_value = mock_llm_output(location="FAIL")
@@ -381,7 +381,7 @@ async def test_execute_rank_deadline_urgent(db_session, sample_candidate):
         status="new",
     )
     db_session.add(job)
-    db_session.commit()
+    await db_session.commit()
 
     with patch("app.services.rank.llm_completion_structured") as mock_llm:
         mock_llm.return_value = mock_llm_output(deadline=urgent_deadline, deadline_urgent=True)
@@ -413,8 +413,8 @@ async def test_get_rank_evaluation(db_session, sample_candidate, sample_job):
         language="en",
     )
     db_session.add(eval_)
-    db_session.commit()
-    db_session.refresh(eval_)
+    await db_session.commit()
+    await db_session.refresh(eval_)
 
     fetched = await rank.get_rank_evaluation(db_session, sample_job.id, "test-user-id")
     assert fetched.id == eval_.id
@@ -445,7 +445,7 @@ async def test_list_ranked_jobs(db_session, sample_candidate):
             rank_verdict="Strong Fit" if score >= 75 else "Good Fit" if score >= 60 else "Moderate Fit",
         )
         db_session.add(job)
-    db_session.commit()
+    await db_session.commit()
 
     # All jobs
     jobs = await rank.list_ranked_jobs(db_session, "test-user-id", limit=10)
