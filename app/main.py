@@ -22,9 +22,13 @@ from app.exceptions import AppError, app_error_handler, validation_error_handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown logic for the app."""
-    # Startup: nothing yet (APScheduler will be wired in Fase 3)
-    yield
+    # Startup: start APScheduler for periodic scraping
+    from app.core.scheduler import scheduler_lifespan
+
+    async with scheduler_lifespan():
+        yield
     # Shutdown: dispose the SQLAlchemy engine
+    shutdown_scheduler()
     from app.db.session import engine
 
     await engine.dispose()
