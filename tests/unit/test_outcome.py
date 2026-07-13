@@ -419,22 +419,22 @@ async def test_execute_outcome_archives_outcome_md(db_session, sample_candidate,
                     ),
                 )
 
-    # Check outcome.md was created
-    apps_dir = Path(tmpdir)
-    company_slug = "techcorp"
-    role_slug = "senior_machine_learning_engineer"
-    app_dir = apps_dir / f"{company_slug}_{role_slug}"
-    outcome_md_path = app_dir / "outcome.md"
+                # Check outcome.md was created (inside the temp dir context)
+                apps_dir = Path(tmpdir)
+                company_slug = "techcorp"
+                role_slug = "senior_machine_learning_engineer"
+                app_dir = apps_dir / f"{company_slug}_{role_slug}"
+                outcome_md_path = app_dir / "outcome.md"
 
-    assert outcome_md_path.exists()
-    content = outcome_md_path.read_text(encoding="utf-8")
-    assert "Outcome: TechCorp — Senior Machine Learning Engineer" in content
-    assert "Status: hired" in content
-    assert "Date resolved: 2026-08-01" in content
-    assert "Accepted offer!" in content
-    assert "Tailoring CV worked." in content
-    assert "Tailored CV" in content
-    assert "STAR examples" in content
+                assert outcome_md_path.exists()
+                content = outcome_md_path.read_text(encoding="utf-8")
+                assert "Outcome: TechCorp — Senior Machine Learning Engineer" in content
+                assert "**Status:** hired" in content
+                assert "**Date resolved:** 2026-08-01" in content
+                assert "Accepted offer!" in content
+                assert "Tailoring CV worked." in content
+                assert "Tailored CV" in content
+                assert "STAR examples" in content
 
 
 @pytest.mark.asyncio

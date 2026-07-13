@@ -194,9 +194,8 @@
 - [x] ✅ FASE 3.5 — Outcome (registro resultados)
 - [x] ✅ FASE 3.5 — Expand (expansión competencias)
 - [x] ✅ FASE 3.5 — Upskill (plan aprendizaje)
-- [ ] ⏸️ FASE 3.5 — Add-portal / Add-template / Reset
-- [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase
-- [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase
+- [x] ✅ FASE 3.5 — Add-portal / Add-template / Reset (ya implementados)
+- [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase (generar migraciones Alembic)
 
 ---
 
@@ -232,6 +231,14 @@
 
 ---
 
+### 2026-07-13 - Corrección de test_execute_outcome_archives_outcome_md (test_outcome.py)
+- **Archivo tocado:** `tests/unit/test_outcome.py`
+- **Problema:** Las aserciones que verifican la creación del archivo `outcome.md` estaban FUERA del bloque `with tempfile.TemporaryDirectory() as tmpdir`. Al salir del bloque, el directorio temporal se elimina y el archivo ya no existe.
+- **Fix:** Moví las aserciones DENTRO del bloque `with`, antes de que el context manager cierre y elimine el directorio. También corregí la aserción de `Date resolved` para que coincida con el formato markdown real (`**Date resolved:** 2026-08-01`).
+- **Resultado:** Todos los 17 tests de `test_outcome.py` pasan ahora.
+
+---
+
 ### 2026-07-13 - Corrección de 6 tests en test_outcome.py + fixes de entorno (jose, pyproject)
 
 **Archivos tocados:** `app/services/outcome.py`, `app/schemas/outcome.py`, `pyproject.toml`
@@ -264,6 +271,7 @@
 - `test_update_outcome` ✅ (notes sin prefijo)
 - `test_list_outcomes` ✅ (3 outcomes creados, no upsert)
 - `test_list_tracker_rows` ✅ (fit_rating '' → None)
+- `test_execute_outcome_archives_outcome_md` ✅ (archivo .md creado correctamente)
 - `test_smoke.py` (3 tests) ✅ (jose instalado)
 
-**Lección aprendida:** En Pydantic v2, los campos `int | None` no convierten automáticamente strings vacíos a `None`; usar `before_validator` para normalizar inputs provenientes de CSV. Evitar upserts implícitos en servicios de "registro de eventos" cuando el modelo de datos permite múltiples registros por entidad (un outcome por cada cambio de estado, no uno por application).
+**Lección aprendida:** En Pydantic v2, los campos `int | None` no convierten automáticamente strings vacíos a `None`; usar `before_validator` para normalizar inputs provenientes de CSV. Evitar upserts implícitos en servicios de "registro de eventos" cuando el modelo de datos permite múltiples registros por entidad (un outcome por cada cambio de estado, no uno por application). En tests con `TemporaryDirectory`, las aserciones sobre archivos creados deben estar DENTRO del bloque `with`, antes de que el context manager elimine el directorio.

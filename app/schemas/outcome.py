@@ -6,7 +6,7 @@ Request/response shapes for recording job application outcomes.
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, before_validator
+from pydantic import BaseModel, BeforeValidator, Field
 
 
 # ── Request schemas ─────────────────────────────────────────────────
@@ -115,7 +115,7 @@ class TrackerRowOut(BaseModel):
     channel: str | None
     status: str
     contact_person: str | None
-    fit_rating: Annotated[int | None, before_validator(_empty_str_to_none)]
+    fit_rating: Annotated[int | None, BeforeValidator(_empty_str_to_none)]
     notes: str | None
     cv_file: str | None
     cover_letter_file: str | None
