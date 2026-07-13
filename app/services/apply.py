@@ -425,7 +425,7 @@ def _build_education_section(candidate: CandidateProfile) -> str:
         degree = edu.get("degree", "")
         topics = edu.get("key_topics", "")
 
-        entry = f"\\item{{\\cventry{{{period}}}{{{degree}}}{{{institution}}}{{}}{{}}{{\\vspace{{1pt}}\\begin{{itemize}}\\item {topics}\\end{{itemize}}}}}"
+        entry = f"\\item{{\\cventry{{{period}}}{{{degree}}}{{{institution}}}{{}}{{}}{{\\vspace{{1pt}}\\begin{{itemize}}\\item {topics}\\end{{itemize}}}}}}"
         entries.append(entry)
 
     return "\n\\vspace{3pt}\n".join(entries)

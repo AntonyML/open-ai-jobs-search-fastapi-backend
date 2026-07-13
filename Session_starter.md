@@ -4,6 +4,14 @@
 
 ---
 
+### 2026-07-13 - Corrección de tests de outcome, borrado en reset y SyntaxError en apply
+- **Archivos tocados:** `tests/unit/test_outcome.py`, `app/services/reset.py`, `app/services/apply.py`
+- **Solución:**
+  1. Se cambiaron las funciones fixture de `tests/unit/test_outcome.py` a `async def` agregando `await` a los métodos `commit()` y `refresh()` para asegurar que se generen los IDs en SQLite.
+  2. Se modificó `execute_reset` en `app/services/reset.py` para borrar en lote `BehavioralProfile` y `StarExample` usando la sentencia `delete` de SQLAlchemy y se cambió `db.flush()` por `db.commit()`.
+  3. Se balancearon las llaves en los f-strings de LaTeX en `app/services/apply.py` (línea 428) agregando la llave faltante para completar 6 llaves de cierre `}}}}}}`.
+- **Lección aprendida:** Siempre awaitar operaciones sobre `AsyncSession` en fixtures de pytest, usar consultas `delete` nativas para evitar desalineaciones con la sesión en borrados lógicos y balancear correctamente los escapes en f-strings para LaTeX (`}}` por cada `}`).
+
 ### 2026-07-12 - Tests fallaban por JSONB y patch frozen
 - **Archivos tocados:** `app/db/models.py`, `app/exceptions.py`, `tests/unit/test_add_portal.py`
 - **Solución:** Se cambió `JSONB` por `FlexJSON` (variant cross-engine) para soportar SQLite en tests; se cambió `HTTP_422_UNPROCESSABLE_ENTITY` por `HTTP_422_UNPROCESSABLE_CONTENT`; se reemplazó `patch.object(instancia, ...)` por `patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, ...)`.
@@ -78,6 +86,7 @@
 ## 🚀 Recent Achievements
 | Date | Achievement |
 |------|-------------|
+| 2026-07-13 | ✅ Corrección de errores en fixtures de outcome tests, lógica de borrado en reset y SyntaxError en f-strings de LaTeX |
 | 2026-07-12 | ✅ Project initialized with session continuity infrastructure |
 | 2026-07-12 | ✅ FASE 0 — Auditoría del repo fuente completada |
 | 2026-07-12 | ✅ FASE 1 — Scaffolding del proyecto completado |

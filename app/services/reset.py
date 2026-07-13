@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
@@ -212,20 +212,22 @@ async def execute_reset(
             profile = prof_res.scalar_one()
             
             # Delete associated BehavioralProfile if exists
-            bp_res = await db.execute(select(BehavioralProfile).where(BehavioralProfile.candidate_id == profile.id))
-            bp = bp_res.scalar_one_or_none()
-            if bp:
-                await db.delete(bp)
+            await db.execute(
+                delete(BehavioralProfile).where(
+                    BehavioralProfile.candidate_id == profile.id
+                )
+            )
 
             # Delete associated StarExamples if any exist
-            star_res = await db.execute(select(StarExample).where(StarExample.candidate_id == profile.id))
-            stars = list(star_res.scalars().all())
-            for star in stars:
-                await db.delete(star)
+            await db.execute(
+                delete(StarExample).where(
+                    StarExample.candidate_id == profile.id
+                )
+            )
 
             # Delete CandidateProfile
             await db.delete(profile)
-            await db.flush()
+            await db.commit()
             cleared.append("Database: CandidateProfile, BehavioralProfile, STAR Examples")
             
             # Reset workspace guidance files if found

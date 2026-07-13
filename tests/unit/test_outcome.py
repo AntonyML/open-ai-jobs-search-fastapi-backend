@@ -54,7 +54,7 @@ async def db_session():
 
 
 @pytest.fixture
-def sample_candidate(db_session):
+async def sample_candidate(db_session):
     """Create a sample candidate profile."""
     candidate = CandidateProfile(
         user_id="test-user-id",
@@ -117,13 +117,13 @@ def sample_candidate(db_session):
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
-    db_session.commit()
-    db_session.refresh(candidate)
+    await db_session.commit()
+    await db_session.refresh(candidate)
     return candidate
 
 
 @pytest.fixture
-def sample_job(db_session, sample_candidate):
+async def sample_job(db_session, sample_candidate):
     """Create a sample job posting."""
     job = JobPosting(
         user_id="test-user-id",
@@ -151,13 +151,13 @@ def sample_job(db_session, sample_candidate):
         rank_date=datetime.now(timezone.utc),
     )
     db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
+    await db_session.commit()
+    await db_session.refresh(job)
     return job
 
 
 @pytest.fixture
-def sample_evaluation(db_session, sample_candidate, sample_job):
+async def sample_evaluation(db_session, sample_candidate, sample_job):
     """Create a sample rank evaluation."""
     evaluation = RankEvaluation(
         job_posting_id=sample_job.id,
@@ -179,13 +179,13 @@ def sample_evaluation(db_session, sample_candidate, sample_job):
         raw_response={},
     )
     db_session.add(evaluation)
-    db_session.commit()
-    db_session.refresh(evaluation)
+    await db_session.commit()
+    await db_session.refresh(evaluation)
     return evaluation
 
 
 @pytest.fixture
-def sample_application(db_session, sample_candidate, sample_job, sample_evaluation):
+async def sample_application(db_session, sample_candidate, sample_job, sample_evaluation):
     """Create a sample application."""
     application = Application(
         user_id="test-user-id",
@@ -234,8 +234,8 @@ def sample_application(db_session, sample_candidate, sample_job, sample_evaluati
         language="en",
     )
     db_session.add(application)
-    db_session.commit()
-    db_session.refresh(application)
+    await db_session.commit()
+    await db_session.refresh(application)
     return application
 
 
