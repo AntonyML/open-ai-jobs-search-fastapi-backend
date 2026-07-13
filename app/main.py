@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as v1_router
+from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
 from app.exceptions import AppError, app_error_handler, validation_error_handler
 
@@ -22,12 +23,17 @@ from app.exceptions import AppError, app_error_handler, validation_error_handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown logic for the app."""
+    # Configure structured logging
+    configure_logging()
+
     # Startup: start APScheduler for periodic scraping
     from app.core.scheduler import scheduler_lifespan
 
     async with scheduler_lifespan():
         yield
     # Shutdown: dispose the SQLAlchemy engine
+    from app.core.scheduler import shutdown_scheduler
+
     shutdown_scheduler()
     from app.db.session import engine
 

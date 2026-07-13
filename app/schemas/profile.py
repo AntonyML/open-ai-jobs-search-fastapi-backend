@@ -5,8 +5,50 @@ These are the API boundary — never expose ORM models directly.
 
 from datetime import datetime
 from typing import Any
+from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
+import re
 
-from pydantic import BaseModel, EmailStr, Field
+
+# ── Validators ──────────────────────────────────────────────────────
+
+PHONE_REGEX = re.compile(r"^\+?[1-9]\d{1,14}$")  # E.164 format
+DATE_REGEX = re.compile(r"^\d{4}-\d{2}(-\d{2})?$")  # YYYY-MM or YYYY-MM-DD
+LINKEDIN_URL_REGEX = re.compile(r"^https?://(www\.)?linkedin\.com/in/[\w-]+/?$")
+GITHUB_URL_REGEX = re.compile(r"^https?://(www\.)?github\.com/[\w-]+/?$")
+
+
+def validate_phone(v: str | None) -> str | None:
+    if v is None:
+        return None
+    # Remove spaces and common separators
+    cleaned = re.sub(r"[\s\-\(\)]", "", v)
+    if not PHONE_REGEX.match(cleaned):
+        raise ValueError("Phone must be in E.164 format (e.g., +4512345678)")
+    return cleaned
+
+
+def validate_date_format(v: str | None) -> str | None:
+    if v is None:
+        return None
+    if not DATE_REGEX.match(v):
+        raise ValueError("Date must be in YYYY-MM or YYYY-MM-DD format")
+    return v
+
+
+def validate_linkedin_url(v: str | None) -> str | None:
+    if v is None:
+        return None
+    if not LINKEDIN_URL_REGEX.match(v):
+        raise ValueError("LinkedIn URL must be in format https://linkedin.com/in/username")
+    return v
+
+
+def validate_github_url(v: str | None) -> str | None:
+    if v is None:
+        return None
+    if not GITHUB_URL_REGEX.match(v):
+        raise ValueError("GitHub URL must be in format https://github.com/username")
+    return v
 
 
 # ── Nested models ───────────────────────────────────────────────────
@@ -23,6 +65,11 @@ class EducationEntry(BaseModel):
     institution: str
     key_topics: str | None = None
 
+    @field_validator("period", mode="before")
+    @classmethod
+    def validate_period(cls, v):
+        return validate_date_format(v)
+
 
 class ExperienceBullet(BaseModel):
     title: str
@@ -31,6 +78,11 @@ class ExperienceBullet(BaseModel):
     end_date: str | None = None
     location: str | None = None
     bullets: list[str] = []
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def validate_dates(cls, v):
+        return validate_date_format(v)
 
 
 class ProjectEntry(BaseModel):
@@ -62,8 +114,13 @@ class ReferenceEntry(BaseModel):
     name: str
     title: str | None = None
     company: str | None = None
-    email: str | None = None
+    email: EmailStr | None = None
     phone: str | None = None
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v):
+        return validate_phone(v)
 
 
 # ── Request schemas ─────────────────────────────────────────────────
@@ -75,7 +132,7 @@ class CandidateProfileCreate(BaseModel):
     full_name: str | None = None
     location: str | None = None
     phone: str | None = None
-    email: str | None = None
+    email: EmailStr | None = None
     linkedin_url: str | None = None
     github_url: str | None = None
     languages: list[LanguageEntry] | None = None
@@ -93,6 +150,21 @@ class CandidateProfileCreate(BaseModel):
     profile_statement: str | None = None
     setup_method: str | None = None  # "documents", "cv_import", "interview"
 
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v):
+        return validate_phone(v)
+
+    @field_validator("linkedin_url", mode="before")
+    @classmethod
+    def validate_linkedin(cls, v):
+        return validate_linkedin_url(v)
+
+    @field_validator("github_url", mode="before")
+    @classmethod
+    def validate_github(cls, v):
+        return validate_github_url(v)
+
 
 class CandidateProfileUpdate(BaseModel):
     """Partial update — only provided fields are changed."""
@@ -100,7 +172,7 @@ class CandidateProfileUpdate(BaseModel):
     full_name: str | None = None
     location: str | None = None
     phone: str | None = None
-    email: str | None = None
+    email: EmailStr | None = None
     linkedin_url: str | None = None
     github_url: str | None = None
     languages: list[LanguageEntry] | None = None
@@ -116,6 +188,21 @@ class CandidateProfileUpdate(BaseModel):
     references: list[ReferenceEntry] | None = None
 
     profile_statement: str | None = None
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_phone(cls, v):
+        return validate_phone(v)
+
+    @field_validator("linkedin_url", mode="before")
+    @classmethod
+    def validate_linkedin(cls, v):
+        return validate_linkedin_url(v)
+
+    @field_validator("github_url", mode="before")
+    @classmethod
+    def validate_github(cls, v):
+        return validate_github_url(v)
 
 
 # ── Response schemas ────────────────────────────────────────────────

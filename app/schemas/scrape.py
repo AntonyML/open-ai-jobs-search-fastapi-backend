@@ -6,7 +6,7 @@ Request/response shapes for scraping job postings via the Bun/TS CLIs.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 # ── Request schemas ─────────────────────────────────────────────────
@@ -51,7 +51,7 @@ class JobPostingOut(BaseModel):
     title: str
     company: str | None
     location: str | None
-    url: str | None
+    url: HttpUrl | None
     posting_date: str | None
     deadline: str | None
     description: str | None
@@ -76,7 +76,7 @@ class JobPostingSummary(BaseModel):
     title: str
     company: str | None
     location: str | None
-    url: str | None
+    url: HttpUrl | None
     posting_date: str | None
     status: str
     rank_score: float | None

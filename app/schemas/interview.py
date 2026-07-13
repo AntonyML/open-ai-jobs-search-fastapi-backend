@@ -6,7 +6,7 @@ Request/response shapes for interview preparation.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Request schemas ─────────────────────────────────────────────────
@@ -22,6 +22,36 @@ class InterviewPrepRequest(BaseModel):
     interview_date: str | None = Field(None, description="YYYY-MM-DD")
     interview_format: str | None = Field(None, description="phone, video, onsite")
     interviewer_names: list[str] | None = Field(None, description="Names and titles if known")
+
+    @field_validator("stage")
+    @classmethod
+    def validate_stage(cls, v):
+        valid_stages = {"phone_screen", "technical", "case", "final_round"}
+        if v not in valid_stages:
+            raise ValueError(f"stage must be one of: {', '.join(valid_stages)}")
+        return v
+
+    @field_validator("interview_format")
+    @classmethod
+    def validate_format(cls, v):
+        if v is None:
+            return v
+        valid_formats = {"phone", "video", "onsite"}
+        if v not in valid_formats:
+            raise ValueError(f"interview_format must be one of: {', '.join(valid_formats)}")
+        return v
+
+    @field_validator("interview_date")
+    @classmethod
+    def validate_date(cls, v):
+        if v is None:
+            return v
+        # Validate YYYY-MM-DD format
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("interview_date must be in YYYY-MM-DD format")
+        return v
 
 
 # ── Response schemas ────────────────────────────────────────────────
