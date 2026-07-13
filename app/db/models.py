@@ -493,3 +493,64 @@ class InterviewPrep(Base, TimestampMixin):
 
     # ── Relationships ─────────────────────────────────────────
     application: Mapped["Application"] = relationship(backref="interview_preps")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# OUTCOME  (maps to /outcome command)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class Outcome(Base, TimestampMixin):
+    """Record of an application outcome — progress updates and final resolutions.
+
+    Created/updated by the /outcome workflow. Tracks the lifecycle of an
+    application from applied through to final resolution (hired, rejected,
+    no response, etc.). Feeds back into /setup calibration and STAR mining.
+    """
+
+    __tablename__ = "outcomes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    application_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # ── Status ──────────────────────────────────────────────────
+    # Progress updates (application still open):
+    #   interview_invited, phone_screen_completed, technical_completed,
+    #   case_completed, final_round_completed, offer_received
+    # Resolutions (application closed):
+    #   hired, offer_declined, rejected, no_response, interview_only, withdrawn
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # ── Date resolved ───────────────────────────────────────────
+    # Only set when status is a final resolution (not a progress update)
+    date_resolved: Mapped[str | None] = mapped_column(String(20))  # YYYY-MM-DD
+
+    # ── Interview stages reached ────────────────────────────────
+    # Checkboxes with dates, updated as stages are completed
+    phone_screen_date: Mapped[str | None] = mapped_column(String(20))
+    technical_date: Mapped[str | None] = mapped_column(String(20))
+    case_date: Mapped[str | None] = mapped_column(String(20))
+    final_round_date: Mapped[str | None] = mapped_column(String(20))
+    offer_received_date: Mapped[str | None] = mapped_column(String(20))
+
+    # ── Notes ───────────────────────────────────────────────────
+    # Feedback received, what to do differently, signals about what
+    # the company valued — appended per update, never overwritten
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    # ── What would you do differently ───────────────────────────
+    # Candidate's reflection on the process — feeds /setup calibration
+    # and STAR mining
+    lessons_learned: Mapped[str | None] = mapped_column(Text)
+
+    # ── Signals about what the company valued ───────────────────
+    # Concrete observations from the process — feeds /setup calibration
+    valued_signals: Mapped[list[str] | None] = mapped_column(JSONB)
+
+    # ── Relationships ───────────────────────────────────────────
+    application: Mapped["Application"] = relationship(backref="outcomes")
