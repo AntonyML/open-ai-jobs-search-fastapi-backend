@@ -294,9 +294,13 @@ def render_cv_latex(
     template = CV_MASTER_TEMPLATE.read_text(encoding="utf-8")
 
     # Replace placeholders
+    first_name = candidate.full_name.split()[0] if candidate.full_name else "[First]"
+    last_name = " ".join(candidate.full_name.split()[1:]) if candidate.full_name and len(candidate.full_name.split()) > 1 else "[Last]"
+    full_name = candidate.full_name or "[YOUR_NAME]"
     replacements = {
-        "[First]": candidate.full_name.split()[0] if candidate.full_name else "[First]",
-        "[Last]": " ".join(candidate.full_name.split()[1:]) if candidate.full_name and len(candidate.full_name.split()) > 1 else "[Last]",
+        "[First]": first_name,
+        "[Last]": last_name,
+        "[YOUR_NAME]": full_name,
         "[Your Address, City, Country]": candidate.location or "[Your Address, City, Country]",
         "[+XX XXXXXXXXXX]": candidate.phone or "[+XX XXXXXXXXXX]",
         "[your.email@example.com]": candidate.email or "[your.email@example.com]",
@@ -510,8 +514,10 @@ def render_cover_letter_latex(
     replacements = {
         "[YOUR NAME]": candidate.full_name or "[YOUR NAME]",
         "[YOUR_EMAIL]": candidate.email or "[YOUR_EMAIL]",
+        "your.email@example.com": candidate.email or "your.email@example.com",
         "[+XX XXXXXXXXXX]": candidate.phone or "[+XX XXXXXXXXXX]",
         "[https://www.linkedin.com/in/yourprofile]": candidate.linkedin_url or "[https://www.linkedin.com/in/yourprofile]",
+        "https://www.linkedin.com/in/yourprofile": candidate.linkedin_url or "https://www.linkedin.com/in/yourprofile",
         "Dear [Hiring Manager / Team],": f"Dear {job.company or 'Hiring Team'},",
         "[Opening paragraph: name the role and where you found it, state your strongest connection to it in one sentence, and preview why you are a fit. Keep it to 2--3 sentences.]": cover_letter_content.opening_paragraph,
         "[Body paragraph: your most relevant experience, framed toward the tasks in the posting. Follow with 3--5 concrete bullets:]": cover_letter_content.body_paragraphs[0] if cover_letter_content.body_paragraphs else "",

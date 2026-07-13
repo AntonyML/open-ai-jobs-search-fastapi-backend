@@ -27,7 +27,8 @@ from app.db.models import (
     StarExample,
     User,
 )
-from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
+from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
+from app.services.apply import compile_latex  # noqa: F401  — re-export for tests/callers
 from app.llm.adapter import llm_completion_structured
 from app.schemas.interview import (
     CompanyResearchLLMOutput,

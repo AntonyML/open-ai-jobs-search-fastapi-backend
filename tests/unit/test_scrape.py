@@ -47,9 +47,11 @@ async def db_session():
 
 def mock_subprocess_run(stdout: str = "", stderr: str = "", returncode: int = 0):
     """Create a mock for asyncio.create_subprocess_exec."""
-    mock_proc = MagicMock()
+    mock_proc = AsyncMock()
     mock_proc.returncode = returncode
     mock_proc.communicate = AsyncMock(return_value=(stdout.encode(), stderr.encode()))
+    # Make the mock awaitable and return itself when awaited
+    mock_proc.return_value = mock_proc
     return mock_proc
 
 
@@ -191,7 +193,7 @@ async def test_execute_scrape_handles_cli_error(db_session):
             triggered_by="manual",
         )
 
-    assert run.status == "completed"
+    assert run.status == "completed_with_errors"
     assert run.jobs_found == 1
     assert "linkedin" in run.portals_queried
     assert "jobindex" in run.portals_queried

@@ -129,7 +129,7 @@ async def test_lookup_company_no_match_raises():
         from app.exceptions import NotFoundError
         from app.services.salary.service import lookup_company
 
-        with patch("app.services.salary.salary_lookup.DATA_FILE", tmp_path):
+        with patch("app.services.salary.service.DATA_FILE", tmp_path):
             with pytest.raises(NotFoundError):
                 await lookup_company("NonexistentCompanyXYZ")
     finally:

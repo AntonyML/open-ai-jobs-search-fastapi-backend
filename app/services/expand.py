@@ -41,6 +41,7 @@ from app.schemas.expand import (
     ProposedAdditionOut,
 )
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
+from app.services.apply import compile_latex  # noqa: F401  — re-export for tests/callers
 
 settings = get_settings()
 
@@ -327,6 +328,9 @@ def build_proposed_additions_prompt(
     system_prompt = f"""{EXPAND_GUARDRAIL}
 
 You are proposing additions to a candidate's profile based on discovered competencies.
+
+CANDIDATE: {candidate.full_name or 'Unknown'}
+Location: {candidate.location or 'Unknown'}
 
 CURRENT PROFILE SKILLS:
 - Programming/ML: {', '.join(current_programming) if current_programming else 'None'}

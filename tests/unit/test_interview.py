@@ -820,6 +820,7 @@ async def test_extract_conversation_hooks():
 @pytest.mark.asyncio
 async def test_compile_latex_success():
     """compile_latex returns PDF path and page count on success."""
+    import tempfile
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
@@ -830,7 +831,7 @@ async def test_compile_latex_success():
             with patch("pathlib.Path.exists", return_value=True):
                 pdf_path, pages = await interview.compile_latex(
                     "dummy tex content",
-                    Path("/tmp"),
+                    Path(tempfile.gettempdir()),
                     "test_cv",
                     "lualatex",
                     2,

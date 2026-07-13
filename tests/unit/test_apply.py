@@ -222,7 +222,7 @@ def mock_tailored_experience():
                 location="Copenhagen",
                 bullets=[
                     "Accomplished 40% reduction in model inference latency (X), as measured by p99 latency (Y), by implementing TensorRT optimization and batching (Z)",
-                    "Achieved processing of 1M+ events/day (X), measured by throughput metrics (Y), by building scalable ML pipeline with PyTorch and Kubernetes (Z)",
+                    "Achieved processing of 1M+ events/day (X), measured by throughput metrics (Y), by building scalable ML pipeline with PyTorch and Kubernetes on AWS (Z)",
                     "Led team of 5 engineers (Z) to deliver real-time fraud detection system (X) processing 10K transactions/sec with <50ms latency (Y)",
                 ],
             ),
