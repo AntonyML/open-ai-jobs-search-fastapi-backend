@@ -1,1 +1,38 @@
-"""Pydantic schemas for authentication (register/login). """ from datetime import datetime from pydantic import BaseModel, EmailStr, Field # ── Request schemas ───────────────────────────────────────────────── class UserRegister(BaseModel): """Register a new user account.""" email: EmailStr = Field(..., description="User email address") password: str = Field(..., min_length=8, description="Password (min 8 characters)") full_name: str | None = Field(None, description="Optional full name") class UserLogin(BaseModel): """Login with existing credentials.""" email: EmailStr = Field(..., description="User email address") password: str = Field(..., description="User password") # ── Response schemas ──────────────────────────────────────────────── class Token(BaseModel): """JWT token response.""" access_token: str token_type: str = "bearer" class TokenPayload(BaseModel): """Decoded JWT payload.""" sub: str exp: datetime class UserOut(BaseModel): """Public user information.""" id: str email: str full_name: str | None = None is_active: bool = True active_provider: str = "anthropic" model_config = {"from_attributes": True}
+"""Pydantic schemas for authentication (register/login)."""
+from datetime import datetime
+from pydantic import BaseModel, EmailStr, Field
+
+# ── Request schemas ─────────────────────────────────────────────────
+class UserRegister(BaseModel):
+    """Register a new user account."""
+    email: EmailStr = Field(..., description="User email address")
+    password: str = Field(..., min_length=8, description="Password (min 8 characters)")
+    full_name: str | None = Field(None, description="Optional full name")
+
+
+class UserLogin(BaseModel):
+    """Login with existing credentials."""
+    email: EmailStr = Field(..., description="User email address")
+    password: str = Field(..., description="User password")
+
+# ── Response schemas ────────────────────────────────────────────────
+class Token(BaseModel):
+    """JWT token response."""
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenPayload(BaseModel):
+    """Decoded JWT payload."""
+    sub: str
+    exp: datetime
+
+
+class UserOut(BaseModel):
+    """Public user information."""
+    id: str
+    email: str
+    full_name: str | None = None
+    is_active: bool = True
+    active_provider: str = "anthropic"
+    model_config = {"from_attributes": True}

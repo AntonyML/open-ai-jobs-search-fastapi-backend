@@ -280,7 +280,8 @@ async def test_execute_apply_basic(db_session, sample_candidate, sample_job, sam
             with patch("app.services.apply.shutil.copy2"):
                 with patch("app.services.apply.Path.mkdir"):
                     with patch("app.services.apply.Path.exists", return_value=True):
-                        result = await apply.execute_apply(
+                        with patch("app.services.apply.Path.write_text"):
+                            result = await apply.execute_apply(
                             db=db_session,
                             user_id="test-user-id",
                             job_posting_id=sample_job.id,
@@ -328,15 +329,72 @@ async def test_execute_apply_evaluation_not_found(db_session, sample_candidate, 
 
 
 @pytest.mark.asyncio
-async def test_execute_apply_profile_incomplete(db_session, sample_job, sample_evaluation):
+async def test_execute_apply_profile_incomplete(db_session):
     """execute_apply raises ProfileIncompleteError when candidate profile missing."""
-    with pytest.raises(ProfileIncompleteError):
-        await apply.execute_apply(
-            db=db_session,
-            user_id="nonexistent-user",
-            job_posting_id=sample_job.id,
-            rank_evaluation_id=sample_evaluation.id,
-        )
+    # Create a user and job but no candidate profile
+    user = User(
+        id="user-no-profile",
+        email="noprofile@example.com",
+        hashed_password="fakehash",
+        full_name="No Profile User",
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    job = JobPosting(
+        user_id="user-no-profile",
+        portal="linkedin",
+        external_id="job-456",
+        title="Senior ML Engineer",
+        company="TechCorp",
+        location="Copenhagen",
+        url="https://linkedin.com/jobs/456",
+        posting_date="2026-07-10",
+        deadline="2026-08-10",
+        description="ML job",
+        requirements=["Python", "PyTorch"],
+        employment_type="full-time",
+        language="en",
+        status="ranked",
+        rank_score=80.0,
+        rank_verdict="Strong Fit",
+        rank_date=datetime.now(timezone.utc),
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    evaluation = RankEvaluation(
+        job_posting_id=job.id,
+        user_id="user-no-profile",
+        technical_score=80,
+        experience_score=75,
+        behavioral_score=70,
+        career_score=85,
+        overall_score=80,
+        verdict="Strong Fit",
+        location_status="PASS",
+        deadline="2026-08-10",
+        deadline_urgent=False,
+        strengths=["ML experience"],
+        gaps=["No Kubernetes"],
+        missing_keywords=["Kubernetes"],
+        red_flags=[],
+        language="en",
+        raw_response={},
+    )
+    db_session.add(evaluation)
+    await db_session.commit()
+    await db_session.refresh(evaluation)
+
+    with patch("app.services.apply.llm_completion_structured"):
+        with pytest.raises(ProfileIncompleteError):
+            await apply.execute_apply(
+                db=db_session,
+                user_id="user-no-profile",
+                job_posting_id=job.id,
+                rank_evaluation_id=evaluation.id,
+            )
 
 
 @pytest.mark.asyncio

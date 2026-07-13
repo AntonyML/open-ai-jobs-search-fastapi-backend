@@ -12,7 +12,7 @@ from app.db.session import get_db as _get_db
 
 # Re-export the DB session dependency so routers can do
 #   from app.api.deps import get_db
-get_db = Depends(_get_db)
+get_db = _get_db
 
 
 async def get_current_user(
