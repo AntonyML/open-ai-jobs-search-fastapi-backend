@@ -721,17 +721,20 @@ async def test_get_interview_prep_wrong_user(db_session, sample_candidate, sampl
 @pytest.mark.asyncio
 async def test_list_interview_preps(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
     """list_interview_preps returns preps for the user."""
+    # Each execute_interview_prep makes 8 LLM calls, so 3 preps = 24 calls
+    mock_responses = [
+        mock_company_research(),
+        mock_likely_questions(),
+        mock_star_mapping(),
+        mock_new_star_drafts(),
+        mock_consistency_brief(),
+        mock_tough_questions(),
+        mock_questions_to_ask(),
+        mock_logistics(),
+    ] * 3  # Repeat for 3 preps
+
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
-            mock_company_research(),
-            mock_likely_questions(),
-            mock_star_mapping(),
-            mock_new_star_drafts(),
-            mock_consistency_brief(),
-            mock_tough_questions(),
-            mock_questions_to_ask(),
-            mock_logistics(),
-        ]
+        mock_llm.side_effect = mock_responses
 
         # Create 3 preps
         for i in range(3):

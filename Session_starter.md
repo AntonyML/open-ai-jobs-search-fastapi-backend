@@ -33,7 +33,7 @@
 **Build Status:** ✅ FASE 4 completada
 **Server:** Funcional en `http://127.0.0.1:8000` (healthcheck en `/api/v1/health`)
 **Database:** Migración inicial `770526833bdb` aplicada contra Supabase (13 tablas)
-**Tests:** 155 colectados → **110 passing, 45 failing** (ver sección de tests para detalle)
+**Tests:** 155 colectados → **155 passing, 0 failing** (ver sección de tests para detalle)
 
 **Architecture Highlights:**
 - App factory pattern (`create_app()`) — no `app = FastAPI()` suelto
@@ -157,6 +157,11 @@ Configuración independiente: `/add-portal/*`, `/add-template/*`, `/reset/`
 | 2026-07-13 | ✅ FASE 4 — Migración inicial de Alembic aplicada contra Supabase |
 | 2026-07-13 | ✅ Fix DATABASE_URL, router apply, tests de outcome, reset y upskill |
 | 2026-07-13 | ✅ Fix tests de rank (upsert, FAIL filtering, no_autoflush, await en fixtures) |
+| 2026-07-13 | ✅ **Auth endpoints creados** — `/auth/register` y `/auth/login` con JWT |
+| 2026-07-13 | ✅ **Settings completados** — `documents_dir` y `tracker_path` añadidos |
+| 2026-07-13 | ✅ **sys.exit() eliminado** — `salary_lookup.py` lanza `NotFoundError` |
+| 2026-07-13 | ✅ **Suite de tests 100% verde** — 155 tests passing (fixes en apply, expand, interview, salary, scrape, smoke) |
+| 2026-07-13 | ✅ **Syntax errors corregidos** — auth.py, schemas/auth.py, deps.py (get_db) |
 
 ---
 
@@ -190,22 +195,22 @@ Configuración independiente: `/add-portal/*`, `/add-template/*`, `/reset/`
 
 ## 🧪 Tests — Estado real
 
-**Total:** 155 colectados · **110 passing · 45 failing**
+**Total:** 155 colectados · **155 passing · 0 failing**
 
 | Módulo | Pasan | Fallan | Causa raíz de los fallos |
 |--------|-------|--------|--------------------------|
-| `test_apply.py` | — | 14 | A confirmar (mismos patrones que expand/interview) |
-| `test_expand.py` | — | 18 | Tests parchean `_extract_text_from_pdf` que **no existe** en `expand.py`; `NameError` en `_scan_linkedin_folder` |
-| `test_interview.py` | — | 10 | Tests referencian `interview.LikelyQuestionOut` que no es atributo del módulo (es schema); `await` faltante en `commit`/`refresh` de fixtures |
-| `test_salary.py` | — | 2 | `salary_data.json` ausente → `load_data()` hace `sys.exit(1)` en vez de lanzar excepción |
-| `test_scrape.py` | — | 1 | `mock_subprocess_run()` requiere `stdout` posicional que el test no pasa |
+| `test_apply.py` | 14 | 0 | ✅ Fixed: FileNotFoundError (mocked write_text), ProfileIncompleteError (proper test setup) |
+| `test_expand.py` | 18 | 0 | ✅ Fixed: _get_pdf_page_count helper added, EnrichedCompetency serialization, dynamic mock for item IDs |
+| `test_interview.py` | 10 | 0 | ✅ Fixed: _get_pdf_page_count helper added, ProfileIncompleteError test setup, StopAsyncIteration in LLM mock |
+| `test_salary.py` | 2 | 0 | ✅ Fixed: sys.exit replaced with NotFoundError, patch paths corrected |
+| `test_scrape.py` | 1 | 0 | ✅ Fixed: MockProcess class for async subprocess, mock run_scraper instead of subprocess |
 | `test_add_portal.py` | ✅ | 0 | — |
 | `test_add_template.py` | ✅ | 0 | — |
 | `test_outcome.py` | ✅ | 0 | — |
 | `test_rank.py` | ✅ | 0 | — |
 | `test_reset.py` | ✅ | 0 | — |
 | `test_setup.py` | ✅ | 0 | — |
-| `test_smoke.py` | ✅ | 0 | — |
+| `test_smoke.py` | 4 | 0 | ✅ Fixed: get_db dependency syntax (Depends(_get_db) → _get_db) |
 | `test_upskill.py` | ✅ | 0 | — |
 
 **Tests de integración:** `tests/integration/` existe pero **está vacío** (solo `__init__.py`).
@@ -218,10 +223,10 @@ Ordenado por prioridad. Solo tareas reales necesarias para un MVP funcional.
 
 | # | Tarea | Motivo | Archivos afectados | Prioridad | Estado |
 |---|-------|--------|--------------------|-----------|--------|
-| 1 | **Endpoint de auth (login/registro)** — Actualmente `get_current_user` valida JWT pero **nada emite tokens**. Sin login, ningún endpoint es usable. Crear `/auth/register` y `/auth/login` que usen `hash_password`/`create_access_token` existentes. | Sin esto la API es inaccesible end-to-end. | `app/api/v1/auth.py` (nuevo), `app/api/v1/router.py`, `app/services/auth.py` (nuevo), `app/schemas/auth.py` (nuevo) | Alta | Pendiente |
-| 2 | **Fix 45 tests fallidos** — `test_apply` (14), `test_expand` (18), `test_interview` (10), `test_salary` (2), `test_scrape` (1). Causas: funciones parcheadas inexistentes, `sys.exit` en librería, `await` faltante, mocks con firma incorrecta. | Suite rota impide detectar regresiones. | `tests/unit/test_apply.py`, `tests/unit/test_expand.py`, `tests/unit/test_interview.py`, `tests/unit/test_salary.py`, `tests/unit/test_scrape.py`, `app/services/expand.py`, `app/services/interview.py`, `app/services/salary/salary_lookup.py` | Alta | Pendiente |
-| 3 | **Definir `documents_dir` y `tracker_path` en Settings** — `outcome.py`, `expand.py` y `reset.py` referencian `settings.documents_dir`/`settings.tracker_path` que **no existen** en `Settings`. `outcome.py` crashea (sin fallback); `expand`/`reset` usan `hasattr` y caen a `Path("documents")`. | Servicios de outcome/expand/reset fallan en runtime. | `app/core/settings.py` | Alta | Pendiente |
-| 4 | **Reemplazar `sys.exit(1)` en `salary_lookup.py`** — `load_data()` aborta el proceso si `salary_data.json` falta, rompiendo el event loop y los tests. Debe lanzar `NotFoundError`. | `sys.exit` en librería de servicio es un bug de diseño. | `app/services/salary/salary_lookup.py` | Alta | Pendiente |
+| 1 | **Endpoint de auth (login/registro)** — Actualmente `get_current_user` valida JWT pero **nada emite tokens**. Sin login, ningún endpoint es usable. Crear `/auth/register` y `/auth/login` que usen `hash_password`/`create_access_token` existentes. | Sin esto la API es inaccesible end-to-end. | `app/api/v1/auth.py` (nuevo), `app/api/v1/router.py`, `app/services/auth.py` (nuevo), `app/schemas/auth.py` (nuevo) | Alta | ✅ **COMPLETADO** |
+| 2 | **Fix 45 tests fallidos** — `test_apply` (14), `test_expand` (18), `test_interview` (10), `test_salary` (2), `test_scrape` (1). Causas: funciones parcheadas inexistentes, `sys.exit` en librería, `await` faltante, mocks con firma incorrecta. | Suite rota impide detectar regresiones. | `tests/unit/test_apply.py`, `tests/unit/test_expand.py`, `tests/unit/test_interview.py`, `tests/unit/test_salary.py`, `tests/unit/test_scrape.py`, `app/services/expand.py`, `app/services/interview.py`, `app/services/salary/salary_lookup.py` | Alta | ✅ **COMPLETADO** (155 passing, 0 failing) |
+| 3 | **Definir `documents_dir` y `tracker_path` en Settings** — `outcome.py`, `expand.py` y `reset.py` referencian `settings.documents_dir`/`settings.tracker_path` que **no existen** en `Settings`. `outcome.py` crashea (sin fallback); `expand`/`reset` usan `hasattr` y caen a `Path("documents")`. | Servicios de outcome/expand/reset fallan en runtime. | `app/core/settings.py` | Alta | ✅ **COMPLETADO** |
+| 4 | **Reemplazar `sys.exit(1)` en `salary_lookup.py`** — `load_data()` aborta el proceso si `salary_data.json` falta, rompiendo el event loop y los tests. Debe lanzar `NotFoundError`. | `sys.exit` en librería de servicio es un bug de diseño. | `app/services/salary/salary_lookup.py` | Alta | ✅ **COMPLETADO** |
 | 5 | **Cablear APScheduler** — Declarado en `pyproject.toml` y `settings.scrape_interval_hours`, pero `main.py` lifespan dice "nothing yet". El scheduler periódico de scraping no está implementado. | El scraping manual funciona, pero el automático (objetivo del proyecto) no. | `app/main.py`, `app/services/scrape.py`, nuevo `app/core/scheduler.py` | Media | Pendiente |
 | 6 | **Mover `apply`, `expand`, `upskill`, `interview`, `add-portal` a BackgroundTasks** — Todos corren síncronos en el request (lo admiten en sus docstrings). Son llamadas LLM/LaTeX largas que bloquean la respuesta HTTP. | Timeout de request y mala UX en operaciones de minutos. | `app/api/v1/apply.py`, `app/api/v1/expand.py`, `app/api/v1/upskill.py`, `app/api/v1/interview.py`, `app/api/v1/add_portal.py`, servicios correspondientes | Media | Pendiente |
 | 7 | **Implementar `get_llm_provider` real** — El stub devuelve `anthropic`/`claude-sonnet-4` hardcodeado. Debe leer `User.active_provider` y `ProviderCredential.api_key_encrypted` de la DB. | Cada usuario no puede usar su propio proveedor configurado. | `app/api/deps.py`, `app/services/provider_credentials.py` (nuevo), `app/core/security.py` (cifrado de API keys) | Media | Pendiente |
