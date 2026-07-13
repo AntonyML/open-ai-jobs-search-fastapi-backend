@@ -8,6 +8,7 @@ from app.api.v1.rank import router as rank_router
 from app.api.v1.apply import router as apply_router
 from app.api.v1.interview import router as interview_router
 from app.api.v1.outcome import router as outcome_router
+from app.api.v1.expand import router as expand_router
 
 router = APIRouter()
 
@@ -25,3 +26,4 @@ router.include_router(rank_router)
 router.include_router(apply_router)
 router.include_router(interview_router)
 router.include_router(outcome_router)
+router.include_router(expand_router)

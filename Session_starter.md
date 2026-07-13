@@ -83,6 +83,7 @@
 | 2026-07-12 | ✅ FASE 3.4 — Apply (generación CV/carta tailored) completado |
 | 2026-07-12 | ✅ FASE 3.5 — Interview (preparación entrevistas) completado |
 | 2026-07-12 | ✅ FASE 3.5 — Outcome (registro resultados) completado |
+| 2026-07-12 | ✅ FASE 3.5 — Expand (expansión competencias) completado |
 
 ---
 
@@ -96,7 +97,7 @@
 - [x] ✅ FASE 3.4 — Apply (generación CV/carta tailored con LaTeX)
 - [x] ✅ FASE 3.5 — Interview (preparación entrevistas)
 - [x] ✅ FASE 3.5 — Outcome (registro resultados)
-- [ ] ⏸️ FASE 3.5 — Expand (expansión competencias)
+- [x] ✅ FASE 3.5 — Expand (expansión competencias)
 - [ ] ⏸️ FASE 3.5 — Upskill (plan aprendizaje)
 - [ ] ⏸️ FASE 3.5 — Add-portal / Add-template / Reset
 - [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase
