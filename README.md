@@ -174,14 +174,67 @@ La API está diseñada como un pipeline secuencial: cada fase produce datos que 
 
 ```mermaid
 flowchart LR
-    A[1. Setup<br/>Perfil candidato] --> B[2. Scrape<br/>Búsqueda de jobs]
-    B --> C[3. Rank<br/>Evaluación de fit]
-    C --> D[4. Apply<br/>CV + carta tailored]
-    D --> E[5. Interview<br/>Prep entrevista]
-    E --> F[6. Outcome<br/>Registro resultados]
-    C --> G[7. Upskill<br/>Plan aprendizaje]
-    C --> H[8. Expand<br/>Expansión competencias]
+    A[0. Providers<br/>Configurar LLM] --> B[1. Setup<br/>Perfil candidato]
+    B --> C[2. Scrape<br/>Búsqueda de jobs]
+    C --> D[3. Rank<br/>Evaluación de fit]
+    D --> E[4. Apply<br/>CV + carta tailored]
+    E --> F[5. Interview<br/>Prep entrevista]
+    F --> G[6. Outcome<br/>Registro resultados]
+    D --> H[7. Upskill<br/>Plan aprendizaje]
+    D --> I[8. Expand<br/>Expansión competencias]
 ```
+
+### Paso 0 — Configurar Proveedor LLM (¡OBLIGATORIO ANTES DE TODO!)
+
+**Antes de crear el perfil o hacer cualquier operación, debes configurar tu proveedor LLM y API key.** Cada usuario puede usar su propio proveedor y modelo.
+
+**Endpoints disponibles en `/api/v1/providers/`:**
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/providers/` | Catálogo de proveedores conocidos (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama) |
+| `POST` | `/providers/` | Guardar credencial: `{provider, api_key, api_base?, model?}` |
+| `GET` | `/providers/me` | Ver tus proveedores configurados (sin API keys) |
+| `GET` | `/providers/me/active` | Ver proveedor activo actual |
+| `PUT` | `/providers/active` | Cambiar proveedor activo: `{provider: "anthropic"}` |
+| `PATCH` | `/providers/{provider}` | Actualizar credencial parcial |
+| `DELETE` | `/providers/{provider}` | Eliminar credencial |
+
+**Ejemplo — Configurar Anthropic (Claude):**
+```bash
+curl -X POST "http://localhost:8000/api/v1/providers/" \
+  -H "Authorization: Bearer <tu_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "anthropic", "api_key": "sk-ant-...", "model": "claude-sonnet-4-20250514"}'
+```
+
+**Ejemplo — Configurar NVIDIA NIM:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/providers/" \
+  -H "Authorization: Bearer <tu_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "nvidia_nim", "api_key": "nvapi-...", "api_base": "https://integrate.api.nvidia.com/v1", "model": "meta/llama-3.1-70b-instruct"}'
+```
+
+**Ejemplo — Configurar LM Studio (local, sin API key):**
+```bash
+curl -X POST "http://localhost:8000/api/v1/providers/" \
+  -H "Authorization: Bearer <tu_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "lm_studio", "api_base": "http://localhost:1234/v1", "model": "local-model"}'
+```
+
+**Luego activar el proveedor:**
+```bash
+curl -X PUT "http://localhost:8000/api/v1/providers/active" \
+  -H "Authorization: Bearer <tu_jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "anthropic"}'
+```
+
+> **Nota:** Las API keys se guardan **cifradas (Fernet)** en la BD. El backend las descifra automáticamente al hacer llamadas al LLM. Cada usuario tiene sus propias credenciales aisladas.
+
+---
 
 ### Paso 1 — Setup (obligatorio, primero)
 El cliente **debe** crear su perfil de candidato antes de cualquier otra operación. Sin perfil, los endpoints posteriores fallan con `ProfileIncompleteError`.
