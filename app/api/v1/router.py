@@ -10,6 +10,9 @@ from app.api.v1.interview import router as interview_router
 from app.api.v1.outcome import router as outcome_router
 from app.api.v1.expand import router as expand_router
 from app.api.v1.upskill import router as upskill_router
+from app.api.v1.add_portal import router as add_portal_router
+from app.api.v1.add_template import router as add_template_router
+from app.api.v1.reset import router as reset_router
 
 router = APIRouter()
 
@@ -29,3 +32,6 @@ router.include_router(interview_router)
 router.include_router(outcome_router)
 router.include_router(expand_router)
 router.include_router(upskill_router)
+router.include_router(add_portal_router)
+router.include_router(add_template_router)
+router.include_router(reset_router)

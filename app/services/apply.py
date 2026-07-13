@@ -407,7 +407,7 @@ def _build_experience_section(experience: list[TailoredExperienceEntry]) -> str:
         entry = f"""\\item{{\\cventry{{{date_range}}}{{{exp.title}}}{{{exp.company}}}{{{location}}}{{}}{{\\vspace{{1pt}}
 \\begin{{itemize}}
 {bullets}
-\\end{{itemize}}}}}"""
+\\end{{itemize}}}}}}"""
         entries.append(entry)
 
     return "\n\\vspace{3pt}\n".join(entries)

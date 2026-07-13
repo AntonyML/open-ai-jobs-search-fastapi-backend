@@ -67,6 +67,13 @@ class DuplicateError(AppError):
     code = "duplicate"
 
 
+class ConfirmationRequiredError(AppError):
+    """A destructive action was attempted without the required explicit confirmation."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "confirmation_required"
+
+
 # ── Exception handlers (registered in create_app) ────────────────
 
 

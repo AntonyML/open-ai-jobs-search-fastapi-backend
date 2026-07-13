@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     def scrapers_dir(self) -> Path:
         return Path(__file__).resolve().parent.parent / "external" / "scrapers"
 
+    @property
+    def templates_dir(self) -> Path:
+        return Path(__file__).resolve().parent.parent / "external" / "templates"
+
 
 @lru_cache
 def get_settings() -> Settings:
