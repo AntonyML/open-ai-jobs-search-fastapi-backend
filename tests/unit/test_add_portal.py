@@ -9,11 +9,12 @@ Strategy:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.settings import Settings
 from app.db.models import Base, User
 from app.exceptions import LLMError, NotFoundError
 from app.schemas.add_portal import (
@@ -91,7 +92,7 @@ _OK_STDOUT = json.dumps({"results": [{"id": "1", "title": "Dev"}]}).encode()
 async def test_success(db_session, req, tmp_path):
     # Three subprocess calls: bun install, bun typecheck, bun run search
     procs = [_proc(0), _proc(0), _proc(0, _OK_STDOUT)]
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         with patch("app.services.add_portal.llm_completion_structured",
                    side_effect=[_investigation(), _generation()]):
             with patch("asyncio.create_subprocess_exec", side_effect=procs):
@@ -107,21 +108,21 @@ async def test_success(db_session, req, tmp_path):
 @pytest.mark.asyncio
 async def test_skill_already_exists(db_session, req, tmp_path):
     (tmp_path / "seek-search").mkdir()
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         with pytest.raises(ValueError, match="already exists"):
             await add_portal.execute_add_portal(db_session, "u1", req)
 
 
 @pytest.mark.asyncio
 async def test_user_not_found(db_session, req, tmp_path):
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         with pytest.raises(NotFoundError):
             await add_portal.execute_add_portal(db_session, "ghost", req)
 
 
 @pytest.mark.asyncio
 async def test_llm_investigation_error(db_session, req, tmp_path):
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         with patch("app.services.add_portal.llm_completion_structured",
                    side_effect=Exception("timeout")):
             with pytest.raises(LLMError, match="investigation"):
@@ -130,7 +131,7 @@ async def test_llm_investigation_error(db_session, req, tmp_path):
 
 @pytest.mark.asyncio
 async def test_llm_generation_error(db_session, req, tmp_path):
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         with patch("app.services.add_portal.llm_completion_structured",
                    side_effect=[_investigation(), Exception("ctx overflow")]):
             with pytest.raises(LLMError, match="generation"):
@@ -140,7 +141,7 @@ async def test_llm_generation_error(db_session, req, tmp_path):
 @pytest.mark.asyncio
 async def test_bun_fails_returns_warning(db_session, req, tmp_path):
     # bun install fails → completed_with_warnings, not an exception
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         with patch("app.services.add_portal.llm_completion_structured",
                    side_effect=[_investigation(), _generation()]):
             with patch("asyncio.create_subprocess_exec",
@@ -156,7 +157,7 @@ async def test_bun_fails_returns_warning(db_session, req, tmp_path):
 
 @pytest.mark.asyncio
 async def test_get_skill_not_found(db_session, tmp_path):
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         with pytest.raises(NotFoundError):
             await add_portal.get_portal_skill(db_session, "no-such-skill", "u1")
 
@@ -169,7 +170,7 @@ async def test_get_skill_found(db_session, tmp_path):
         json.dumps({"name": "seek-search-cli", "description": "https://seek.com.au"}),
         encoding="utf-8",
     )
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         result = await add_portal.get_portal_skill(db_session, "seek-search", "u1")
 
     assert result["skill_name"] == "seek-search"
@@ -183,7 +184,7 @@ async def test_get_skill_found(db_session, tmp_path):
 @pytest.mark.asyncio
 async def test_list_empty_when_no_dir(db_session, tmp_path):
     missing = tmp_path / "scrapers"  # doesn't exist
-    with patch.object(add_portal.settings, "scrapers_dir", str(missing)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(missing)):
         result = await add_portal.list_portal_skills(db_session, "u1")
     assert result == []
 
@@ -197,7 +198,7 @@ async def test_list_returns_installed_skills(db_session, tmp_path):
             json.dumps({"description": url}), encoding="utf-8"
         )
 
-    with patch.object(add_portal.settings, "scrapers_dir", str(tmp_path)):
+    with patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, return_value=str(tmp_path)):
         result = await add_portal.list_portal_skills(db_session, "u1")
 
     assert len(result) == 2
