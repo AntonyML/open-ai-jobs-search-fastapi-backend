@@ -79,7 +79,8 @@
 | 2026-07-12 | ✅ FASE 2 — Componentes reutilizables copiados (6 scrapers, LaTeX, salary) |
 | 2026-07-12 | ✅ FASE 3.1 — Setup (perfil candidato) completado |
 | 2026-07-12 | ✅ FASE 3.2 — Scrape completado |
-| 2026-07-12 | 🔄 FASE 3.3 — Rank en progreso |
+| 2026-07-12 | ✅ FASE 3.3 — Rank (evaluación de fit + optimización ATS) completado |
+| 2026-07-12 | 🔄 FASE 3.4 — Apply (generación CV/carta tailored) en progreso |
 
 ---
 
@@ -89,9 +90,9 @@
 - [x] ✅ FASE 2 — Copiar componentes reutilizables
 - [x] ✅ FASE 3.1 — Setup (perfil candidato)
 - [x] ✅ FASE 3.2 — Scrape
-- [-] 🔄 FASE 3.3 — Rank (evaluación de fit + optimización ATS)
-- [ ] ⏸️ FASE 3.4 — Apply
-- [ ] ⏸️ FASE 3.5 — Resto de skills
+- [x] ✅ FASE 3.3 — Rank (evaluación de fit + optimización ATS)
+- [-] 🔄 FASE 3.4 — Apply (generación CV/carta tailored con LaTeX)
+- [ ] ⏸️ FASE 3.5 — Resto de skills (interview, outcome, expand, upskill, add-portal, add-template, reset)
 - [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase
 
 ---
