@@ -68,6 +68,17 @@ def _extract_text_from_pdf(file_path: Path) -> str:
     # In production, use pypdf.PdfReader(file_path).pages[0].extract_text() or similar
     return f"[PDF content from {file_path.name}]"
 
+
+def _get_pdf_page_count(pdf_path: Path) -> int:
+    """Return the number of pages in a PDF. Stub — replace with pypdf/PyPDF2 in production."""
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(str(pdf_path))
+        return len(reader.pages)
+    except Exception:
+        return 1
+
 def _get_documents_dir() -> Path:
     """Get the documents directory path."""
     return Path(settings.documents_dir) if hasattr(settings, "documents_dir") else Path("documents")
@@ -282,35 +293,8 @@ def build_competency_enrichment_prompt(
         f"  Type: {item.get('type', '')}"
         for i, item in enumerate(experience_items)
     )
-
-    system_prompt = f"""{EXPAND_GUARDRAIL}
-
-You are enriching experience items with implied competencies.
-For each item, determine competencies through TWO approaches:
-
-1. DIRECT LOOKUP: If the item names a specific course, certification, tool, framework,
-   or method, search for its official syllabus/skills list.
-   Example: "AWS Solutions Architect Associate" → search "AWS Solutions Architect Associate skills covered"
-
-2. INFERRED COMPETENCIES: From the description, infer what skills/knowledge are required.
-   Example: "Built ML pipeline with PyTorch and Kubernetes" → Python, PyTorch, Kubernetes, MLOps, Docker
-
-For each item, return:
-- experience_item_id: the item's ID
-- competencies: list of specific skills/technologies/methods
-- source: "direct_lookup" or "inferred"
-- source_urls: URLs of official sources (for direct lookups)
-
-Return ONLY valid JSON matching the EnrichedCompetenciesLLMOutput schema.
-"""
-
-    user_prompt = f"""Enrich these experience items with competencies:
-
-{items_text}
-
-Return JSON with "enrichments" array.
-"""
-
+    system_prompt = f"""{EXPAND_GUARDRAIL} You are enriching experience items with implied competencies. For each item, determine competencies through TWO approaches: 1. DIRECT LOOKUP: If the item names a specific course, certification, tool, framework, or method, search for its official syllabus/skills list. Example: "AWS Solutions Architect Associate" → search "AWS Solutions Architect Associate skills covered" 2. INFERRED COMPETENCIES: From the description, infer what skills/knowledge are required. Example: "Built ML pipeline with PyTorch and Kubernetes" → Python, PyTorch, Kubernetes, MLOps, Docker For each item, return: - experience_item_id: the item's ID - competencies: list of specific skills/technologies/methods - source: "direct_lookup" or "inferred" - source_urls: URLs of official sources (for direct lookups) ITEMS TO ENRICH:\n{items_text} Return ONLY valid JSON matching the EnrichedCompetenciesLLMOutput schema. """
+    user_prompt = "Enrich these experience items with competencies. Return JSON with 'enrichments' array."
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -331,8 +315,12 @@ def build_proposed_additions_prompt(
     # Collect all enriched competencies
     all_competencies = []
     for enrichment in enriched_competencies:
-        all_competencies.extend(enrichment.get("competencies", []))
-
+        if hasattr(enrichment, "competencies"):
+            all_competencies.extend(enrichment.competencies)
+        elif hasattr(enrichment, "model_dump"):
+            all_competencies.extend(enrichment.model_dump().get("competencies", []))
+        else:
+            all_competencies.extend(enrichment.get("competencies", []))
     # Deduplicate
     unique_competencies = list(set(all_competencies))
 

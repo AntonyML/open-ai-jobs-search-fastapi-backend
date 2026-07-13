@@ -45,7 +45,7 @@ async def db_session():
 # ── Helper: mock subprocess ─────────────────────────────────────────
 
 
-def mock_subprocess_run(stdout: str, stderr: str = "", returncode: int = 0):
+def mock_subprocess_run(stdout: str = "", stderr: str = "", returncode: int = 0):
     """Create a mock for asyncio.create_subprocess_exec."""
     mock_proc = MagicMock()
     mock_proc.returncode = returncode

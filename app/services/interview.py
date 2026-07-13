@@ -75,6 +75,17 @@ The candidate must be able to defend every claim in the interview without backtr
 # ── Prompt builders ─────────────────────────────────────────────────
 
 
+def _get_pdf_page_count(pdf_path: Path) -> int:
+    """Return the number of pages in a PDF. Stub — replace with pypdf/PyPDF2 in production."""
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(str(pdf_path))
+        return len(reader.pages)
+    except Exception:
+        return 1
+
+
 def _build_candidate_summary(candidate: CandidateProfile) -> str:
     """Build a concise candidate summary for prompts."""
     parts = []

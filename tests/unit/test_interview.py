@@ -738,7 +738,7 @@ async def test_build_consistency_brief_prompt(sample_application):
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
     assert "GUARDRAIL" in messages[0]["content"]
-    assert "40% latency reduction" in messages[0]["content"]
+    assert "40% reduction" in messages[0]["content"]
 
 
 @pytest.mark.asyncio

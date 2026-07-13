@@ -98,7 +98,7 @@ async def test_lookup_company_with_temp_data():
         tmp_path = Path(f.name)
 
     try:
-        with patch("app.services.salary.service.DATA_FILE", tmp_path):
+        with patch("app.services.salary.salary_lookup.DATA_FILE", tmp_path):
             from app.services.salary.service import lookup_company
 
             result = await lookup_company("Acme")
@@ -129,7 +129,7 @@ async def test_lookup_company_no_match_raises():
         from app.exceptions import NotFoundError
         from app.services.salary.service import lookup_company
 
-        with patch("app.services.salary.service.DATA_FILE", tmp_path):
+        with patch("app.services.salary.salary_lookup.DATA_FILE", tmp_path):
             with pytest.raises(NotFoundError):
                 await lookup_company("NonexistentCompanyXYZ")
     finally:

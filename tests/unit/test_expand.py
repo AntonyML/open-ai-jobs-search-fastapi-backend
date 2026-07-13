@@ -6,7 +6,7 @@ Uses an in-memory SQLite database and mocks the LLM calls and web searches.
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 from sqlalchemy import select
