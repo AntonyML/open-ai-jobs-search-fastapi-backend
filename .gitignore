@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Generated artifacts
+dist/
+build/
+*.pdf
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+
+# Personal data (mirror source repo .gitignore)
+salary_data.json
+job_scraper/seen_jobs.json
+cv/main_*.tex
+!cv/main_example.tex
+cover_letters/cover_*.tex
+documents/cv/**
+documents/linkedin/**
+documents/diplomas/**
+documents/references/**
+documents/applications/**
+job_search_tracker.csv
+
+# DB
+*.db
+*.sqlite3

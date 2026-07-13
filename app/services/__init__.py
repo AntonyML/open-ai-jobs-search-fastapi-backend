@@ -1,0 +1,1 @@
+"""Business logic — one module per skill (setup, scrape, rank, apply, ...)."""
