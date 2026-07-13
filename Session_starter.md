@@ -45,6 +45,34 @@
 
 ---
 
+## � Plan de completitud — Código pendiente
+
+### 🤖 Lo que los agentes pueden hacer (código)
+
+| # | Tarea | Archivos involucrados | Estado |
+|---|-------|----------------------|--------|
+| 1 | **Autenticación real** — Implementar `get_current_user` con JWT real (no mock) | `app/api/deps.py`, `app/core/security.py`, `app/db/models.py` | Pendiente |
+| 2 | **Background tasks** — Mover `upskill`, `expand` y `apply` a background tasks para no bloquear la respuesta | `app/services/upskill.py`, `app/services/expand.py`, `app/services/apply.py`, routers | Pendiente |
+| 3 | **Fix 45 tests fallidos** — Revisar y corregir `test_expand.py`, `test_interview.py`, `test_salary.py`, `test_scrape.py` | `tests/unit/test_*.py`, servicios correspondientes | Pendiente |
+| 4 | **Mejorar manejo de errores en scrapers** — Capturar y parsear errores de Bun/TS correctamente | `app/services/scrape.py` | Pendiente |
+| 5 | **Validación de entrada** — Agregar validaciones más estrictas en schemas (ej: URLs, formatos de fecha) | `app/schemas/*.py` | Pendiente |
+| 6 | **Logging estructurado** — Agregar logs estructurados en servicios para debugging en producción | `app/services/*.py`, `app/core/settings.py` | Pendiente |
+| 7 | **Rate limiting** — Implementar rate limiting en endpoints sensibles (LLM calls) | `app/api/deps.py`, routers | Pendiente |
+| 8 | **Documentación de schemas** — Agregar docstrings y ejemplos en todos los schemas Pydantic | `app/schemas/*.py` | Pendiente |
+
+### 👤 Lo que el humano debe hacer manualmente
+
+| # | Tarea | Razón |
+|---|-------|-------|
+| 1 | **Configurar `.env`** — Definir `DATABASE_URL`, `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, etc. | Secrets y credenciales — nunca hardcodear |
+| 2 | **Instalar dependencias del sistema** — Bun, LaTeX (lualatex + xelatex), TeX Live/MiKTeX | Instalaciones del sistema operativo |
+| 3 | **Crear proyecto Supabase** — Obtener connection string y configurar Session Pooler | Servicio externo |
+| 4 | **Compilar scrapers Bun/TS** — Ejecutar `bun build` en `app/external/scrapers/*/cli/` | Entorno de ejecución Bun |
+| 5 | **Aprobar despliegue a producción** — Revisar código, configurar hosting, dominio, SSL | Decisión de negocio |
+| 6 | **Probar flujo end-to-end** — Hacer un recorrido completo con datos reales (no mocks) | Validación de negocio |
+
+---
+
 ## 🚀 Pipeline de la API (orden de uso)
 
 ```mermaid

@@ -36,6 +36,19 @@ FastAPI-backend/
 └── .env.example
 ```
 
+## Prerequisites
+
+Además de Python 3.11+, esta app requiere dependencias del sistema para funcionalidad completa:
+
+| Componente | Propósito | Instalación |
+|------------|-----------|-------------|
+| **Bun** | Ejecutar scrapers heredados (Bun/TS) | `npm install -g bun` |
+| **LaTeX** (lualatex + xelatex) | Compilar CV y cartas tailored | TeX Live o MiKTeX |
+| **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com |
+| **LLM Provider** | API key para LiteLLM (Anthropic, OpenAI, etc.) | Variable en `.env` |
+
+> **Nota:** Sin Bun, el endpoint `/scrape/` no funcionará. Sin LaTeX, el endpoint `/apply/` no podrá generar PDFs. Sin Supabase, la app no tiene persistencia.
+
 ## Setup
 
 ```bash
@@ -43,7 +56,7 @@ FastAPI-backend/
 python -m venv .venv
 source .venv/bin/activate  # o .venv\Scripts\activate en Windows
 
-# 2. Instalar dependencias
+# 2. Instalar dependencias Python
 pip install -e ".[dev]"
 
 # 3. Configurar variables de entorno
