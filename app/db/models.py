@@ -422,3 +422,74 @@ class Application(Base, TimestampMixin):
     # ── Relationships ─────────────────────────────────────────
     job_posting: Mapped["JobPosting"] = relationship(backref="applications")
     rank_evaluation: Mapped["RankEvaluation"] = relationship(backref="applications")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# INTERVIEW PREP  (maps to /interview command)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class InterviewPrep(Base, TimestampMixin):
+    """Interview preparation pack for a specific application and stage.
+
+    Created by the /interview workflow. Contains likely questions, STAR
+    mappings, consistency brief, tough questions, questions to ask, and
+    logistics. One per application per stage.
+    """
+
+    __tablename__ = "interview_preps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    application_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # ── Stage info ────────────────────────────────────────────
+    stage: Mapped[str] = mapped_column(String(50))  # phone_screen, technical, case, final_round
+    interview_date: Mapped[str | None] = mapped_column(String(20))  # YYYY-MM-DD
+    interview_format: Mapped[str | None] = mapped_column(String(20))  # phone, video, onsite
+    interviewer_names: Mapped[list[str] | None] = mapped_column(JSONB)
+
+    # ── Company research (interview-focused) ──────────────────
+    company_research: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Verified conversation hooks: [{"topic": "...", "source_url": "..."}]
+    conversation_hooks: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Likely questions ──────────────────────────────────────
+    # [{"question": "...", "source": "feedback|gaps|requirements|stage", "priority": "high|medium|low"}]
+    likely_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── STAR answer mapping ───────────────────────────────────
+    # [{"question": "...", "star_example_id": "...", "star_example_title": "..."}]
+    star_mapping: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── New STAR drafts (for questions not covered by existing examples) ────
+    # [{"question": "...", "draft_situation": "...", "draft_task": "...", "draft_action": "...", "draft_result": "..."}]
+    new_star_drafts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Consistency brief ─────────────────────────────────────
+    # Claims from submitted CV/cover letter that interviewer will probe
+    consistency_brief: Mapped[list[str] | None] = mapped_column(JSONB)
+
+    # ── Tough questions (customized) ──────────────────────────
+    # [{"question": "...", "answer": "..."}]
+    tough_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Questions to ask interviewer ──────────────────────────
+    # [{"question": "...", "category": "role|team|tech|culture", "why_ask": "..."}]
+    questions_to_ask: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+    # ── Logistics ─────────────────────────────────────────────
+    logistics: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+    # ── Mock interview transcript (optional) ──────────────────
+    mock_transcript: Mapped[str | None] = mapped_column(Text)
+
+    # ── Raw LLM response (for debugging) ──────────────────────
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+    # ── Relationships ─────────────────────────────────────────
+    application: Mapped["Application"] = relationship(backref="interview_preps")

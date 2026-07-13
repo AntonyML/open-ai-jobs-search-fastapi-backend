@@ -80,7 +80,8 @@
 | 2026-07-12 | ✅ FASE 3.1 — Setup (perfil candidato) completado |
 | 2026-07-12 | ✅ FASE 3.2 — Scrape completado |
 | 2026-07-12 | ✅ FASE 3.3 — Rank (evaluación de fit + optimización ATS) completado |
-| 2026-07-12 | 🔄 FASE 3.4 — Apply (generación CV/carta tailored) en progreso |
+| 2026-07-12 | ✅ FASE 3.4 — Apply (generación CV/carta tailored) completado |
+| 2026-07-12 | ✅ FASE 3.5 — Interview (preparación entrevistas) completado |
 
 ---
 
@@ -91,8 +92,12 @@
 - [x] ✅ FASE 3.1 — Setup (perfil candidato)
 - [x] ✅ FASE 3.2 — Scrape
 - [x] ✅ FASE 3.3 — Rank (evaluación de fit + optimización ATS)
-- [-] 🔄 FASE 3.4 — Apply (generación CV/carta tailored con LaTeX)
-- [ ] ⏸️ FASE 3.5 — Resto de skills (interview, outcome, expand, upskill, add-portal, add-template, reset)
+- [x] ✅ FASE 3.4 — Apply (generación CV/carta tailored con LaTeX)
+- [x] ✅ FASE 3.5 — Interview (preparación entrevistas)
+- [ ] ⏸️ FASE 3.5 — Outcome (registro resultados)
+- [ ] ⏸️ FASE 3.5 — Expand (expansión competencias)
+- [ ] ⏸️ FASE 3.5 — Upskill (plan aprendizaje)
+- [ ] ⏸️ FASE 3.5 — Add-portal / Add-template / Reset
 - [ ] ⏸️ FASE 4 — Esquema de base de datos Supabase
 
 ---
