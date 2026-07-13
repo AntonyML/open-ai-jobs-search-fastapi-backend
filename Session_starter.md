@@ -166,6 +166,7 @@ Configuración independiente: `/add-portal/*`, `/add-template/*`, `/reset/`
 | 2026-07-13 | ✅ **BackgroundTasks implementado** — `expand` y `upskill` usan BackgroundTasks con campo `status` en BD; `apply`, `interview`, `add-portal` requieren migraciones |
 | 2026-07-13 | ✅ **get_llm_provider real** — Creado `app/services/provider_credentials.py` con cifrado Fernet, actualizado `get_llm_provider` en `deps.py` para consultar BD, añadido `get_provider_kwargs` helper en `llm/adapter.py` |
 | 2026-07-13 | ✅ **Validación de entrada estricta** — Añadidos validadores para URLs (LinkedIn, GitHub), email (EmailStr), teléfono (E.164), fechas (YYYY-MM/YYYY-MM-DD) en `profile.py`, `scrape.py` |
+| 2026-07-13 | ✅ **Logging estructurado** — Creado `app/core/logging.py` con configuración structlog, integrado en `main.py` lifespan, instalado `structlog` dependencia |
 
 ---
 
