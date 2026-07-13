@@ -282,19 +282,20 @@ async def execute_rank(
 
     # 5. Build shortlist and counts
     shortlist = []
-    for job, eval_ in ranked_jobs[:top_n]:
-        shortlist.append(
-            RankedJobOut(
-                job=JobPostingSummary.model_validate(job),
-                evaluation=eval_,
-            )
-        )
-
-    for job, eval_ in ranked_jobs[top_n:]:
-        if eval_.overall_score < 30 or eval_.location_status == "FAIL":
+    for job, eval_ in ranked_jobs:
+        if eval_.location_status == "FAIL":
             expired_or_vetoed += 1
-        else:
+        elif len(shortlist) < top_n:
+            shortlist.append(
+                RankedJobOut(
+                    job=JobPostingSummary.model_validate(job),
+                    evaluation=eval_,
+                )
+            )
+        elif eval_.overall_score < 30:
             below_threshold += 1
+        else:
+            expired_or_vetoed += 1
 
     # 6. Update job statuses
     for job, eval_ in ranked_jobs:
@@ -384,28 +385,32 @@ async def _rank_single_job(
     )
     verdict = score_to_verdict(overall)
 
-    # Create evaluation record
-    evaluation = RankEvaluation(
-        job_posting_id=job.id,
-        user_id=candidate.user_id,
-        technical_score=llm_output.technical_score,
-        experience_score=llm_output.experience_score,
-        behavioral_score=llm_output.behavioral_score,
-        career_score=llm_output.career_score,
-        overall_score=overall,
-        verdict=verdict,
-        location_status=llm_output.location_status,
-        deadline=llm_output.deadline,
-        deadline_urgent=llm_output.deadline_urgent,
-        strengths=llm_output.strengths,
-        gaps=llm_output.gaps,
-        missing_keywords=llm_output.missing_keywords,
-        red_flags=llm_output.red_flags,
-        language=llm_output.language,
-        raw_response=llm_output.model_dump(),
+    # Upsert evaluation record (one evaluation per job_posting_id)
+    existing_result = await db.execute(
+        select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
     )
-
-    db.add(evaluation)
+    evaluation = existing_result.scalar_one_or_none()
+    if evaluation is None:
+        evaluation = RankEvaluation(
+            job_posting_id=job.id,
+            user_id=candidate.user_id,
+        )
+        db.add(evaluation)
+    evaluation.technical_score = llm_output.technical_score
+    evaluation.experience_score = llm_output.experience_score
+    evaluation.behavioral_score = llm_output.behavioral_score
+    evaluation.career_score = llm_output.career_score
+    evaluation.overall_score = overall
+    evaluation.verdict = verdict
+    evaluation.location_status = llm_output.location_status
+    evaluation.deadline = llm_output.deadline
+    evaluation.deadline_urgent = llm_output.deadline_urgent
+    evaluation.strengths = llm_output.strengths
+    evaluation.gaps = llm_output.gaps
+    evaluation.missing_keywords = llm_output.missing_keywords
+    evaluation.red_flags = llm_output.red_flags
+    evaluation.language = llm_output.language
+    evaluation.raw_response = llm_output.model_dump()
     await db.flush()
     await db.refresh(evaluation)
 

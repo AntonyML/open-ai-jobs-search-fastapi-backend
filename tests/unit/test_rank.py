@@ -205,14 +205,14 @@ async def test_execute_rank_basic(db_session, sample_candidate, sample_job):
     assert item.evaluation.experience_score == 80
     assert item.evaluation.behavioral_score == 75
     assert item.evaluation.career_score == 90
-    assert item.evaluation.overall_score == 83  # weighted: 85*0.3 + 80*0.25 + 75*0.15 + 90*0.3
+    assert item.evaluation.overall_score == 84 # weighted: 85*0.3 + 80*0.25 + 75*0.15 + 90*0.3 = 83.75 -> round = 84
     assert item.evaluation.verdict == "Strong Fit"
     assert item.evaluation.location_status == "PASS"
 
     # Check job was updated
     await db_session.refresh(sample_job)
     assert sample_job.status == "ranked"
-    assert sample_job.rank_score == 83
+    assert sample_job.rank_score == 84
     assert sample_job.rank_verdict == "Strong Fit"
 
 

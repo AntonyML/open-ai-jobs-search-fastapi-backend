@@ -332,6 +332,7 @@ async def execute_upskill(
     upskill = Upskill(
         user_id=user_id,
         candidate_id=candidate.id,
+        mode=mode,
         target_job_posting_id=target_job_posting_id,
         target_job_url=target_job_url,
         status="running",
