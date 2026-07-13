@@ -1,7 +1,10 @@
-"""Security utilities: JWT creation/verification, password hashing."""
+"""Security utilities: JWT creation/verification, password hashing, API key encryption."""
 
 from datetime import datetime, timedelta, timezone
+import base64
+import os
 
+from cryptography.fernet import Fernet
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -9,6 +12,11 @@ from app.core.settings import get_settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 settings = get_settings()
+
+# Fernet key for API key encryption (derived from JWT secret)
+# In production, use a separate dedicated key
+_fernet_key = base64.urlsafe_b64encode(settings.jwt_secret_key.encode()[:32].ljust(32, b'0'))
+_fernet = Fernet(_fernet_key)
 
 
 def hash_password(password: str) -> str:
@@ -33,3 +41,27 @@ def create_access_token(subject: str, expires_minutes: int | None = None) -> str
 def decode_access_token(token: str) -> dict:
     """Decode and validate a JWT. Raises JWTError on failure."""
     return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+
+
+def encrypt_api_key(api_key: str) -> str:
+    """Encrypt an API key for storage.
+
+    Args:
+        api_key: Plaintext API key
+
+    Returns:
+        Base64-encoded encrypted key
+    """
+    return _fernet.encrypt(api_key.encode()).decode()
+
+
+def decrypt_api_key(encrypted_key: str) -> str:
+    """Decrypt an API key from storage.
+
+    Args:
+        encrypted_key: Base64-encoded encrypted key
+
+    Returns:
+        Plaintext API key
+    """
+    return _fernet.decrypt(encrypted_key.encode()).decode()

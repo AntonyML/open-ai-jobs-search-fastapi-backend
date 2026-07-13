@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.settings import get_settings
 from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation, User
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
-from app.llm.adapter import llm_completion_structured
+from app.llm.adapter import llm_completion_structured, get_provider_kwargs
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
@@ -670,6 +670,7 @@ async def execute_apply(
     rank_evaluation_id: str | None = None,
     cv_template: str = "moderncv-banking",
     cover_letter_template: str = "cover-cls",
+    provider_config: dict | None = None,
 ) -> ApplyResult:
     """Execute the full apply workflow.
 
@@ -680,6 +681,7 @@ async def execute_apply(
         rank_evaluation_id: Specific evaluation to use (optional)
         cv_template: CV template name
         cover_letter_template: Cover letter template name
+        provider_config: Optional LLM provider configuration
 
     Returns:
         ApplyResult with application ID and compilation status
@@ -723,10 +725,10 @@ async def execute_apply(
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
     # 4. Generate tailored experience via LLM
-    tailored_experience = await _generate_tailored_experience(candidate, job, evaluation)
+    tailored_experience = await _generate_tailored_experience(candidate, job, evaluation, provider_config)
 
     # 5. Generate cover letter content via LLM
-    cover_letter_content = await _generate_cover_letter(candidate, job, evaluation, tailored_experience)
+    cover_letter_content = await _generate_cover_letter(candidate, job, evaluation, tailored_experience, provider_config)
 
     # 6. Render LaTeX
     cv_tex = render_cv_latex(candidate, tailored_experience, job)
@@ -812,19 +814,41 @@ async def execute_apply(
     )
 
 
+def _get_provider_kwargs(provider_config: dict | None) -> dict:
+    """Extract provider kwargs from provider config for LLM calls.
+
+    Args:
+        provider_config: Dict with provider, model, api_key, api_base
+
+    Returns:
+        Dict with provider, model, api_key, api_base for LLM calls
+    """
+    if not provider_config:
+        return {}
+
+    return {
+        "provider": provider_config.get("provider"),
+        "model": provider_config.get("model"),
+        "api_key": provider_config.get("api_key"),
+        "api_base": provider_config.get("api_base"),
+    }
+
+
 async def _generate_tailored_experience(
     candidate: CandidateProfile,
     job: JobPosting,
     evaluation: RankEvaluation,
+    provider_config: dict | None = None,
 ) -> list[TailoredExperienceEntry]:
     """Call LLM to generate tailored experience section."""
     messages = build_tailored_experience_prompt(candidate, job, evaluation)
 
     try:
+        provider_kwargs = _get_provider_kwargs(provider_config)
         result: TailoredExperienceLLMOutput = await llm_completion_structured(
             messages=messages,
             output_schema=TailoredExperienceLLMOutput,
-            provider=settings.llm_default_provider,
+            **provider_kwargs,
             temperature=0.3,
             max_tokens=3000,
         )
@@ -838,15 +862,17 @@ async def _generate_cover_letter(
     job: JobPosting,
     evaluation: RankEvaluation,
     tailored_experience: list[TailoredExperienceEntry],
+    provider_config: dict | None = None,
 ) -> CoverLetterLLMOutput:
     """Call LLM to generate cover letter content."""
     messages = build_cover_letter_prompt(candidate, job, evaluation, tailored_experience)
 
     try:
+        provider_kwargs = _get_provider_kwargs(provider_config)
         result: CoverLetterLLMOutput = await llm_completion_structured(
             messages=messages,
             output_schema=CoverLetterLLMOutput,
-            provider=settings.llm_default_provider,
+            **provider_kwargs,
             temperature=0.4,
             max_tokens=2000,
         )

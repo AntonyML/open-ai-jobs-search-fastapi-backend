@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_llm_provider
 from app.db.session import get_db as _get_db
 from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut
 from app.services import apply
@@ -20,6 +20,7 @@ async def trigger_apply(
     payload: ApplyRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    provider_config: dict = Depends(get_llm_provider),
 ):
     """Generate tailored CV and cover letter for a ranked job.
 
@@ -33,6 +34,7 @@ async def trigger_apply(
         rank_evaluation_id=payload.rank_evaluation_id,
         cv_template=payload.cv_template or "moderncv-banking",
         cover_letter_template=payload.cover_letter_template or "cover-cls",
+        provider_config=provider_config,
     )
     return result
 

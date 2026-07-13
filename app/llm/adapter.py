@@ -39,6 +39,32 @@ def _build_kwargs(
     return kwargs
 
 
+def get_provider_kwargs(provider_config: dict | None) -> dict[str, Any]:
+    """Extract provider kwargs from a provider config dict.
+
+    Args:
+        provider_config: Dict with keys "provider", "model", "api_key", "api_base"
+            or None to use defaults from settings.
+
+    Returns:
+        Dict with provider, model, api_key, api_base for LLM calls.
+    """
+    if provider_config is None:
+        return {
+            "provider": settings.llm_default_provider,
+            "model": "claude-sonnet-4-20250514",
+            "api_key": None,
+            "api_base": None,
+        }
+
+    return {
+        "provider": provider_config.get("provider", settings.llm_default_provider),
+        "model": provider_config.get("model", "claude-sonnet-4-20250514"),
+        "api_key": provider_config.get("api_key"),
+        "api_base": provider_config.get("api_base"),
+    }
+
+
 async def llm_completion(
     messages: list[dict[str, str]],
     *,
