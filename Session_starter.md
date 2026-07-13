@@ -88,6 +88,86 @@
 
 ---
 
+# 📊 FASE 3.5 — Upskill (Plan de Aprendizaje)
+**Estado:** ✅ Completada — esperando aprobación para siguiente skill
+
+---
+
+## 📦 Archivos creados/modificados
+| Archivo | Líneas | Descripción |
+|---------|--------|-------------|
+| models.py | +80 | Modificado — añadido modelo Upskill con desglose completo |
+| upskill.py (schemas) | ~150 | Schemas: UpskillRequest, UpskillOut, UpskillSummaryOut, HardSkillGapOut, SynthesizedGapOut, GapHeatmapOut, LearningResourceOut, LearningPlanItemOut + LLM output schemas |
+| upskill.py (servicio) | ~500 | Servicio: Pass 1 (hard skill diff), Pass 2 (LLM synthesis), Pass 3 (heatmap), Pass 4 (learning plan con recursos web) |
+| upskill.py (router) | ~60 | Router: 3 endpoints bajo /api/v1/upskill/ |
+| router.py | ~15 | Modificado — montado router de upskill |
+| test_upskill.py | ~300 | 10 tests: aggregate, targeted, perfil no encontrado, sin jobs, job no encontrado, LLM error, get by id, get not found, list, summary gaps count |
+
+---
+
+## 🗄️ Modelo ORM añadido
+**`upskills`** — registro de una corrida de análisis upskill:
+- user_id, candidate_id (FKs)
+- Mode: aggregate (todos los jobs trackeados) | targeted (job único)
+- Target job: target_job_posting_id, target_job_url
+- Hard skill gaps (Pass 1): hard_skill_gaps (JSONB) — skill, type, priority, source_jobs[], frequency, fit_weight
+- Synthesized gaps (Pass 2): synthesized_gaps (JSONB) — skill, type (domain/soft/tooling/credential), priority, evidence
+- Gap heatmap: gap_heatmap (JSONB) — skill, type, priority, gap_source
+- Learning plan: learning_plan (JSONB) — skill, type, priority, resources[] (title, url, format, duration_hours, cost, quality_score), study_order, prerequisites[], estimated_weeks
+- Status: pending → completed | failed, error_message
+- Raw LLM response: raw_response (JSONB)
+
+---
+
+## 🔌 Endpoints creados
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | /api/v1/upskill/ | Ejecutar análisis upskill (síncrono, con mode, target_job_url, target_job_posting_id) |
+| GET | /api/v1/upskill/{upskill_id} | Obtener análisis por ID |
+| GET | /api/v1/upskill/ | Listar análisis del usuario |
+
+---
+
+## ⚙️ Lógica del servicio (upskill.py)
+1. **Guardrails obligatorios** (constantes en código, no configurables)
+2. **Flujo completo (4 pasos):**
+   - Obtiene perfil candidato — valida que existe
+   - Selecciona jobs a analizar: aggregate (todos los jobs con status="ranked") o targeted (job específico)
+   - **Pass 1:** Hard skill diff — frequency map + fit-weighting, elimina skills del candidato
+   - **Pass 2:** LLM synthesis — domain knowledge, soft skills, tooling/process, credentials
+   - **Pass 3:** Heatmap — combina Pass 1 + Pass 2 en tabla unificada
+   - **Pass 4:** Learning plan — 2-3 recursos por gap, prioriza gratis, ordena por prioridad y prerequisitos
+   - Persiste Upskill + actualiza status
+
+---
+
+## 🛡️ Decisiones de diseño aplicadas
+1. Schemas separados de ORM
+2. Dependencias centralizadas desde deps.py
+3. Excepciones de negocio: LLMError, NotFoundError, ProfileIncompleteError
+4. LiteLLM structured output con schemas Pydantic
+5. Tests con SQLite in-memory + mocks (no requieren LLM real)
+6. Síncrono por ahora — para producción mover a background task
+
+---
+
+## 🚦 Hard Stop — FASE 3.5 Upskill completada
+**Listo:**
+- ✅ Modelo ORM Upskill con desglose completo (4 passes)
+- ✅ Schemas Pydantic validados (incluyendo LLM output schemas)
+- ✅ Servicio completo: Pass 1, Pass 2, Pass 3, Pass 4
+- ✅ Router con 3 endpoints funcionales
+- ✅ 10 tests unitarios (aggregate, targeted, errores, get/list, summary)
+- ✅ Session_starter.md actualizado
+
+**Pendiente para iteración futura:**
+- ⏸️ Mover upskill a background task
+- ⏸️ Cache de enriquecimientos
+- ⏸️ Integración real con APIs de búsqueda web
+- ⏸️ UI para aprobar/rechazar learning plan
+
+---
+
 ## 📋 Active Priorities
 - [x] ✅ FASE 0 — Auditoría del repo fuente
 - [x] ✅ FASE 1 — Scaffolding del proyecto

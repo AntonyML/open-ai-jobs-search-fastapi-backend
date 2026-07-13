@@ -31,33 +31,28 @@ class AddPortalRequest(BaseModel):
 
 
 class PortalSkillOut(BaseModel):
-    """Generated portal skill metadata."""
+    """Generated portal skill metadata (filesystem-backed, no ORM)."""
 
-    id: str
-    user_id: str
-    portal_url: str
     skill_name: str
+    portal_url: str
     market_and_language: str
-    test_query: str
+    test_query: str | None = None
     status: str
     error_message: str | None = None
+    test_result: dict | None = None
+    investigation: dict | None = None
     created_at: datetime
     updated_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 class PortalSkillSummaryOut(BaseModel):
     """Lightweight portal skill for list views."""
 
-    id: str
     skill_name: str
     portal_url: str
     market_and_language: str
     status: str
     created_at: datetime
-
-    model_config = {"from_attributes": True}
 
 
 # ── LLM output schemas ──────────────────────────────────────────────

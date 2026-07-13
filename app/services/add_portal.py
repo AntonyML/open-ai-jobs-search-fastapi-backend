@@ -8,6 +8,7 @@ Implements the /add-portal workflow from the original repo:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -176,6 +177,7 @@ async def execute_add_portal(
     test_result = await _test_skill(payload.skill_name, payload.test_query)
 
     # 7. Return result
+    now = datetime.now(timezone.utc)
     return {
         "skill_name": payload.skill_name,
         "portal_url": payload.portal_url,
@@ -184,6 +186,8 @@ async def execute_add_portal(
         "status": "completed" if test_result["success"] else "completed_with_warnings",
         "test_result": test_result,
         "investigation": investigation,
+        "created_at": now,
+        "updated_at": now,
     }
 
 

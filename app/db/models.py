@@ -8,9 +8,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# Cross-engine JSON type: JSONB on PostgreSQL, plain JSON on SQLite (tests)
+FlexJSON = JSON().with_variant(JSONB(), "postgresql")
 
 
 class Base(DeclarativeBase):
