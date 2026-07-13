@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.db.session import get_db as _get_db
-from app.schemas.apply import ApplyRequest, ApplyResult
+from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut
 from app.services import apply
 
 router = APIRouter(prefix="/apply", tags=["apply"])
@@ -37,7 +37,7 @@ async def trigger_apply(
     return result
 
 
-@router.get("/{application_id}", response_model=apply.ApplicationOut)
+@router.get("/{application_id}", response_model=ApplicationOut)
 async def get_application(
     application_id: str,
     user: dict = Depends(get_current_user),
@@ -47,7 +47,7 @@ async def get_application(
     return await apply.get_application(db, application_id, user["sub"])
 
 
-@router.get("/", response_model=list[apply.ApplicationOut])
+@router.get("/", response_model=list[ApplicationOut])
 async def list_applications(
     limit: int = 20,
     offset: int = 0,
