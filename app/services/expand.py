@@ -490,8 +490,8 @@ async def execute_expand(
 
         # 6. Update expansion record
         expansion.experience_items = all_items
-        expansion.enriched_competencies = enriched
-        expansion.proposed_additions = proposed
+        expansion.enriched_competencies = [e.model_dump() for e in enriched]
+        expansion.proposed_additions = [p.model_dump() for p in proposed]
         expansion.status = "completed"
         await db.commit()
 

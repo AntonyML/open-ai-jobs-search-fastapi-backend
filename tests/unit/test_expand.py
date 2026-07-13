@@ -257,10 +257,60 @@ async def test_execute_expand_llm_error(db_session, sample_candidate):
 async def test_execute_expand_with_experience_items(db_session, sample_candidate):
     """execute_expand processes experience items and enriches them."""
     with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
-            mock_enriched_competencies(),
-            mock_proposed_additions(),
-        ]
+        # Create a dynamic mock that returns enrichments only for items in the input
+        call_count = 0
+        
+        async def dynamic_mock_enriched(messages, output_schema, provider, temperature, max_tokens):
+            nonlocal call_count
+            call_count += 1
+            
+            if call_count == 1:
+                # First call: competency enrichment
+                # Parse the user message to find which item IDs are being enriched
+                user_msg = messages[1]["content"] if len(messages) > 1 else ""
+                # Extract item IDs from the message (they appear as "ID: cv_0")
+                import re
+                item_ids = re.findall(r'ID: (\w+)', user_msg)
+                
+                # Return enrichments only for those items
+                all_enrichments = [
+                    expand.EnrichedCompetency(
+                        experience_item_id="cv_0",
+                        competencies=[
+                            "TensorRT optimization",
+                            "ML pipeline architecture",
+                            "Distributed training",
+                            "Model serving",
+                            "Performance profiling",
+                        ],
+                    ),
+                    expand.EnrichedCompetency(
+                        experience_item_id="cv_1",
+                        competencies=[
+                            "Collaborative filtering",
+                            "A/B testing",
+                            "Recommendation systems",
+                            "Research methodology",
+                            "Academic writing",
+                        ],
+                    ),
+                    expand.EnrichedCompetency(
+                        experience_item_id="li_0",
+                        competencies=[
+                            "Kubernetes",
+                            "Docker",
+                            "CI/CD pipelines",
+                            "Cloud infrastructure",
+                        ],
+                    ),
+                ]
+                filtered = [e for e in all_enrichments if e.experience_item_id in item_ids]
+                return expand.EnrichedCompetenciesLLMOutput(enrichments=filtered)
+            else:
+                # Second call: proposed additions
+                return mock_proposed_additions()
+        
+        mock_llm.side_effect = dynamic_mock_enriched
 
         with patch("app.services.expand._scan_cv_folder", return_value=[
             {"id": "cv_0", "source": "cv", "type": "job_bullet", "title": "Senior ML Engineer", "description": "Built ML pipeline", "date": "2020-01", "source_file": "cv.pdf"},
@@ -595,6 +645,7 @@ async def test_compile_latex_failure():
 @pytest.mark.asyncio
 async def test_compile_latex_wrong_page_count():
     """compile_latex raises LatexCompileError on wrong page count."""
+    import tempfile
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         mock_proc = AsyncMock()
         mock_proc.returncode = 0
