@@ -432,7 +432,7 @@ async def test_get_rank_evaluation_not_found(db_session):
 async def test_list_ranked_jobs(db_session, sample_candidate):
     """list_ranked_jobs returns ranked jobs with filters."""
     # Create ranked jobs
-    for i, score in enumerate([90, 75, 60, 40]):
+    for i, score in enumerate([90, 74, 60, 40]):
         job = JobPosting(
             user_id="test-user-id",
             portal="linkedin",

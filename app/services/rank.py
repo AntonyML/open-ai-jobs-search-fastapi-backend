@@ -424,14 +424,13 @@ async def get_rank_evaluation(
     db: AsyncSession, job_posting_id: str, user_id: str
 ) -> RankEvaluation:
     """Get the rank evaluation for a job posting."""
-    result = await db.execute(
-        select(RankEvaluation)
-        .join(JobPosting, RankEvaluation.job_posting_id == JobPosting.id)
-        .where(
-            RankEvaluation.job_posting_id == job_posting_id,
-            JobPosting.user_id == user_id,
+    with db.no_autoflush:
+        result = await db.execute(
+            select(RankEvaluation).where(
+                RankEvaluation.job_posting_id == job_posting_id,
+                RankEvaluation.user_id == user_id,
+            )
         )
-    )
     evaluation = result.scalar_one_or_none()
     if evaluation is None:
         raise NotFoundError("Rank evaluation not found.")
