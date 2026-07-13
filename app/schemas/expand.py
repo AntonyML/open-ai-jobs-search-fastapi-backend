@@ -119,13 +119,30 @@ class ExperienceItemLLMOutput(BaseModel):
     items: list[dict[str, Any]] = []
 
 
+class EnrichedCompetency(BaseModel):
+    """A single competency enrichment for an experience item."""
+
+    experience_item_id: str
+    competencies: list[str] = []
+    source: str = "inferred"
+    source_urls: list[str] = []
+
+
 class EnrichedCompetenciesLLMOutput(BaseModel):
     """Structured output for competency enrichment."""
 
-    enrichments: list[dict[str, Any]] = []
+    enrichments: list[EnrichedCompetency] = []
+
+
+class ProposedAddition(BaseModel):
+    """A proposed addition to the candidate profile."""
+
+    category: str
+    item: dict[str, Any] | str = {}
+    reason: str = ""
 
 
 class ProposedAdditionsLLMOutput(BaseModel):
     """Structured output for proposed profile additions."""
 
-    additions: list[dict[str, Any]] = []
+    additions: list[ProposedAddition] = []

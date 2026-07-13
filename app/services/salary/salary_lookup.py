@@ -18,11 +18,12 @@ Usage:
 """
 
 import json
-import sys
 import re
 import argparse
 import unicodedata
 from pathlib import Path
+
+from app.exceptions import NotFoundError
 
 DATA_FILE = Path(__file__).parent / "salary_data.json"
 
@@ -45,14 +46,11 @@ STRIP_PATTERNS = [
 
 def load_data():
     if not DATA_FILE.exists():
-        print("Error: salary_data.json not found.", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("This tool requires a salary data file.", file=sys.stderr)
-        print("See tools/README_SALARY_TOOL.md for setup instructions.", file=sys.stderr)
-        print("", file=sys.stderr)
-        print("If you don't have salary data, the salary lookup", file=sys.stderr)
-        print("step will be skipped during /apply.", file=sys.stderr)
-        sys.exit(1)
+        raise NotFoundError(
+            "salary_data.json not found. "
+            "See tools/README_SALARY_TOOL.md for setup instructions. "
+            "If you don't have salary data, the salary lookup step will be skipped during /apply."
+        )
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 

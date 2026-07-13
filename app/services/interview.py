@@ -31,14 +31,23 @@ from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion_structured
 from app.schemas.interview import (
     CompanyResearchLLMOutput,
+    CompanyResearchOut,
     ConversationHookLLMOutput,
+    ConversationHookOut,
     LikelyQuestionsLLMOutput,
+    LikelyQuestionOut,
     StarMappingLLMOutput,
+    StarMappingOut,
     NewStarDraftsLLMOutput,
+    NewStarDraftOut,
     ConsistencyBriefLLMOutput,
+    ConsistencyBriefOut,
     ToughQuestionsLLMOutput,
+    ToughQuestionOut,
     QuestionsToAskLLMOutput,
+    QuestionToAskOut,
     LogisticsLLMOutput,
+    LogisticsOut,
 )
 
 settings = get_settings()

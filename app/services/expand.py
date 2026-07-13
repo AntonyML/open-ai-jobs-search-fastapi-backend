@@ -29,9 +29,18 @@ from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion_structured
 from app.schemas.expand import (
     EnrichedCompetenciesLLMOutput,
+    EnrichedCompetency,
     ExperienceItemLLMOutput,
     ProposedAdditionsLLMOutput,
+    ProposedAddition,
+    ExpandRequest,
+    CompetencyExpansionOut,
+    CompetencyExpansionSummaryOut,
+    ExperienceItemOut,
+    EnrichedCompetencyOut,
+    ProposedAdditionOut,
 )
+from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 
 settings = get_settings()
 
@@ -54,6 +63,10 @@ The candidate must be able to defend every proposed addition in an interview wit
 
 # ── Document scanning helpers ───────────────────────────────────────
 
+def _extract_text_from_pdf(file_path: Path) -> str:
+    """Extract text from a PDF file. Stub — replace with real PDF library (pypdf, pdfplumber) in production."""
+    # In production, use pypdf.PdfReader(file_path).pages[0].extract_text() or similar
+    return f"[PDF content from {file_path.name}]"
 
 def _get_documents_dir() -> Path:
     """Get the documents directory path."""
@@ -66,19 +79,22 @@ def _scan_cv_folder() -> list[dict[str, Any]]:
     cv_dir = _get_documents_dir() / "cv"
     if not cv_dir.exists():
         return items
-
     for file_path in cv_dir.glob("*"):
-        if file_path.suffix.lower() in {".pdf", ".txt", ".md", ".docx"}:
-            # In a real implementation, you'd extract text from the file
-            # For now, we'll note the file exists
-            items.append({
-                "source": "cv",
-                "type": "document",
-                "title": file_path.stem,
-                "description": f"CV document: {file_path.name}",
-                "date": None,
-                "source_file": str(file_path),
-            })
+        suffix = file_path.suffix.lower()
+        if suffix == ".pdf":
+            description = _extract_text_from_pdf(file_path)
+        elif suffix in {".txt", ".md"}:
+            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
+        else:
+            description = f"CV document: {file_path.name}"
+        items.append({
+            "source": "cv",
+            "type": "document",
+            "title": file_path.stem,
+            "description": description,
+            "date": None,
+            "source_file": str(file_path),
+        })
     return items
 
 
@@ -88,17 +104,24 @@ def _scan_linkedin_folder() -> list[dict[str, Any]]:
     linkedin_dir = _get_documents_dir() / "linkedin"
     if not linkedin_dir.exists():
         return items
-
     for file_path in linkedin_dir.glob("*"):
-        if file_path.suffix.lower() in {".pdf", ".txt", ".md", ".json"}:
-            items.append({
-                "source": "linkedin",
-                "type": "document",
-                "title": file_path.stem,
-                "description": f"LinkedIn export: {file_path.name}",
-                "date": None,
-                "source_file": str(file_path),
-            })
+        suffix = file_path.suffix.lower()
+        if suffix == ".pdf":
+            description = _extract_text_from_pdf(file_path)
+        elif suffix == ".json":
+            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
+        elif suffix in {".txt", ".md"}:
+            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
+        else:
+            description = f"LinkedIn export: {file_path.name}"
+        items.append({
+            "source": "linkedin",
+            "type": "document",
+            "title": file_path.stem,
+            "description": description,
+            "date": None,
+            "source_file": str(file_path),
+        })
     return items
 
 
@@ -108,17 +131,22 @@ def _scan_diplomas_folder() -> list[dict[str, Any]]:
     diplomas_dir = _get_documents_dir() / "diplomas"
     if not diplomas_dir.exists():
         return items
-
     for file_path in diplomas_dir.glob("*"):
-        if file_path.suffix.lower() in {".pdf", ".txt", ".md", ".jpg", ".png"}:
-            items.append({
-                "source": "diplomas",
-                "type": "certification",
-                "title": file_path.stem,
-                "description": f"Diploma/certificate: {file_path.name}",
-                "date": None,
-                "source_file": str(file_path),
-            })
+        suffix = file_path.suffix.lower()
+        if suffix == ".pdf":
+            description = _extract_text_from_pdf(file_path)
+        elif suffix in {".txt", ".md"}:
+            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
+        else:
+            description = f"Diploma/certificate: {file_path.name}"
+        items.append({
+            "source": "diplomas",
+            "type": "certification",
+            "title": file_path.stem,
+            "description": description,
+            "date": None,
+            "source_file": str(file_path),
+        })
     return items
 
 
@@ -128,43 +156,52 @@ def _scan_references_folder() -> list[dict[str, Any]]:
     refs_dir = _get_documents_dir() / "references"
     if not refs_dir.exists():
         return items
-
     for file_path in refs_dir.glob("*"):
-        if file_path.suffix.lower() in {".pdf", ".txt", ".md"}:
-            items.append({
-                "source": "references",
-                "type": "reference",
-                "title": file_path.stem,
-                "description": f"Reference letter: {file_path.name}",
-                "date": None,
-                "source_file": str(file_path),
-            })
+        suffix = file_path.suffix.lower()
+        if suffix == ".pdf":
+            description = _extract_text_from_pdf(file_path)
+        elif suffix in {".txt", ".md"}:
+            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
+        else:
+            description = f"Reference letter: {file_path.name}"
+        items.append({
+            "source": "references",
+            "type": "reference",
+            "title": file_path.stem,
+            "description": description,
+            "date": None,
+            "source_file": str(file_path),
+        })
     return items
 
 
-def _scan_github_profile(candidate: CandidateProfile) -> list[dict[str, Any]]:
+def _fetch_github_repos(username: str) -> list[dict[str, Any]]:
+    """Fetch public repositories for a GitHub user. Stub — replace with real GitHub API call in production."""
+    # In production, use httpx.get(f"https://api.github.com/users/{username}/repos") or PyGithub
+    return []
+
+def _scan_github_profile(candidate: CandidateProfile | str) -> list[dict[str, Any]]:
     """Scan GitHub profile for repositories as experience items."""
+    if isinstance(candidate, str):
+        username = candidate
+        github_url = f"https://github.com/{username}"
+    else:
+        github_url = candidate.github_url or ""
+        match = re.search(r"github\.com/([^/?#]+)", github_url)
+        username = match.group(1) if match else ""
+    repos = _fetch_github_repos(username) if username else []
     items = []
-    github_url = candidate.github_url
-    if not github_url:
-        return items
-
-    # Extract username from URL
-    match = re.search(r"github\.com/([^/?#]+)", github_url)
-    if not match:
-        return items
-
-    username = match.group(1)
-    # In a real implementation, you'd call GitHub API here
-    # For now, we note the profile exists
-    items.append({
-        "source": "github",
-        "type": "profile",
-        "title": f"GitHub: {username}",
-        "description": f"GitHub profile with repositories",
-        "date": None,
-        "source_file": github_url,
-    })
+    for repo in repos:
+        items.append({
+            "source": "github",
+            "type": "repo",
+            "title": repo.get("name", ""),
+            "description": repo.get("description", "") or "",
+            "date": None,
+            "source_file": github_url,
+            "language": repo.get("language", ""),
+            "topics": repo.get("topics", []),
+        })
     return items
 
 

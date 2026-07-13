@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from app.api.v1.auth import router as auth_router
 from app.api.v1.setup import router as setup_router
 from app.api.v1.scrape import router as scrape_router
 from app.api.v1.rank import router as rank_router
@@ -22,6 +23,9 @@ async def health_check():
     """Liveness probe — returns 200 if the API is running."""
     return {"status": "ok", "version": "0.1.0"}
 
+
+# ── Auth router ────────────────────────────────────────────────────
+router.include_router(auth_router)
 
 # ── Skill routers ──────────────────────────────────────────────────
 router.include_router(setup_router)

@@ -49,7 +49,7 @@ async def db_session():
 
 
 @pytest.fixture
-def sample_candidate(db_session):
+async def sample_candidate(db_session):
     """Create a sample candidate profile."""
     candidate = CandidateProfile(
         user_id="test-user-id",
@@ -112,8 +112,8 @@ def sample_candidate(db_session):
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
-    db_session.commit()
-    db_session.refresh(candidate)
+    await db_session.commit()
+    await db_session.refresh(candidate)
     return candidate
 
 

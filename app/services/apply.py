@@ -166,8 +166,8 @@ TAILORED EXPERIENCE (already generated, use as reference):
 
 RANK EVALUATION:
 - Overall fit: {evaluation.verdict} ({evaluation.overall_score}/100)
-- Missing keywords addressed: {', '.join([k.keyword for k in evaluation.incorporated_keywords]) if evaluation.incorporated_keywords else 'None'}
-- Red flags addressed: {', '.join([r.red_flag for r in evaluation.addressed_red_flags]) if evaluation.addressed_red_flags else 'None'}
+- Missing keywords: {', '.join(evaluation.missing_keywords or [])}
+- Red flags: {', '.join(evaluation.red_flags or [])}
 
 TASK:
 Write a cover letter in the SAME LANGUAGE as the job posting ({job.language or 'en'}).
@@ -311,7 +311,7 @@ def render_cv_latex(
     profile_stmt = candidate.profile_statement or "Experienced professional seeking new opportunities."
     template = re.sub(
         r"\\small\{.*?Profile statement.*?\}",
-        f"\\small{{{profile_stmt}}}",
+        lambda m: f"\\small{{{profile_stmt}}}",
         template,
         flags=re.DOTALL,
     )
@@ -320,7 +320,7 @@ def render_cv_latex(
     skills_section = _build_skills_section(candidate)
     template = re.sub(
         r"\\section\{Core Competencies\}.*?\\section\{Professional Experience\}",
-        f"\\section{{Core Competencies}}\n\\vspace{{1pt}}\n{skills_section}\n\n\\section{{Professional Experience}}",
+        lambda m: f"\\section{{Core Competencies}}\n\\vspace{{1pt}}\n{skills_section}\n\n\\section{{Professional Experience}}",
         template,
         flags=re.DOTALL,
     )
@@ -329,7 +329,7 @@ def render_cv_latex(
     exp_section = _build_experience_section(tailored_experience)
     template = re.sub(
         r"\\section\{Professional Experience\}.*?\\section\{Education\}",
-        f"\\section{{Professional Experience}}\n\\vspace{{3pt}}\n{exp_section}\n\n\\section{{Education}}",
+        lambda m: f"\\section{{Professional Experience}}\n\\vspace{{3pt}}\n{exp_section}\n\n\\section{{Education}}",
         template,
         flags=re.DOTALL,
     )
@@ -338,7 +338,7 @@ def render_cv_latex(
     edu_section = _build_education_section(candidate)
     template = re.sub(
         r"\\section\{Education\}.*?\\section\{Selected Publications\}",
-        f"\\section{{Education}}\n\\vspace{{3pt}}\n{edu_section}\n\n\\section{{Selected Publications}}",
+        lambda m: f"\\section{{Education}}\n\\vspace{{3pt}}\n{edu_section}\n\n\\section{{Selected Publications}}",
         template,
         flags=re.DOTALL,
     )
@@ -347,7 +347,7 @@ def render_cv_latex(
     pub_section = _build_publications_section(candidate)
     template = re.sub(
         r"\\section\{Selected Publications\}.*?\\section\{Honors and Awards\}",
-        f"\\section{{Selected Publications}}\n\\vspace{{3pt}}\n{pub_section}\n\n\\section{{Honors and Awards}}",
+        lambda m: f"\\section{{Selected Publications}}\n\\vspace{{3pt}}\n{pub_section}\n\n\\section{{Honors and Awards}}",
         template,
         flags=re.DOTALL,
     )
@@ -356,7 +356,7 @@ def render_cv_latex(
     awards_section = _build_awards_section(candidate)
     template = re.sub(
         r"\\section\{Honors and Awards\}.*?\\section\{References\}",
-        f"\\section{{Honors and Awards}}\n\\vspace{{3pt}}\n{awards_section}\n\n\\section{{References}}",
+        lambda m: f"\\section{{Honors and Awards}}\n\\vspace{{3pt}}\n{awards_section}\n\n\\section{{References}}",
         template,
         flags=re.DOTALL,
     )
@@ -365,7 +365,7 @@ def render_cv_latex(
     ref_section = _build_references_section(candidate)
     template = re.sub(
         r"\\section\{References\}.*?\\end\{document\}",
-        f"\\section{{References}}\n\\vspace{{3pt}}\n{ref_section}\n\n\\end{{document}}",
+        lambda m: f"\\section{{References}}\n\\vspace{{3pt}}\n{ref_section}\n\n\\end{{document}}",
         template,
         flags=re.DOTALL,
     )
@@ -554,11 +554,14 @@ def _insert_cover_letter_bullets(template: str, bullet_tex: str) -> str:
     # Find the first body paragraph end and insert bullets after it
     # The template has: \lettercontent{[Body paragraph...]} then we need to insert bullets
     # then \lettercontent{[Connection paragraph...]}
-
     # Simple approach: replace the pattern
     pattern = r"(\\lettercontent\{[^}]*\})(\s*)(\\lettercontent\{)"
-    replacement = r"\1\2" + bullet_tex + r"\2\3"
-    return re.sub(pattern, replacement, template, count=1)
+    return re.sub(
+        pattern,
+        lambda m: m.group(1) + m.group(2) + bullet_tex + m.group(2) + m.group(3),
+        template,
+        count=1,
+    )
 
 
 # ── LaTeX compilation ───────────────────────────────────────────────

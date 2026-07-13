@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
 
     # ── Paths ─────────────────────────────────────────────────
+    documents_dir: str = "documents"
+    tracker_path: str = "documents/tracker.json"
+
     @property
     def latex_cv_dir(self) -> Path:
         return Path(__file__).resolve().parent.parent / "external" / "latex" / "cv"
