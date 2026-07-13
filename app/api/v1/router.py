@@ -14,6 +14,7 @@ from app.api.v1.upskill import router as upskill_router
 from app.api.v1.add_portal import router as add_portal_router
 from app.api.v1.add_template import router as add_template_router
 from app.api.v1.reset import router as reset_router
+from app.api.v1.providers import router as providers_router
 
 router = APIRouter()
 
@@ -26,6 +27,9 @@ async def health_check():
 
 # ── Auth router ────────────────────────────────────────────────────
 router.include_router(auth_router)
+
+# ── Providers router ───────────────────────────────────────────────
+router.include_router(providers_router)
 
 # ── Skill routers ──────────────────────────────────────────────────
 router.include_router(setup_router)

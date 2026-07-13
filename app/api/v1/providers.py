@@ -1,0 +1,201 @@
+"""Providers router — endpoints for managing user LLM provider credentials."""
+
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user, get_db
+from app.schemas.providers import (
+    ActiveProviderOut,
+    ProviderCredentialCreate,
+    ProviderCredentialOut,
+    ProviderCredentialUpdate,
+    ProviderInfo,
+    SetActiveProvider,
+)
+from app.services.provider_credentials import (
+    delete_provider_credential,
+    get_provider_credential,
+    get_user_active_provider_config,
+    list_user_providers,
+    set_provider_credential,
+    set_user_active_provider,
+)
+
+router = APIRouter(prefix="/providers", tags=["providers"])
+
+
+# ── Catalog ─────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/",
+    response_model=list[ProviderInfo],
+    summary="List all available LLM providers",
+)
+async def list_available_providers() -> list[ProviderInfo]:
+    """Return catalog of known providers with metadata for UI."""
+    from app.schemas.providers import KNOWN_PROVIDERS
+
+    return KNOWN_PROVIDERS
+
+
+# ── User's configured providers ─────────────────────────────────────
+
+
+@router.get(
+    "/me",
+    response_model=list[ProviderCredentialOut],
+    summary="List current user's configured providers",
+)
+async def list_my_providers(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ProviderCredentialOut]:
+    """Return all providers the user has configured (without API keys)."""
+    providers = await list_user_providers(db, user["sub"])
+    return [
+        ProviderCredentialOut(
+            provider=p.provider,
+            api_base=p.api_base,
+            model=p.model,
+            has_key=True,
+            is_active=p.provider == (await get_user_active_provider_config(db, user["sub"])).get("provider"),
+        )
+        for p in providers
+    ]
+
+
+@router.get(
+    "/me/active",
+    response_model=ActiveProviderOut,
+    summary="Get current user's active provider configuration",
+)
+async def get_my_active_provider(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveProviderOut:
+    """Return the active provider config for the current user."""
+    config = await get_user_active_provider_config(db, user["sub"])
+    return ActiveProviderOut(
+        provider=config["provider"],
+        model=config["model"],
+        api_base=config["api_base"],
+        has_credential=config["api_key"] is not None,
+    )
+
+
+# ── CRUD ────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/",
+    response_model=ProviderCredentialOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add or update a provider credential",
+)
+async def create_or_update_provider(
+    payload: ProviderCredentialCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProviderCredentialOut:
+    """Store or update an API key for a provider. The key is encrypted at rest."""
+    credential = await set_provider_credential(
+        db=db,
+        user_id=user["sub"],
+        provider=payload.provider,
+        api_key=payload.api_key,
+        api_base=str(payload.api_base) if payload.api_base else None,
+        model=payload.model,
+    )
+    return ProviderCredentialOut(
+        provider=credential.provider,
+        api_base=credential.api_base,
+        model=credential.model,
+        has_key=True,
+        is_active=False,  # Will be checked against active provider
+    )
+
+
+@router.patch(
+    "/{provider}",
+    response_model=ProviderCredentialOut,
+    summary="Update a provider credential (partial)",
+)
+async def update_provider(
+    provider: str,
+    payload: ProviderCredentialUpdate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProviderCredentialOut:
+    """Update API key, base URL, or model for an existing provider."""
+    # Get existing to preserve unchanged fields
+    existing = await get_provider_credential(db, user["sub"], provider)
+    if not existing:
+        from app.exceptions import NotFoundError
+
+        raise NotFoundError(f"Provider '{provider}' not configured")
+
+    credential = await set_provider_credential(
+        db=db,
+        user_id=user["sub"],
+        provider=provider,
+        api_key=payload.api_key or existing.api_key_encrypted,  # Will be decrypted in service
+        api_base=str(payload.api_base) if payload.api_base else existing.api_base,
+        model=payload.model or existing.model,
+    )
+    return ProviderCredentialOut(
+        provider=credential.provider,
+        api_base=credential.api_base,
+        model=credential.model,
+        has_key=True,
+        is_active=False,
+    )
+
+
+@router.delete(
+    "/{provider}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a provider credential",
+)
+async def delete_provider(
+    provider: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a provider credential for the current user."""
+    deleted = await delete_provider_credential(db, user["sub"], provider)
+    if not deleted:
+        from app.exceptions import NotFoundError
+
+        raise NotFoundError(f"Provider '{provider}' not configured")
+
+
+# ── Active provider ─────────────────────────────────────────────────
+
+
+@router.put(
+    "/active",
+    response_model=ActiveProviderOut,
+    summary="Set the active LLM provider",
+)
+async def set_active_provider(
+    payload: SetActiveProvider,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveProviderOut:
+    """Set which provider the user wants to use for LLM calls."""
+    # Verify the provider is configured
+    credential = await get_provider_credential(db, user["sub"], payload.provider)
+    if not credential:
+        from app.exceptions import NotFoundError
+
+        raise NotFoundError(f"Provider '{payload.provider}' not configured. Add it first.")
+
+    await set_user_active_provider(db, user["sub"], payload.provider)
+    config = await get_user_active_provider_config(db, user["sub"])
+    return ActiveProviderOut(
+        provider=config["provider"],
+        model=config["model"],
+        api_base=config["api_base"],
+        has_credential=config["api_key"] is not None,
+    )
