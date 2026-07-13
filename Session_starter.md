@@ -4,6 +4,11 @@
 
 ---
 
+### 2026-07-12 - Tests fallaban por JSONB y patch frozen
+- **Archivos tocados:** `app/db/models.py`, `app/exceptions.py`, `tests/unit/test_add_portal.py`
+- **Solución:** Se cambió `JSONB` por `FlexJSON` (variant cross-engine) para soportar SQLite en tests; se cambió `HTTP_422_UNPROCESSABLE_ENTITY` por `HTTP_422_UNPROCESSABLE_CONTENT`; se reemplazó `patch.object(instancia, ...)` por `patch.object(Settings, "scrapers_dir", new_callable=PropertyMock, ...)`.
+- **Lección aprendida:** En Pydantic frozen, usar PropertyMock sobre la clase, no patch sobre la instancia. Para columnas JSONB de Postgres, usar `JSON().with_variant(JSONB(), "postgresql")` para que los tests con SQLite no fallen.
+
 ## 📘 Project Context
 **Project:** FastAPI-backend — Open AI Jobs Search
 **Type:** Backend API (FastAPI + Supabase + LiteLLM)
