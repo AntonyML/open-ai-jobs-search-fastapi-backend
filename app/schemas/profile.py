@@ -65,11 +65,6 @@ class EducationEntry(BaseModel):
     institution: str
     key_topics: str | None = None
 
-    @field_validator("period", mode="before")
-    @classmethod
-    def validate_period(cls, v):
-        return validate_date_format(v)
-
 
 class ExperienceBullet(BaseModel):
     title: str
