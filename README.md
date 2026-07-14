@@ -303,6 +303,45 @@ Después de la entrevista, el cliente registra el resultado:
 - **`DATABASE_URL` debe usar `postgresql+asyncpg://`** cuando se emplea `create_async_engine()` de SQLAlchemy 2.x. El scheme `postgresql://` hace que SQLAlchemy intente cargar `psycopg2` (síncrono) y falla con `InvalidRequestError`.
 - **Los routers deben importar schemas desde `app.schemas.*`**, no desde `app.services.*`, para los `response_model` de FastAPI.
 
+## MiKTeX Portable (para compilar LaTeX sin instalación global)
+
+El endpoint `/apply` compila CV y carta de presentación con `lualatex` (CV) y `xelatex` (carta). Para que funcione en cualquier entorno (local, Docker, Fly.io) sin instalar LaTeX globalmente, el proyecto usa **MiKTeX Portable**.
+
+### Configuración
+
+1. **Descargar** el instalador portable desde: https://miktex.org/howto/portable-edition
+2. **Renombrar** el archivo descargado a `miktex-portable.exe`
+3. **Colocarlo** en: `MikTex/miktex-portable.exe` (en la raíz del proyecto)
+4. **Ejecutarlo** (doble click o terminal) — se extraerá en `app/external/latex/miktex-portable/`
+5. **Configurar variable de entorno** en `.env`:
+   ```dotenv
+   LATEX_BIN_DIR=app/external/latex/miktex-portable/miktex/bin/x64
+   ```
+   Si `LATEX_BIN_DIR` está vacío, la app usa los binarios del PATH del sistema (MiKTeX/TeX Live instalado globalmente).
+
+### Verificación
+
+Ejecutar el script de verificación:
+```bash
+python scripts/check_miktex.py
+```
+
+Debe mostrar `OK: MiKTeX Portable listo para usar`.
+
+### En Docker / Fly.io
+
+El `Dockerfile` copia la carpeta `app/external/latex/miktex-portable/` y setea `LATEX_BIN_DIR` automáticamente. No se requiere instalación adicional en la imagen base.
+
+### .gitignore
+
+Los binarios de MiKTeX Portable **no se commitean** (pesan ~150 MB). Están en `.gitignore`:
+```
+app/external/latex/miktex-portable/
+MikTex/miktex-portable.exe
+```
+
+Cada entorno debe ejecutar el instalador portable una vez.
+
 ## Testing
 
 ```bash
