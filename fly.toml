@@ -1,0 +1,57 @@
+# fly.toml - Fly.io configuration for FastAPI backend
+# Run: flyctl launch --no-deploy (then edit this file) or flyctl deploy
+
+app = "open-ai-jobs-search-fastapi"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Application settings
+  APP_ENV = "production"
+  LOG_LEVEL = "INFO"
+  
+  # CORS - update with your frontend URL
+  CORS_ORIGINS = '["https://your-frontend-domain.com"]'
+  
+  # LaTeX binary path (MiKTeX Portable)
+  LATEX_BIN_DIR = "/app/app/external/latex/miktex-portable/miktex/bin/x64"
+  
+  # Default LLM provider
+  LLM_DEFAULT_PROVIDER = "anthropic"
+  
+  # APScheduler
+  SCRAPE_INTERVAL_HOURS = "6"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  
+  [http_service.checks]
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "5s"
+    method = "get"
+    path = "/api/v1/health"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Secrets (set via flyctl secrets set)
+# DATABASE_URL=postgresql+asyncpg://...
+# JWT_SECRET_KEY=...
+# ANTHROPIC_API_KEY=...
+# OPENAI_API_KEY=...
+# NVIDIA_NIM_API_KEY=...
+# LM_STUDIO_API_BASE=...
+
+# Volumes for persistent data (optional - for documents/tracker)
+# [mounts]
+#   source = "app_data"
+#   destination = "/app/documents"

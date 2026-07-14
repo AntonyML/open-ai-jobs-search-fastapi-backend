@@ -1,0 +1,77 @@
+# .dockerignore - Files to exclude from Docker build context
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+dist/
+build/
+*.egg
+
+# Test
+.coverage
+.pytest_cache/
+
+# Documentation
+*.md
+!README.md
+
+# MiKTeX Portable (we copy from builder stage)
+app/external/latex/miktex-portable/
+
+# Bun
+node_modules/
+bun.lockb
+
+# Generated documents
+documents/
+
+# Database
+*.sqlite3
+*.db
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Misc
+*.tmp
+*.temp
