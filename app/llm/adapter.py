@@ -127,7 +127,8 @@ async def llm_completion(
 
     try:
         response = await litellm.acompletion(messages=messages, **kwargs)
-        content = response.choices[0].message.content
+        message = response.choices[0].message
+        content = message.content or getattr(message, "reasoning_content", None)
         if content is None:
             raise LLMError("LLM returned empty response")
         return content

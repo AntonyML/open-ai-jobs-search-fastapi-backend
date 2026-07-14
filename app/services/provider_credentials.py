@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_api_key, encrypt_api_key
-from app.db.models import ProviderCredential, User
+from app.db.models import ProviderCredential, User, UserModelSelection
 from app.exceptions import NotFoundError
 
 
@@ -115,10 +115,18 @@ async def get_user_active_provider_config(
         "lm_studio": "local-model",
     }
 
+    model_result = await db.execute(
+        select(UserModelSelection.model).where(
+            UserModelSelection.user_id == user_id,
+            UserModelSelection.provider == active_provider,
+        )
+    )
+    selected_model = model_result.scalar_one_or_none()
+
     if credential:
         return {
             "provider": active_provider,
-            "model": default_models.get(active_provider, "claude-sonnet-4-20250514"),
+            "model": selected_model or default_models.get(active_provider, "claude-sonnet-4-20250514"),
             "api_key": credential.__dict__.get("_api_key_plain", credential.api_key_encrypted),
             "api_base": credential.api_base,
         }
@@ -129,7 +137,7 @@ async def get_user_active_provider_config(
 
         return {
             "provider": active_provider,
-            "model": default_models.get(active_provider, "claude-sonnet-4-20250514"),
+            "model": selected_model or default_models.get(active_provider, "claude-sonnet-4-20250514"),
             "api_key": None,  # Will be resolved from settings in adapter
             "api_base": None,
         }
