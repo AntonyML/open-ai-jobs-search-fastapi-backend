@@ -35,11 +35,19 @@ router = APIRouter(prefix="/providers", tags=["providers"])
 
 @router.post("/test")
 async def test_active_provider(
+    payload: ProviderCredentialCreate | None = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Verify that the active provider, credential, and selected model work."""
     config = await get_user_active_provider_config(db, user["sub"])
+    if payload is not None:
+        config = {
+            "provider": payload.provider,
+            "model": payload.model,
+            "api_key": payload.api_key,
+            "api_base": str(payload.api_base) if payload.api_base else None,
+        }
     response = await llm_completion(
         [{"role": "user", "content": "Reply with exactly: provider-ok"}],
         provider=config["provider"],
@@ -196,9 +204,7 @@ async def delete_provider(
     """Remove a provider credential for the current user."""
     deleted = await delete_provider_credential(db, user["sub"], provider)
     if not deleted:
-        from app.exceptions import NotFoundError
-
-        raise NotFoundError(f"Provider '{provider}' not configured")
+        return None
 
 
 # ── Active provider ─────────────────────────────────────────────────
@@ -286,4 +292,3 @@ async def set_model_for_provider(
     """Persist the user's chosen model for the given provider."""
     await set_user_model_selection(db, user["sub"], provider, payload.model)
     return ActiveModelOut(provider=provider, model=payload.model)
-
