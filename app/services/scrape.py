@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -61,13 +62,17 @@ def list_installed_portals() -> list[str]:
 
 async def check_bun_available() -> bool:
     """Check if bun is installed and on PATH."""
-    proc = await asyncio.create_subprocess_exec(
-        "bun", "--version",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    await proc.communicate()
-    return proc.returncode == 0
+    def _check() -> bool:
+        try:
+            result = subprocess.run(
+                ["bun", "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            return result.returncode == 0
+        except FileNotFoundError:
+            return False
+    return await asyncio.to_thread(_check)
 
 
 # ── Subprocess invocation ──────────────────────────────────────────
@@ -125,20 +130,25 @@ async def run_scraper(
             cmd.extend([flag, value])
 
     # Run subprocess
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+    def _run_sync() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             cwd=str(cli_dir),
         )
-        stdout, stderr = await proc.communicate()
+
+    try:
+        completed = await asyncio.to_thread(_run_sync)
     except FileNotFoundError:
         raise ScraperError(
             "bun is not installed or not on PATH. Install it from https://bun.sh"
         )
 
-    if proc.returncode != 0:
+    stdout = completed.stdout
+    stderr = completed.stderr
+
+    if completed.returncode != 0:
         error_msg = stderr.decode("utf-8", errors="replace").strip()
         # Non-zero exit is logged but doesn't abort the whole scrape
         raise ScraperError(f"Scraper '{portal}' failed: {error_msg}")
