@@ -84,12 +84,30 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     )
 
 
+def _json_safe(obj):
+    """Recursively convert bytes values to str so the payload is JSON serializable.
+
+    FastAPI's RequestValidationError may include the raw request body (bytes)
+    in its ``input`` field when the request is form-encoded or otherwise not
+    JSON, which makes json.dumps raise ``TypeError: Object of type bytes is
+    not JSON serializable``.  This walks the structure and decodes any bytes
+    it finds.
+    """
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch Pydantic validation errors from FastAPI and normalise the shape."""
     from fastapi.exceptions import RequestValidationError
 
     if isinstance(exc, RequestValidationError):
-        details = exc.errors()
+        details = _json_safe(exc.errors())
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={
