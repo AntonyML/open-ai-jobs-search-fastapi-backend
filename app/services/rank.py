@@ -14,7 +14,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
@@ -343,7 +343,16 @@ async def _select_jobs_to_rank(
     query = select(JobPosting).where(JobPosting.user_id == user_id)
 
     if not re_rank:
-        query = query.where(JobPosting.status == "new")
+        # A posting is un-evaluated when it has no persisted rank score.  Use
+        # this as the source of truth instead of relying only on the lifecycle
+        # status, because the scrape view can expose persisted postings whose
+        # status was changed independently of the ranking workflow.
+        query = query.where(
+            or_(
+                JobPosting.status == "new",
+                JobPosting.rank_score.is_(None),
+            )
+        )
 
     if focus_area:
         query = query.where(
