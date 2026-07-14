@@ -104,10 +104,10 @@ class RankLLMOutput(BaseModel):
     location_status: str = Field(pattern="^(PASS|FAIL|FLAG)$")
     deadline: str | None = None
     deadline_urgent: bool = False
-    strengths: list[str] = Field(max_length=3)
-    gaps: list[str] = Field(max_length=3)
-    missing_keywords: list[str] = Field(max_length=5)
-    red_flags: list[str] = Field(max_length=3)
+    strengths: list[str] = Field(default_factory=list, max_length=3)
+    gaps: list[str] = Field(default_factory=list, max_length=3)
+    missing_keywords: list[str] = Field(default_factory=list, max_length=5)
+    red_flags: list[str] = Field(default_factory=list, max_length=3)
     language: str | None = None
 
 

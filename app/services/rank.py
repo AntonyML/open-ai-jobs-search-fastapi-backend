@@ -264,16 +264,19 @@ async def execute_rank(
 
     # 3. Rank each job
     ranked_jobs = []
+    failed_jobs = 0
     below_threshold = 0
     expired_or_vetoed = 0
 
-    for job in jobs:
+    for index, job in enumerate(jobs, start=1):
+        logger.info("Evaluating job %d/%d: %s", index, len(jobs), job.id)
         try:
             evaluation = await _rank_single_job(db, candidate, job, provider_config)
             ranked_jobs.append((job, evaluation))
+            logger.info("Finished job %d/%d: %s", index, len(jobs), job.id)
         except LLMError as exc:
+            failed_jobs += 1
             logger.exception("LLM ranking failed for job %s: %s", job.id, exc)
-            # If LLM fails, skip this job but continue with others
             continue
 
     # 4. Sort by overall score (desc), deadline urgency as tiebreaker
@@ -310,13 +313,14 @@ async def execute_rank(
         job.rank_date = datetime.now(timezone.utc)
 
     await db.commit()
+    logger.info("Successful evaluations: %d; failed evaluations: %d", len(ranked_jobs), failed_jobs)
 
     return RankResult(
         ranked_count=len(ranked_jobs),
         shortlist=shortlist,
         below_threshold=below_threshold,
         expired_or_vetoed=expired_or_vetoed,
-        message=f"Ranked {len(ranked_jobs)} jobs. Top {len(shortlist)} in shortlist.",
+        message=f"Ranked {len(ranked_jobs)} jobs. Top {len(shortlist)} in shortlist. {failed_jobs} failed.",
     )
 
 
