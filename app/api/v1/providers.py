@@ -28,8 +28,28 @@ from app.services.provider_models import (
     list_provider_models,
     set_user_model_selection,
 )
+from app.llm.adapter import llm_completion
 
 router = APIRouter(prefix="/providers", tags=["providers"])
+
+
+@router.post("/test")
+async def test_active_provider(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Verify that the active provider, credential, and selected model work."""
+    config = await get_user_active_provider_config(db, user["sub"])
+    response = await llm_completion(
+        [{"role": "user", "content": "Reply with exactly: provider-ok"}],
+        provider=config["provider"],
+        model=config["model"],
+        api_key=config.get("api_key"),
+        api_base=config.get("api_base"),
+        temperature=0,
+        max_tokens=20,
+    )
+    return {"ok": True, "provider": config["provider"], "model": config["model"], "response": response}
 
 
 # ── Catalog ─────────────────────────────────────────────────────────
@@ -266,5 +286,4 @@ async def set_model_for_provider(
     """Persist the user's chosen model for the given provider."""
     await set_user_model_selection(db, user["sub"], provider, payload.model)
     return ActiveModelOut(provider=provider, model=payload.model)
-
 

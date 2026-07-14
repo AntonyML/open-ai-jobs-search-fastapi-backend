@@ -24,6 +24,7 @@ from app.exceptions import NotFoundError, ProfileIncompleteError, LLMError
 from app.llm.adapter import llm_completion_structured
 from app.schemas.rank import RankLLMOutput, RankResult, RankedJobOut
 from app.schemas.scrape import JobPostingSummary
+from app.services.provider_credentials import get_user_active_provider_config
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -247,6 +248,7 @@ async def execute_rank(
     """
     # 1. Get candidate profile
     candidate = await _get_candidate_profile(db, user_id)
+    provider_config = await get_user_active_provider_config(db, user_id)
 
     # 2. Select jobs to rank
     jobs = await _select_jobs_to_rank(db, user_id, focus_area, re_rank)
@@ -267,9 +269,10 @@ async def execute_rank(
 
     for job in jobs:
         try:
-            evaluation = await _rank_single_job(db, candidate, job)
+            evaluation = await _rank_single_job(db, candidate, job, provider_config)
             ranked_jobs.append((job, evaluation))
-        except LLMError:
+        except LLMError as exc:
+            logger.exception("LLM ranking failed for job %s: %s", job.id, exc)
             # If LLM fails, skip this job but continue with others
             continue
 
@@ -374,6 +377,7 @@ async def _rank_single_job(
     db: AsyncSession,
     candidate: CandidateProfile,
     job: JobPosting,
+    provider_config: dict[str, Any],
 ) -> RankEvaluation:
     """Rank a single job posting against the candidate profile."""
     messages = build_rank_prompt(candidate, job)
@@ -383,7 +387,10 @@ async def _rank_single_job(
         llm_output: RankLLMOutput = await llm_completion_structured(
             messages=messages,
             output_schema=RankLLMOutput,
-            provider=settings.llm_default_provider,
+            provider=provider_config["provider"],
+            model=provider_config["model"],
+            api_key=provider_config.get("api_key"),
+            api_base=provider_config.get("api_base"),
             temperature=0.3,
             max_tokens=2048,
         )
