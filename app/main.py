@@ -10,9 +10,10 @@ Usage:
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1.router import router as v1_router
 from app.core.logging import configure_logging
@@ -71,6 +72,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ── Exception handlers ─────────────────────────────────────
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
+
+    @app.exception_handler(Exception)
+    async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        origin = request.headers.get("origin", "")
+        allow_origin = origin if origin in settings.cors_origins else (settings.cors_origins[0] if settings.cors_origins else "")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+            headers={
+                "Access-Control-Allow-Origin": allow_origin,
+                "Access-Control-Allow-Credentials": "true",
+            },
+        )
 
     # ── Routers ────────────────────────────────────────────────
     app.include_router(v1_router, prefix="/api/v1")
