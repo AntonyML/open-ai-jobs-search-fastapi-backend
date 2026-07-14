@@ -2,6 +2,23 @@
 
 Backend multi-proveedor de IA para búsqueda de empleos. Reimplementa como servicio Python el framework de `ai-job-search` (originalmente comandos de Claude Code).
 
+> **App en producción:** https://open-ai-jobs-search-fastapi.fly.dev/
+
+## Tabla de contenidos
+
+- [Stack](#stack)
+- [Estructura](#estructura)
+- [Prerequisites](#prerequisites)
+- [Setup](#setup)
+- [Migraciones (Alembic)](#migraciones-alembic)
+- [Endpoints](#endpoints)
+- [Flujo de la API](#flujo-de-la-api--orden-recomendado-para-el-cliente)
+- [Variables de entorno](#variables-de-entorno)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Convenciones de diseño](#convenciones-de-diseño)
+- [Constraints](#constraints)
+
 ## Stack
 
 - **FastAPI** (async) + **Pydantic v2** + **SQLAlchemy 2.0** (async, asyncpg)
@@ -40,14 +57,16 @@ FastAPI-backend/
 
 Además de Python 3.11+, esta app requiere dependencias del sistema para funcionalidad completa:
 
-| Componente | Propósito | Instalación |
-|------------|-----------|-------------|
-| **Bun** | Ejecutar scrapers heredados (Bun/TS) | `npm install -g bun` |
-| **LaTeX** (lualatex + xelatex) | Compilar CV y cartas tailored | TeX Live o MiKTeX |
-| **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com |
-| **LLM Provider** | API key para LiteLLM (Anthropic, OpenAI, etc.) | Variable en `.env` |
+| Componente | Propósito | Instalación (local) | En Docker/Fly.io |
+|------------|-----------|---------------------|-------------------|
+| **Bun** | Ejecutar scrapers heredados (Bun/TS) | `npm install -g bun` | Instalado automáticamente en el build |
+| **LaTeX** (lualatex + xelatex) | Compilar CV y cartas tailored | TeX Live o MiKTeX | MiKTeX instalado vía apt en el contenedor |
+| **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com | Configurar `DATABASE_URL` como secret |
+| **LLM Provider** | API key para LiteLLM (Anthropic, OpenAI, etc.) | Variable en `.env` o vía `/providers/` | Configurar como secret o vía API |
 
 > **Nota:** Sin Bun, el endpoint `/scrape/` no funcionará. Sin LaTeX, el endpoint `/apply/` no podrá generar PDFs. Sin Supabase, la app no tiene persistencia.
+>
+> **Deploy en Fly.io:** Si deployas con el `Dockerfile` incluido, **no necesitás instalar Bun ni MiKTeX localmente** — el contenedor los instala automáticamente. Solo necesitás configurar los secrets (ver sección [Deployment](#deployment)).
 
 ## Setup
 
@@ -284,6 +303,143 @@ Después de la entrevista, el cliente registra el resultado:
 - `POST /api/v1/add-portal/` — registrar nuevos portales de scraping
 - `POST /api/v1/add-template/` — registrar/cambiar templates LaTeX
 - `POST /api/v1/reset/` — resetear todos los datos del usuario (empezar de cero)
+
+## Variables de entorno
+
+Todas las variables se cargan desde un archivo `.env` (ver `.env.example`) o desde el entorno del sistema. En producción (Fly.io) se configuran con `flyctl secrets set`.
+
+| Variable | Requerida | Default | Descripción |
+|----------|-----------|---------|-------------|
+| `DATABASE_URL` | ✅ | — | URL de PostgreSQL (asyncpg). Usar **Session Pooler** de Supabase, no Transaction Pooler (rompe prepared statements). |
+| `JWT_SECRET_KEY` | ✅ | `change-me` | Clave de firma JWT. En prod debe ser aleatoria (≥64 chars). |
+| `JWT_ALGORITHM` | — | `HS256` | Algoritmo de firma JWT. |
+| `JWT_EXPIRE_MINUTES` | — | `1440` | Expiración del token JWT (24 h por defecto). |
+| `LLM_DEFAULT_PROVIDER` | — | `anthropic` | Proveedor LLM por defecto (`anthropic`, `openai`, `nvidia_nim`, `lm_studio`, `ollama`). |
+| `ANTHROPIC_API_KEY` | — | — | Fallback si no hay credencial cifrada en DB. |
+| `OPENAI_API_KEY` | — | — | Fallback si no hay credencial cifrada en DB. |
+| `NVIDIA_NIM_API_KEY` | — | — | Fallback si no hay credencial cifrada en DB. |
+| `LM_STUDIO_API_BASE` | — | `http://localhost:1234/v1` | URL base de LM Studio local. |
+| `SCRAPE_INTERVAL_HOURS` | — | `6` | Intervalo del scheduler de scraping automático. |
+| `APP_ENV` | — | `development` | Entorno (`development` / `production`). |
+| `LOG_LEVEL` | — | `INFO` | Nivel de logging (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `CORS_ORIGINS` | — | `["http://localhost:3000"]` | Lista JSON de orígenes permitidos para CORS. |
+| `LATEX_BIN_DIR` | — | `None` | Directorio con binarios LaTeX. `None` = usar PATH del sistema. En prod (Linux/MiKTeX apt): `/usr/bin`. En Windows/MiKTeX Portable: `app/external/latex/miktex-portable/miktex/bin/x64`. |
+
+> **Nota sobre API keys:** Las API keys de los proveedores LLM **no deben ir en `.env`** en producción. Se registran desde el front vía `POST /api/v1/providers/` y se guardan **cifradas (Fernet)** en la BD por usuario. Las variables de `.env` son solo fallback.
+
+## Testing
+
+```bash
+# Tests unitarios
+pytest tests/unit/ -v
+
+# Tests de integración (requieren DB de test configurada)
+pytest tests/integration/ -v
+
+# Todos los tests
+pytest -v
+
+# Con coverage
+pytest --cov=app --cov-report=term-missing
+```
+
+## Deployment
+
+La app está configurada para deployar en **Fly.io** con un `Dockerfile` multi-stage (builder + runtime) que instala **MiKTeX** vía apt para compilar LaTeX en el contenedor.
+
+### Arquitectura del Dockerfile
+
+```mermaid
+flowchart LR
+    subgraph Stage1[Stage 1: Builder]
+        B1[python:3.11-slim-bookworm]
+        B2[Instala Bun]
+        B3[Instala deps Python]
+    end
+    subgraph Stage2[Stage 2: Runtime]
+        R1[python:3.11-slim-bookworm]
+        R2[Instala MiKTeX vía apt]
+        R3[Copia site-packages + Bun]
+        R4[Copia código de la app]
+        R5[Usuario no-root appuser]
+    end
+    B3 --> R3
+    B2 --> R3
+```
+
+**Notas clave del Dockerfile:**
+- **Imagen base fijada a `python:3.11-slim-bookworm`** (Debian 12). No usar `python:3.11-slim` a secas porque ahora resuelve a Debian 13 (trixie), y el repositorio apt de MiKTeX solo soporta `bookworm`.
+- **MiKTeX** se instala vía apt desde `https://miktex.org/download/debian bookworm universe`. La clave GPG se obtiene del keyserver de Ubuntu (`hkp://keyserver.ubuntu.com:80`, key ID `D6BC243565B2087BC3F897C9277A7293F59E4889`) — la URL `key.asc` de MiKTeX está deprecada (404).
+- **`LATEX_BIN_DIR=/usr/bin`** en producción (donde MiKTeX apt instala los binarios). Los binarios en Linux **no tienen extensión `.exe`** (a diferencia de MiKTeX Portable en Windows).
+- La app corre como usuario no-root `appuser`.
+
+### Deploy con Fly.io
+
+```bash
+# 1. Instalar flyctl (si no lo tenés)
+#    Windows:  iwr https://fly.io/install.ps1 -useb | iex
+#    macOS:    brew install flyctl
+#    Linux:    curl -L https://fly.io/install.sh | sh
+
+# 2. Autenticarse
+flyctl auth login
+
+# 3. Configurar secrets (variables sensibles de producción)
+flyctl secrets set DATABASE_URL="postgresql+asyncpg://..." \
+    JWT_SECRET_KEY="$(openssl rand -hex 32)" \
+    ANTHROPIC_API_KEY="sk-ant-..." \
+    CORS_ORIGINS='["https://tu-frontend.com"]'
+
+# 4. Deployar
+flyctl deploy
+
+# 5. Abrir la app
+flyctl open
+# → https://open-ai-jobs-search-fastapi.fly.dev/
+```
+
+### Configuración de `fly.toml`
+
+El archivo `fly.toml` ya está configurado:
+
+| Setting | Valor | Notas |
+|---------|-------|-------|
+| `app` | `open-ai-jobs-search-fastapi` | Nombre de la app en Fly.io |
+| `primary_region` | `iad` | Región (Washington DC). Cambiar si tu audiencia es otra. |
+| `internal_port` | `8000` | Puerto interno del contenedor |
+| `auto_stop_machines` | `false` | La app no se detiene por inactividad (scheduler de scraping) |
+| `auto_start_machines` | `true` | Arranca automáticamente si llega tráfico |
+| `min_machines_running` | `1` | Mínimo 1 máquina corriendo |
+| `memory` | `1gb` | MiKTeX + LaTeX requieren RAM suficiente |
+| `LATEX_BIN_DIR` | `/usr/bin` | Ruta de binarios MiKTeX en el contenedor |
+
+### Verificar el deploy
+
+```bash
+# Health check
+curl https://open-ai-jobs-search-fastapi.fly.dev/api/v1/health
+# → {"status":"ok","version":"0.1.0"}
+
+# Ver logs
+flyctl logs
+
+# Ver máquinas
+flyctl machines list
+
+# Abrir shell en el contenedor
+flyctl ssh console
+```
+
+### Troubleshooting del deploy
+
+| Problema | Causa | Solución |
+|----------|-------|----------|
+| `error building: failed to solve` en `apt-get install miktex` | Imagen base usa Debian 13 (trixie) pero MiKTeX solo soporta bookworm | Fijar imagen a `python:3.11-slim-bookworm` |
+| `curl: (22) The requested URL returned error: 404` al obtener `key.asc` | MiKTeX deprecó la URL `key.asc` | Obtener clave del keyserver de Ubuntu (ver Dockerfile) |
+| `gpg: no valid OpenPGP data found` | La descarga de la clave falló | Verificar conectividad al keyserver `hkp://keyserver.ubuntu.com:80` |
+| LaTeX no compila en el contenedor | `LATEX_BIN_DIR` apunta a ruta Windows | Usar `LATEX_BIN_DIR=/usr/bin` en `fly.toml` |
+| `FileNotFoundError: lualatex.exe` | El código busca `.exe` (Windows) pero en Linux no hay extensión | Ya corregido en `app/services/apply.py` (`_resolve_latex_binary`) |
+| `asyncpg... prepared statement does not exist` | Se está usando Transaction Pooler de Supabase | Cambiar a **Session Pooler** en `DATABASE_URL` |
 
 ## Convenciones de diseño
 
