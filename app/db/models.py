@@ -337,7 +337,7 @@ class ScrapeRun(Base, TimestampMixin):
     jobs_expired: Mapped[int] = mapped_column(default=0)
 
     # ── Status ────────────────────────────────────────────────
-    status: Mapped[str] = mapped_column(String(20), default="running")  # running, completed, failed
+    status: Mapped[str] = mapped_column(String(30), default="running")  # running, completed, completed_with_errors, failed
     error_message: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
