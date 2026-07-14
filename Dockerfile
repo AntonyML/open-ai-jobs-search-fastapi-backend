@@ -20,6 +20,7 @@ ENV PATH="/root/.bun/bin:${PATH}"
 
 # Install Python dependencies
 COPY pyproject.toml .
+COPY app/ ./app/
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e .
 
