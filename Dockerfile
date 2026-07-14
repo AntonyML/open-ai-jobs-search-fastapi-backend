@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Bun
