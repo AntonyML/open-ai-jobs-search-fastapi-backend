@@ -11,6 +11,7 @@ Implements the triage scoring from the original /rank command:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +26,7 @@ from app.schemas.rank import RankLLMOutput, RankResult, RankedJobOut
 from app.schemas.scrape import JobPostingSummary
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # ── Guardrail constant (never user-configurable) ────────────────────
 
@@ -361,8 +363,11 @@ async def _select_jobs_to_rank(
         )
 
     query = query.order_by(JobPosting.created_at.desc())
+    logger.info("Rank SQL: %s", query)
     result = await db.execute(query)
-    return list(result.scalars().all())
+    jobs = list(result.scalars().all())
+    logger.info("Rank jobs selected: %d", len(jobs))
+    return jobs
 
 
 async def _rank_single_job(
