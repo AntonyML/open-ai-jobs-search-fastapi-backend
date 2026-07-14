@@ -363,11 +363,12 @@ async def _select_jobs_to_rank(
             )
         )
 
+    # Focus area is guidance for ranking, not a literal SQL pre-filter.  Job
+    # titles use many valid variants (for example AI Engineer vs AI
+    # Engineering), so filtering here would discard relevant postings before
+    # the LLM can evaluate them.
     if focus_area:
-        query = query.where(
-            JobPosting.title.ilike(f"%{focus_area}%")
-            | JobPosting.description.ilike(f"%{focus_area}%")
-        )
+        logger.info("Focus area passed to ranking guidance: %s", focus_area)
 
     query = query.order_by(JobPosting.created_at.desc())
     logger.info("Rank SQL: %s", query)
