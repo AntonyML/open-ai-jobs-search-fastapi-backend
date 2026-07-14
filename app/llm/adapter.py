@@ -20,6 +20,8 @@ settings = get_settings()
 # Tell LiteLLM to not crash on missing keys at import time — we validate
 # at call time instead.
 litellm.suppress_debug_info = True
+litellm.num_retries = 0
+litellm.request_timeout = 30
 
 
 def _build_kwargs(
