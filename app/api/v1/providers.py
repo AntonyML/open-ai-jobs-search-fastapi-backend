@@ -61,13 +61,14 @@ async def list_my_providers(
 ) -> list[ProviderCredentialOut]:
     """Return all providers the user has configured (without API keys)."""
     providers = await list_user_providers(db, user["sub"])
+    active_config = await get_user_active_provider_config(db, user["sub"])
     return [
         ProviderCredentialOut(
-            provider=p.provider,
-            api_base=p.api_base,
-            model=p.model,
+            provider=p["provider"],
+            api_base=p["api_base"],
+            model=None,
             has_key=True,
-            is_active=p.provider == (await get_user_active_provider_config(db, user["sub"])).get("provider"),
+            is_active=p["provider"] == active_config.get("provider"),
         )
         for p in providers
     ]
@@ -113,14 +114,15 @@ async def create_or_update_provider(
         provider=payload.provider,
         api_key=payload.api_key,
         api_base=str(payload.api_base) if payload.api_base else None,
-        model=payload.model,
     )
+    if payload.model:
+        await set_user_model_selection(db, user["sub"], payload.provider, payload.model)
     return ProviderCredentialOut(
         provider=credential.provider,
         api_base=credential.api_base,
-        model=credential.model,
+        model=payload.model,
         has_key=True,
-        is_active=False,  # Will be checked against active provider
+        is_active=False,
     )
 
 
@@ -149,12 +151,13 @@ async def update_provider(
         provider=provider,
         api_key=payload.api_key or existing.api_key_encrypted,  # Will be decrypted in service
         api_base=str(payload.api_base) if payload.api_base else existing.api_base,
-        model=payload.model or existing.model,
     )
+    if payload.model:
+        await set_user_model_selection(db, user["sub"], provider, payload.model)
     return ProviderCredentialOut(
         provider=credential.provider,
         api_base=credential.api_base,
-        model=credential.model,
+        model=payload.model,
         has_key=True,
         is_active=False,
     )
