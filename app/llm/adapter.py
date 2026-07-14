@@ -120,6 +120,7 @@ async def llm_completion(
     kwargs["temperature"] = temperature
     kwargs["max_tokens"] = max_tokens
     kwargs["timeout"] = 30
+    kwargs["num_retries"] = 0
 
     if response_format:
         kwargs["response_format"] = response_format
