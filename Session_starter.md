@@ -8,19 +8,19 @@
 
 **Project:** FastAPI-backend — Open AI Jobs Search
 **Type:** Backend API (FastAPI + Supabase/PostgreSQL + LiteLLM)
-**Purpose:** Servicio multi-proveedor de IA para búsqueda de empleos: scraping, ranking ATS, generación de CV/carta tailored, preparación de entrevistas, registro de outcomes, expansión de competencias y plan de aprendizaje.
-**Status:** ✅ FASE 4 completada — app funcional en `http://127.0.0.1:8000` con todos los endpoints implementados y migración inicial aplicada.
+**Purpose:** Multi-provider AI service for job search: scraping, ATS ranking, tailored CV/cover letter generation, interview prep, outcome tracking, competency expansion, and learning plans.
+**Status:** ✅ FASE 5 completada — Provider model listing/selection endpoints implemented and tested
 
 **Core Technologies:**
 - FastAPI (async), Pydantic v2, SQLAlchemy 2.0 (async, asyncpg)
-- LiteLLM como capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, LM Studio)
-- Supabase (PostgreSQL) — Session Pooler o Direct Connection
-- APScheduler declarado en dependencias y settings (`scrape_interval_hours`) — **NO cableado todavía**
-- Bun/TypeScript scrapers heredados del repo fuente (invocados vía subprocess)
-- LaTeX (lualatex + xelatex) para CV/carta
+- LiteLLM as multi-provider adapter (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama)
+- Supabase (PostgreSQL) — Session Pooler or Direct Connection
+- APScheduler declared in deps and settings (`scrape_interval_hours`) — **wired in lifespan**
+- Bun/TypeScript scrapers from source repo (invoked via subprocess)
+- LaTeX (lualatex + xelatex) for CV/cover letter PDF generation
 
-**Repo fuente (solo lectura):** `E:\Dev\PoryectosDeTerceros\ai-job-search`
-**Repo destino:** `E:\Dev\PoryectosDeTerceros\open-ai-jobs-search\FastAPI-backend`
+**Source Repo (read-only):** `E:\Dev\PoryectosDeTerceros\ai-job-search`
+**Target Repo:** `E:\Dev\PoryectosDeTerceros\open-ai-jobs-search\FastAPI-backend`
 
 **Available AI Capabilities:**
 - 🔧 MCP Servers: everything-re (test), secure-filesy (filesystem), sequential-thinking
@@ -30,48 +30,44 @@
 
 ## 🎯 Current State
 
-**Build Status:** ✅ FASE 4 completada
-**Server:** Funcional en `http://127.0.0.1:8000` (healthcheck en `/api/v1/health`)
-**Database:** Migración inicial `770526833bdb` aplicada contra Supabase (13 tablas)
-**Tests:** 155 colectados → **155 passing, 0 failing** (ver sección de tests para detalle)
+**Build Status:** ✅ FASE 5 completed
+**Server:** Functional at `http://127.0.0.1:8000` (healthcheck at `/api/v1/health`)
+**Database:** Initial migration `770526833bdb` + `a1b2c3d4e5f6` (user_model_selection) applied against Supabase (14 tables)
+**Tests:** 173 collected → **173 passing, 0 failing**
 
 **Architecture Highlights:**
-- App factory pattern (`create_app()`) — no `app = FastAPI()` suelto
-- Schemas Pydantic separados de modelos ORM (nunca exponer SQLAlchemy directo)
-- Dependencias centralizadas en `app/api/deps.py`
-- API versionada desde el arranque (`/api/v1/`)
-- Excepciones de negocio propias con handlers registrados (`AppError`, `NotFoundError`, `ProviderAuthError`, `ProfileIncompleteError`, `ScraperError`, `LLMError`, `LatexCompileError`, `DuplicateError`, `ConfirmationRequiredError`)
-- LiteLLM como única interfaz al LLM (`llm_completion` + `llm_completion_structured`)
-- Scrapers Bun/TS heredados — se invocan por subprocess, no se reescriben
-- Guardrails anti-alucinación embebidos en cada servicio LLM (rank, apply, interview, expand, upskill, add_portal)
+- App factory pattern (`create_app()`) — no loose `app = FastAPI()`
+- Pydantic schemas separate from ORM models (never expose SQLAlchemy directly)
+- Dependencies centralized in `app/api/deps.py`
+- API versioned from start (`/api/v1/`)
+- Custom business exceptions with registered handlers (`AppError`, `NotFoundError`, `ProviderAuthError`, `ProfileIncompleteError`, `ScraperError`, `LLMError`, `LatexCompileError`, `DuplicateError`, `ConfirmationRequiredError`)
+- LiteLLM as sole LLM interface (`llm_completion` + `llm_completion_structured`)
+- Bun/TS scrapers inherited — invoked via subprocess, not rewritten
+- Anti-hallucination guardrails embedded in each LLM service (rank, apply, interview, expand, upskill, add_portal)
 
 **Auth State (REAL):**
-- `app/core/security.py` implementa JWT propio con `python-jose` + bcrypt (`hash_password`, `verify_password`, `create_access_token`, `decode_access_token`)
-- `app/api/deps.py::get_current_user` valida Bearer JWT y devuelve el payload (`{sub, exp}`)
-- `get_llm_provider` es un **stub** — devuelve config hardcodeada, no lee de la DB
-- **NO existe endpoint de login/registro** — no hay router de auth, solo verificación de token
-- **NO hay integración con Supabase Auth** — el JWT es emitido por la propia app, pero nada lo emite
-- Modelo `User` con `hashed_password` existe, pero no hay servicio que cree usuarios
-- **Ownership de recursos:** los servicios filtran por `user_id=user["sub"]` correctamente
+- `app/core/security.py` implements custom JWT with `python-jose` + bcrypt (`hash_password`, `verify_password`, `create_access_token`, `decode_access_token`)
+- `app/api/deps.py::get_current_user` validates Bearer JWT and returns payload (`{sub, exp}`)
+- `get_llm_provider` now **reads from DB** via `provider_credentials` service with Fernet encryption
+- Auth endpoints exist: `/auth/register`, `/auth/login` (JWT issuance)
+- Ownership of resources: services filter by `user_id=user["sub"]` correctly
 
 ---
 
-## 👤 Tareas manuales (humanas)
+## 👤 Manual Tasks (Human Required)
 
-| # | Tarea | Razón |
-|---|-------|-------|
-| 1 | **Configurar `.env`** — `DATABASE_URL`, `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, `JWT_SECRET_KEY` | Secrets — nunca hardcodear |
-| 2 | **Instalar Bun** — para scrapers heredados | Instalación del sistema operativo |
-| 3 | **Instalar LaTeX** (lualatex + xelatex, TeX Live/MiKTeX) | Para `/apply` PDF generation |
-| 4 | **Crear proyecto Supabase** — connection string, Session Pooler | Servicio externo |
-| 5 | **Compilar scrapers Bun/TS** — `bun install` en `app/external/scrapers/*/cli/` | Entorno Bun |
-| 6 | **Probar flujo end-to-end con datos reales** | Validación de negocio |
-
-> El plan de código pendiente está en la sección **🎯 Plan de completitud** al final del documento.
+| # | Task | Reason |
+|---|------|--------|
+| 1 | **Configure `.env`** — `DATABASE_URL`, `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, `JWT_SECRET_KEY` | Secrets — never hardcode |
+| 2 | **Install Bun** — for legacy scrapers | OS-level installation |
+| 3 | **Install LaTeX** (lualatex + xelatex, TeX Live/MiKTeX) | For `/apply` PDF generation |
+| 4 | **Create Supabase project** — connection string, Session Pooler | External service |
+| 5 | **Build Bun/TS scrapers** — `bun install` in `app/external/scrapers/*/cli/` | Bun environment |
+| 6 | **Test end-to-end flow with real data** | Business validation |
 
 ---
 
-## 🚀 Pipeline de la API (orden de uso)
+## 🚀 API Pipeline (Usage Order)
 
 ```mermaid
 flowchart LR
@@ -84,18 +80,18 @@ flowchart LR
     C --> H[8. Expand]
 ```
 
-1. **Setup** (`/setup/*`) — perfil candidato (obligatorio primero)
-2. **Scrape** (`/scrape/*`) — búsqueda de jobs en portales
-3. **Rank** (`/rank/*`) — evaluación de fit + shortlist
-4. **Apply** (`/apply/*`) — CV + carta tailored en LaTeX
-5. **Interview** (`/interview/*`) — prep de entrevista
-6. **Outcome** (`/outcome/*`) — registro de resultados
-7. **Upskill** (`/upskill/*`) — plan de aprendizaje (opcional, paralelo a Rank)
-8. **Expand** (`/expand/*`) — expansión de competencias (opcional, paralelo a Rank)
+1. **Setup** (`/setup/*`) — candidate profile (mandatory first)
+2. **Scrape** (`/scrape/*`) — job search on portals
+3. **Rank** (`/rank/*`) — fit evaluation + shortlist
+4. **Apply** (`/apply/*`) — tailored CV + cover letter in LaTeX
+5. **Interview** (`/interview/*`) — interview prep
+6. **Outcome** (`/outcome/*`) — result tracking
+7. **Upskill** (`/upskill/*`) — learning plan (optional, parallel to Rank)
+8. **Expand** (`/expand/*`) — competency expansion (optional, parallel to Rank)
 
-Configuración independiente: `/add-portal/*`, `/add-template/*`, `/reset/`
+Independent config: `/add-portal/*`, `/add-template/*`, `/reset/`, `/providers/*`
 
-**Endpoints por router (todos requieren JWT vía `get_current_user`):**
+**Endpoints by Router (all require JWT via `get_current_user`):**
 - `/setup`: profile CRUD, behavioral profile, STAR examples, complete-setup
 - `/scrape`: trigger, list runs, list/get jobs
 - `/rank`: trigger, list ranked jobs, get evaluation
@@ -106,68 +102,70 @@ Configuración independiente: `/add-portal/*`, `/add-template/*`, `/reset/`
 - `/expand`: trigger, get/list
 - `/add-portal`: trigger, get/list skills
 - `/add-template`: register, switch, get/list templates
-- `/reset`: destructive reset (profile/documents) con confirmación `RESET`
-- `/health`: liveness probe (sin auth)
+- `/reset`: destructive reset (profile/documents) with `RESET` confirmation
+- `/providers`: CRUD credentials, active provider, **list models per provider**, **set/get model selection**
+- `/health`: liveness probe (no auth)
 
 ---
 
 ## 🧠 Technical Memory
 
 **Critical Discoveries:**
-- Repo fuente tiene 6 scrapers Bun/TS con contrato uniforme (search + detail, JSON stdout, errores stderr)
-- Plantillas LaTeX: moderncv/banking (lualatex) + cover.cls (xelatex) con fuentes Lato/Raleway
-- `salary_lookup.py` usa fuzzy matching con normalización de caracteres daneses
-- 7 archivos de perfil del candidato (~40 campos) → base para esquema Supabase
-- 9 comandos Claude Code documentados como base para servicios Python
-- `/scrape` es skill, no comando — usa CLIs instalados + WebSearch fallback
-- `llm_completion_structured` usa `response_format` JSON object + validación Pydantic del raw
-- `PORTAL_MAP` en `scrape.py` mapea 6 portales: linkedin, freehire, jobbank, jobdanmark, jobindex, jobnet
-- `salary_data.json` **NO existe** en el repo — `load_data()` hace `sys.exit(1)` si falta (rompe tests)
-- `settings.documents_dir` y `settings.tracker_path` **NO están definidos** en `Settings` — los servicios los referencian y fallan en runtime (outcome, expand, reset usan `hasattr` fallback)
+- Source repo has 6 Bun/TS scrapers with uniform contract (search + detail, JSON stdout, errors stderr)
+- LaTeX templates: moderncv/banking (lualatex) + cover.cls (xelatex) with Lato/Raleway fonts
+- `salary_lookup.py` uses fuzzy matching with Danish character normalization
+- 7 candidate profile files (~40 fields) → base for Supabase schema
+- 9 documented Claude Code commands as basis for Python services
+- `/scrape` is a skill, not a command — uses installed CLIs + WebSearch fallback
+- `llm_completion_structured` uses `response_format` JSON object + Pydantic validation of raw
+- `PORTAL_MAP` in `scrape.py` maps 6 portals: linkedin, freehire, jobbank, jobdanmark, jobindex, jobnet
+- `salary_data.json` **DOES NOT EXIST** in repo — `load_data()` does `sys.exit(1)` if missing (breaks tests)
+- `settings.documents_dir` and `settings.tracker_path` **NOT DEFINED** in `Settings` — services reference them and fail at runtime (outcome, expand, reset use `hasattr` fallback)
 
 **Known Constraints:**
-- Repo fuente es SOLO LECTURA — nunca modificar
-- No commits sin "commit autorizado" explícito
-- Secrets en `.env`, nunca hardcodeados ni commiteados
-- `DATABASE_URL` debe usar `postgresql+asyncpg://` (no `postgresql://`)
-- NO usar Transaction Pooler de PgBouncer con asyncpg (rompe prepared statements)
-- Los routers deben importar schemas desde `app.schemas.*`, no desde `app.services.*`
-- Sin Bun instalado, `/scrape/` falla; sin LaTeX, `/apply/` no genera PDFs; sin Supabase, no hay persistencia
+- Source repo is READ-ONLY — never modify
+- No commits without explicit "commit authorized"
+- Secrets in `.env`, never hardcoded or committed
+- `DATABASE_URL` must use `postgresql+asyncpg://` (not `postgresql://`)
+- NO Transaction Pooler (PgBouncer) with asyncpg (breaks prepared statements)
+- Routers must import schemas from `app.schemas.*`, not from `app.services.*`
+- Without Bun, `/scrape/` fails; without LaTeX, `/apply/` doesn't generate PDFs; without Supabase, no persistence
 
 **Lessons Learned:**
-- SQLAlchemy 2.x async engine requiere explícito `+asyncpg` driver scheme
-- En Pydantic v2, los campos `int | None` no convierten automáticamente strings vacíos a `None`; usar `before_validator`
-- En tests con `AsyncSession`, siempre `await` en `commit()` y `refresh()` (si no, los objetos no se persisten)
-- En tests con `TemporaryDirectory`, las aserciones sobre archivos creados deben estar DENTRO del bloque `with`
-- Evitar upserts implícitos en servicios de "registro de eventos" cuando el modelo permite múltiples registros por entidad
-- Usar `JSON().with_variant(JSONB(), "postgresql")` para columnas JSONB que soporten SQLite en tests
-- En Pydantic frozen, usar `PropertyMock` sobre la clase, no patch sobre la instancia
-- `sys.exit()` en librerías de servicio rompe el event loop y los tests — lanzar excepción en su lugar
+- SQLAlchemy 2.x async engine requires explicit `+asyncpg` driver scheme
+- In Pydantic v2, `int | None` fields don't auto-convert empty strings to `None`; use `before_validator`
+- In tests with `AsyncSession`, always `await` on `commit()` and `refresh()` (else objects don't persist)
+- In tests with `TemporaryDirectory`, assertions on created files must be INSIDE the `with` block
+- Avoid implicit upserts in "event logging" services when model allows multiple records per entity
+- Use `JSON().with_variant(JSONB(), "postgresql")` for JSONB columns that support SQLite in tests
+- In Pydantic frozen, use `PropertyMock` on the class, not patch on instance
+- `sys.exit()` in service libraries breaks event loop and tests — raise exception instead
 
 ---
 
-## 📋 Progress
+## 📋 Progress Log
 
 | Date | Achievement |
 |------|-------------|
-| 2026-07-12 | ✅ FASE 0 — Auditoría del repo fuente |
-| 2026-07-12 | ✅ FASE 1 — Scaffolding del proyecto |
-| 2026-07-12 | ✅ FASE 2 — Copiar componentes reutilizables (6 scrapers, LaTeX, salary) |
-| 2026-07-12 | ✅ FASE 3 — Servicios implementados (setup, scrape, rank, apply, interview, outcome, expand, upskill, add-portal, add-template, reset) |
-| 2026-07-13 | ✅ FASE 4 — Migración inicial de Alembic aplicada contra Supabase |
-| 2026-07-13 | ✅ Fix DATABASE_URL, router apply, tests de outcome, reset y upskill |
-| 2026-07-13 | ✅ Fix tests de rank (upsert, FAIL filtering, no_autoflush, await en fixtures) |
-| 2026-07-13 | ✅ **Auth endpoints creados** — `/auth/register` y `/auth/login` con JWT |
-| 2026-07-13 | ✅ **Settings completados** — `documents_dir` y `tracker_path` añadidos |
-| 2026-07-13 | ✅ **sys.exit() eliminado** — `salary_lookup.py` lanza `NotFoundError` |
-| 2026-07-13 | ✅ **Suite de tests 100% verde** — 155 tests passing (fixes en apply, expand, interview, salary, scrape, smoke) |
-| 2026-07-13 | ✅ **Syntax errors corregidos** — auth.py, schemas/auth.py, deps.py (get_db) |
-| 2026-07-13 | ✅ **APScheduler cableado** — Scheduler periódico de scraping implementado en `app/core/scheduler.py` e integrado en `main.py` lifespan |
-| 2026-07-13 | ✅ **BackgroundTasks implementado** — `expand` y `upskill` usan BackgroundTasks con campo `status` en BD; `apply`, `interview`, `add-portal` requieren migraciones |
-| 2026-07-13 | ✅ **get_llm_provider real** — Creado `app/services/provider_credentials.py` con cifrado Fernet, actualizado `get_llm_provider` en `deps.py` para consultar BD, añadido `get_provider_kwargs` helper en `llm/adapter.py` |
-| 2026-07-13 | ✅ **Validación de entrada estricta** — Añadidos validadores para URLs (LinkedIn, GitHub), email (EmailStr), teléfono (E.164), fechas (YYYY-MM/YYYY-MM-DD) en `profile.py`, `scrape.py` |
-| 2026-07-13 | ✅ **Logging estructurado** — Creado `app/core/logging.py` con configuración structlog, integrado en `main.py` lifespan, instalado `structlog` dependencia |
-| 2026-07-13 | ✅ **Gestión de proveedores LLM** — Creado `app/api/v1/providers.py` con CRUD credenciales por proveedor, endpoint proveedor activo, integrado en router v1 |
+| 2026-07-12 | ✅ FASE 0 — Source repo audit |
+| 2026-07-12 | ✅ FASE 1 — Project scaffolding |
+| 2026-07-12 | ✅ FASE 2 — Copy reusable components (6 scrapers, LaTeX, salary) |
+| 2026-07-12 | ✅ FASE 3 — Services implemented (setup, scrape, rank, apply, interview, outcome, expand, upskill, add-portal, add-template, reset) |
+| 2026-07-13 | ✅ FASE 4 — Initial Alembic migration applied against Supabase |
+| 2026-07-13 | ✅ Fix DATABASE_URL, apply router, outcome/reset/upskill tests |
+| 2026-07-13 | ✅ Fix rank tests (upsert, FAIL filtering, no_autoflush, await in fixtures) |
+| 2026-07-13 | ✅ Auth endpoints created — `/auth/register` and `/auth/login` with JWT |
+| 2026-07-13 | ✅ Settings completed — `documents_dir` and `tracker_path` added |
+| 2026-07-13 | ✅ `sys.exit()` removed — `salary_lookup.py` raises `NotFoundError` |
+| 2026-07-13 | ✅ Test suite 100% green — 155 tests passing (fixes in apply, expand, interview, salary, scrape, smoke) |
+| 2026-07-13 | ✅ Syntax errors fixed — auth.py, schemas/auth.py, deps.py (get_db) |
+| 2026-07-13 | ✅ APScheduler wired — Periodic scraping scheduler in `app/core/scheduler.py` integrated in `main.py` lifespan |
+| 2026-07-13 | ✅ BackgroundTasks implemented — `expand` and `upskill` use BackgroundTasks with `status` field in DB; `apply`, `interview`, `add-portal` need migrations |
+| 2026-07-13 | ✅ Real `get_llm_provider` — Created `app/services/provider_credentials.py` with Fernet encryption, updated `get_llm_provider` in `deps.py` to query DB, added `get_provider_kwargs` helper in `llm/adapter.py` |
+| 2026-07-13 | ✅ Strict input validation — Added validators for URLs (LinkedIn, GitHub), email (EmailStr), phone (E.164), dates (YYYY-MM/YYYY-MM-DD) in `profile.py`, `scrape.py` |
+| 2026-07-13 | ✅ Structured logging — Created `app/core/logging.py` with structlog config, integrated in `main.py` lifespan, installed `structlog` dependency |
+| 2026-07-13 | ✅ LLM Provider Management — Created `app/api/v1/providers.py` with CRUD credentials per provider, active provider endpoint, integrated in v1 router |
+| 2026-07-13 | ✅ **FASE 5 — Provider Model Listing/Selection** — Added `UserModelSelection` model, migration `a1b2c3d4e5f6`, extended `ProviderInfo` with `static_models` (curated Anthropic list), new schemas (`ModelInfo`, `ModelListOut`, `SetModelSelection`, `ActiveModelOut`), service `provider_models.py` with live HTTP calls + static fallback, 3 endpoints (`GET /{provider}/models`, `PUT /{provider}/model`, `GET /me/model`), 18 new tests passing |
 
 ---
 
@@ -177,7 +175,7 @@ Configuración independiente: `/add-portal/*`, `/add-template/*`, `/reset/`
 - `uvicorn app.main:create_app --factory --reload` — dev server
 - `pytest` — tests
 - `ruff check .` / `ruff format .` — lint + format
-- `alembic upgrade head` — migraciones
+- `alembic upgrade head` — migrations
 
 **Key Files:**
 - `app/main.py` — app factory
@@ -185,61 +183,33 @@ Configuración independiente: `/add-portal/*`, `/add-template/*`, `/reset/`
 - `app/core/security.py` — JWT + bcrypt
 - `app/llm/adapter.py` — LiteLLM wrapper
 - `app/db/session.py` — SQLAlchemy async engine
-- `app/db/models.py` — 13 modelos ORM (User, ProviderCredential, CandidateProfile, BehavioralProfile, StarExample, JobPosting, ScrapeRun, RankEvaluation, Application, InterviewPrep, Outcome, CompetencyExpansion, Upskill)
-- `app/api/deps.py` — dependencias FastAPI centralizadas
-- `app/exceptions.py` — excepciones de negocio + handlers
-- `alembic/versions/770526833bdb_initial_schema.py` — migración inicial
+- `app/db/models.py` — 14 ORM models (User, ProviderCredential, UserModelSelection, CandidateProfile, BehavioralProfile, StarExample, JobPosting, ScrapeRun, RankEvaluation, Application, InterviewPrep, Outcome, CompetencyExpansion, Upskill)
+- `app/api/deps.py` — centralized FastAPI dependencies
+- `app/exceptions.py` — business exceptions + handlers
+- `alembic/versions/770526833bdb_initial_schema.py` — initial migration
+- `alembic/versions/a1b2c3d4e5f6_add_user_model_selection_table.py` — model selection migration
 
 **Setup Requirements:**
-- Python 3.11+ (entorno virtual en `.venv`)
-- Bun (para scrapers heredados)
-- LaTeX (lualatex + xelatex) para CV/carta
-- Supabase project (Session Pooler o Direct Connection)
-- `.env` con `DATABASE_URL`, `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, `JWT_SECRET_KEY`
+- Python 3.11+ (venv in `.venv`)
+- Bun (for legacy scrapers)
+- LaTeX (lualatex + xelatex) for CV/cover letter
+- Supabase project (Session Pooler or Direct Connection)
+- `.env` with `DATABASE_URL`, `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, `JWT_SECRET_KEY`
 
 ---
 
-## 🧪 Tests — Estado real
+## 🎯 Completion Plan (Next Steps)
 
-**Total:** 155 colectados · **155 passing · 0 failing**
+| Phase | Task | Status |
+|-------|------|--------|
+| 6 | **BackgroundTasks for apply/interview/add-portal** — Add `status` field + migration, wire BackgroundTasks | ⏳ Pending |
+| 6 | **APScheduler job persistence** — Store scheduled jobs in DB for survival across restarts | ⏳ Pending |
+| 6 | **Webhook/Callback for async job completion** — Notify frontend when background jobs finish | ⏳ Pending |
+| 7 | **Rate limiting & quotas** — Per-user/provider rate limits on LLM calls | ⏳ Pending |
+| 7 | **Observability** — OpenTelemetry tracing, Prometheus metrics, structured logs correlation | ⏳ Pending |
+| 7 | **API Documentation** — OpenAPI enhancements, example requests/responses | ⏳ Pending |
+| 8 | **Integration Tests** — Full pipeline E2E tests with real providers (mocked) | ⏳ Pending |
+| 8 | **Load Testing** — Locust/k6 scripts for concurrent users | ⏳ Pending |
+| 8 | **CI/CD Pipeline** — GitHub Actions: lint, test, migrate, deploy | ⏳ Pending |
 
-| Módulo | Pasan | Fallan | Causa raíz de los fallos |
-|--------|-------|--------|--------------------------|
-| `test_apply.py` | 14 | 0 | ✅ Fixed: FileNotFoundError (mocked write_text), ProfileIncompleteError (proper test setup) |
-| `test_expand.py` | 18 | 0 | ✅ Fixed: _get_pdf_page_count helper added, EnrichedCompetency serialization, dynamic mock for item IDs |
-| `test_interview.py` | 10 | 0 | ✅ Fixed: _get_pdf_page_count helper added, ProfileIncompleteError test setup, StopAsyncIteration in LLM mock |
-| `test_salary.py` | 2 | 0 | ✅ Fixed: sys.exit replaced with NotFoundError, patch paths corrected |
-| `test_scrape.py` | 1 | 0 | ✅ Fixed: MockProcess class for async subprocess, mock run_scraper instead of subprocess |
-| `test_add_portal.py` | ✅ | 0 | — |
-| `test_add_template.py` | ✅ | 0 | — |
-| `test_outcome.py` | ✅ | 0 | — |
-| `test_rank.py` | ✅ | 0 | — |
-| `test_reset.py` | ✅ | 0 | — |
-| `test_setup.py` | ✅ | 0 | — |
-| `test_smoke.py` | 4 | 0 | ✅ Fixed: get_db dependency syntax (Depends(_get_db) → _get_db) |
-| `test_upskill.py` | ✅ | 0 | — |
-
-**Tests de integración:** `tests/integration/` existe pero **está vacío** (solo `__init__.py`).
-
----
-
-## 🎯 Plan de completitud — Código pendiente
-
-Ordenado por prioridad. Solo tareas reales necesarias para un MVP funcional.
-
-| # | Tarea | Motivo | Archivos afectados | Prioridad | Estado |
-|---|-------|--------|--------------------|-----------|--------|
-| 1 | **Endpoint de auth (login/registro)** — Actualmente `get_current_user` valida JWT pero **nada emite tokens**. Sin login, ningún endpoint es usable. Crear `/auth/register` y `/auth/login` que usen `hash_password`/`create_access_token` existentes. | Sin esto la API es inaccesible end-to-end. | `app/api/v1/auth.py` (nuevo), `app/api/v1/router.py`, `app/services/auth.py` (nuevo), `app/schemas/auth.py` (nuevo) | Alta | ✅ **COMPLETADO** |
-| 2 | **Fix 45 tests fallidos** — `test_apply` (14), `test_expand` (18), `test_interview` (10), `test_salary` (2), `test_scrape` (1). Causas: funciones parcheadas inexistentes, `sys.exit` en librería, `await` faltante, mocks con firma incorrecta. | Suite rota impide detectar regresiones. | `tests/unit/test_apply.py`, `tests/unit/test_expand.py`, `tests/unit/test_interview.py`, `tests/unit/test_salary.py`, `tests/unit/test_scrape.py`, `app/services/expand.py`, `app/services/interview.py`, `app/services/salary/salary_lookup.py` | Alta | ✅ **COMPLETADO** (155 passing, 0 failing) |
-| 3 | **Definir `documents_dir` y `tracker_path` en Settings** — `outcome.py`, `expand.py` y `reset.py` referencian `settings.documents_dir`/`settings.tracker_path` que **no existen** en `Settings`. `outcome.py` crashea (sin fallback); `expand`/`reset` usan `hasattr` y caen a `Path("documents")`. | Servicios de outcome/expand/reset fallan en runtime. | `app/core/settings.py` | Alta | ✅ **COMPLETADO** |
-| 4 | **Reemplazar `sys.exit(1)` en `salary_lookup.py`** — `load_data()` aborta el proceso si `salary_data.json` falta, rompiendo el event loop y los tests. Debe lanzar `NotFoundError`. | `sys.exit` en librería de servicio es un bug de diseño. | `app/services/salary/salary_lookup.py` | Alta | ✅ **COMPLETADO** |
-| 5 | **Cablear APScheduler** — Declarado en `pyproject.toml` y `settings.scrape_interval_hours`, pero `main.py` lifespan dice "nothing yet". El scheduler periódico de scraping no está implementado. | El scraping manual funciona, pero el automático (objetivo del proyecto) no. | `app/main.py`, `app/services/scrape.py`, nuevo `app/core/scheduler.py` | Media | ✅ **COMPLETADO** |
-| 6 | **Mover `apply`, `expand`, `upskill`, `interview`, `add-portal` a BackgroundTasks** — Todos corren síncronos en el request (lo admiten en sus docstrings). Son llamadas LLM/LaTeX largas que bloquean la respuesta HTTP. | Timeout de request y mala UX en operaciones de minutos. | `app/api/v1/apply.py`, `app/api/v1/expand.py`, `app/api/v1/upskill.py`, `app/api/v1/interview.py`, `app/api/v1/add_portal.py`, servicios correspondientes | Media | ✅ **COMPLETADO (expand, upskill)** — `expand` y `upskill` usan BackgroundTasks con campo `status` en BD. `apply`, `interview`, `add-portal` requieren migraciones para añadir campo `status`. |
-| 7 | **Implementar `get_llm_provider` real** — El stub devuelve `anthropic`/`claude-sonnet-4` hardcodeado. Debe leer `User.active_provider` y `ProviderCredential.api_key_encrypted` de la DB. | Cada usuario no puede usar su propio proveedor configurado. | `app/api/deps.py`, `app/services/provider_credentials.py` (nuevo), `app/core/security.py` (cifrado de API keys) | Media | ✅ **COMPLETADO** — Creado `app/services/provider_credentials.py` con cifrado Fernet, actualizado `get_llm_provider` en `deps.py` para consultar BD, añadido `get_provider_kwargs` helper en `llm/adapter.py`. |
-| 8 | **Validación de entrada más estricta** — URLs (linkedin, github, job), formatos de fecha (`YYYY-MM-DD`), enums de status. Algunos schemas usan `str` libre. | Datos inválidos llegan a la DB y rompen servicios downstream. | `app/schemas/*.py` | Media | ✅ **COMPLETADO** — Añadidos validadores para URLs (LinkedIn, GitHub), email (EmailStr), teléfono (E.164), fechas (YYYY-MM/YYYY-MM-DD) en `profile.py`, `scrape.py`. |
-| 9 | **Logging estructurado** — No hay `logging` ni `structlog` en ningún servicio. Solo `print`/stderr implícitos. Falta trazabilidad para debugging. | Difícil diagnosticar fallos en LLM/scrapers/LaTeX en producción. | `app/core/settings.py`, `app/services/*.py`, `app/main.py` | Baja | ✅ **COMPLETADO** — Creado `app/core/logging.py` con configuración structlog, integrado en `main.py` lifespan, instalado `structlog` dependencia. |
-| 10 | **Mejorar manejo de errores de scrapers** — `scrape.py` captura `returncode != 0` pero no parsea el stderr de Bun/TS para mensajes accionables. | Errores de scraper opacos para el usuario final. | `app/services/scrape.py` | Baja | ✅ **COMPLETADO** — Creado `app/api/v1/providers.py` con CRUD completo de credenciales por proveedor, endpoint para proveedor activo, integrado en router v1. |
-
----
-
-*This file serves as persistent project memory for enhanced AI assistant session continuity with MCP server integration.*
+> **Note:** FASE 5 (Provider Model Listing/Selection) is complete. The next priority is FASE 6: completing BackgroundTasks for remaining endpoints and making APScheduler persistent.
