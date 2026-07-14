@@ -15,8 +15,8 @@ primary_region = "iad"
   # CORS - update with your frontend URL
   CORS_ORIGINS = '["https://your-frontend-domain.com"]'
   
-  # LaTeX binary path (MiKTeX Portable)
-  LATEX_BIN_DIR = "/app/app/external/latex/miktex-portable/miktex/bin/x64"
+  # LaTeX binary path (MiKTeX installed via apt on Debian bookworm)
+  LATEX_BIN_DIR = "/usr/bin"
   
   # Default LLM provider
   LLM_DEFAULT_PROVIDER = "anthropic"

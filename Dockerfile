@@ -4,7 +4,9 @@
 # =====================================================================
 # Stage 1: Build dependencies and install Bun
 # =====================================================================
-FROM python:3.11-slim AS builder
+# Pin to bookworm (Debian 12) because MiKTeX only provides an apt
+# repository for bookworm. python:3.11-slim now defaults to trixie.
+FROM python:3.11-slim-bookworm AS builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +29,8 @@ RUN pip install --no-cache-dir --upgrade pip \
 # =====================================================================
 # Stage 2: Runtime image with MiKTeX installed via apt
 # =====================================================================
-FROM python:3.11-slim AS runtime
+# Pin to bookworm (Debian 12) to match the MiKTeX apt repository.
+FROM python:3.11-slim-bookworm AS runtime
 
 # Install runtime dependencies + MiKTeX
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -102,7 +102,19 @@ def _resolve_latex_binary(name: str) -> str | Path:
         the bare ``name`` string.
     """
     if settings.latex_bin_dir:
-        return Path(settings.latex_bin_dir) / f"{name}.exe"
+        bin_dir = Path(settings.latex_bin_dir)
+        # On Windows (MiKTeX Portable) binaries have a .exe extension.
+        # On Linux (MiKTeX via apt) binaries have no extension.
+        windows_path = bin_dir / f"{name}.exe"
+        if windows_path.exists():
+            return windows_path
+        linux_path = bin_dir / name
+        if linux_path.exists():
+            return linux_path
+        # Fallback: prefer the platform-appropriate name.
+        import sys
+
+        return windows_path if sys.platform == "win32" else linux_path
     return name
 
 
