@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -66,6 +66,9 @@ class User(Base, TimestampMixin):
     provider_credentials: Mapped[list["ProviderCredential"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    model_selections: Mapped[list["UserModelSelection"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     candidate_profile: Mapped["CandidateProfile | None"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
@@ -90,6 +93,29 @@ class ProviderCredential(Base, TimestampMixin):
     api_base: Mapped[str | None] = mapped_column(String(500))  # For self-hosted providers
 
     user: Mapped["User"] = relationship(back_populates="provider_credentials")
+
+
+class UserModelSelection(Base, TimestampMixin):
+    """The model a user has selected for a given LLM provider.
+
+    Decoupled from ProviderCredential so that selecting a model does not
+    require touching the encrypted API key.  One row per (user, provider).
+    """
+
+    __tablename__ = "user_model_selection"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="model_selections")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_user_model_selection_user_provider"),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════

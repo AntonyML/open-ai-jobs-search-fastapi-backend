@@ -5,12 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.schemas.providers import (
+    ActiveModelOut,
     ActiveProviderOut,
+    ModelListOut,
     ProviderCredentialCreate,
     ProviderCredentialOut,
     ProviderCredentialUpdate,
     ProviderInfo,
     SetActiveProvider,
+    SetModelSelection,
 )
 from app.services.provider_credentials import (
     delete_provider_credential,
@@ -19,6 +22,11 @@ from app.services.provider_credentials import (
     list_user_providers,
     set_provider_credential,
     set_user_active_provider,
+)
+from app.services.provider_models import (
+    get_user_model_selection,
+    list_provider_models,
+    set_user_model_selection,
 )
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -199,3 +207,119 @@ async def set_active_provider(
         api_base=config["api_base"],
         has_credential=config["api_key"] is not None,
     )
+
+
+# ── Model listing & selection ──────────────────────────────────────
+
+
+@router.get(
+    "/{provider}/models",
+    response_model=ModelListOut,
+    summary="List models available to the user for a provider",
+)
+async def list_models_for_provider(
+    provider: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ModelListOut:
+    """List the models the user can use with the given provider.
+
+    For OpenAI, NVIDIA NIM, LM Studio and Ollama the list is fetched live from
+    the provider using the user's stored credential.  For Anthropic (no public
+    list endpoint) a curated static list is returned with `source: "static"`.
+    """
+    return await list_provider_models(db, user["sub"], provider)
+
+
+@router.put(
+    "/{provider}/model",
+    response_model=ActiveModelOut,
+    summary="Set the user's selected model for a provider",
+)
+async def set_model_for_provider(
+    provider: str,
+    payload: SetModelSelection,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveModelOut:
+    """Persist the user's chosen model for the given provider."""
+    await set_user_model_selection(db, user["sub"], provider, payload.model)
+    return ActiveModelOut(provider=provider, model=payload.model)
+
+
+@router.get(
+    "/me/model",
+    response_model=ActiveModelOut,
+    summary="Get the user's selected model for their active provider",
+)
+async def get_my_active_model(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveModelOut:
+    """Return the model the user has selected for their currently active provider."""
+    # Get the user's active provider
+    from app.services.provider_credentials import get_user_active_provider_config
+
+    config = await get_user_active_provider_config(db, user["sub"])
+    provider = config["provider"]
+
+    # Get the selected model for that provider
+    model = await get_user_model_selection(db, user["sub"], provider)
+    return ActiveModelOut(provider=provider, model=model)
+
+
+# ── Model listing & selection ──────────────────────────────────────
+
+
+@router.get(
+    "/{provider}/models",
+    response_model=ModelListOut,
+    summary="List models available to the user for a provider",
+)
+async def list_models_for_provider(
+    provider: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ModelListOut:
+    """List the models the user can use with the given provider.
+
+    For OpenAI, NVIDIA NIM, LM Studio and Ollama the list is fetched live from
+    the provider using the user's stored credential.  For Anthropic (no public
+    list endpoint) a curated static list is returned with `source: "static"`.
+    """
+    return await list_provider_models(db, user["sub"], provider)
+
+
+@router.put(
+    "/{provider}/model",
+    response_model=ActiveModelOut,
+    summary="Set the user's selected model for a provider",
+)
+async def set_model_for_provider(
+    provider: str,
+    payload: SetModelSelection,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveModelOut:
+    """Persist the model the user wants to use with the given provider."""
+    await set_user_model_selection(db, user["sub"], provider, payload.model)
+    return ActiveModelOut(provider=provider, model=payload.model)
+
+
+@router.get(
+    "/me/model",
+    response_model=ActiveModelOut,
+    summary="Get the user's selected model for the active provider",
+)
+async def get_my_active_model(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveModelOut:
+    """Return the model the user has selected for their active provider.
+
+    Returns `model: null` if no model has been selected yet for the active
+    provider.
+    """
+    config = await get_user_active_provider_config(db, user["sub"])
+    model = await get_user_model_selection(db, user["sub"], config["provider"])
+    return ActiveModelOut(provider=config["provider"], model=model)
