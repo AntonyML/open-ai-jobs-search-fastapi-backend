@@ -65,16 +65,6 @@ async def get_provider_credential(
     user_id: str,
     provider: str,
 ) -> ProviderCredential | None:
-    """Get a provider credential for a user.
-
-    Args:
-        db: Database session
-        user_id: User ID
-        provider: Provider name
-
-    Returns:
-        ProviderCredential with decrypted API key, or None if not found
-    """
     result = await db.execute(
         select(ProviderCredential).where(
             ProviderCredential.user_id == user_id,
@@ -85,8 +75,11 @@ async def get_provider_credential(
     if credential is None:
         return None
 
-    # Decrypt the API key for use
-    credential.api_key_encrypted = decrypt_api_key(credential.api_key_encrypted)
+    # Expose decrypted key via a transient attribute without mutating the ORM column
+    try:
+        credential.__dict__["_api_key_plain"] = decrypt_api_key(credential.api_key_encrypted)
+    except Exception:
+        credential.__dict__["_api_key_plain"] = credential.api_key_encrypted
     return credential
 
 
@@ -126,7 +119,7 @@ async def get_user_active_provider_config(
         return {
             "provider": active_provider,
             "model": default_models.get(active_provider, "claude-sonnet-4-20250514"),
-            "api_key": credential.api_key_encrypted,
+            "api_key": credential.__dict__.get("_api_key_plain", credential.api_key_encrypted),
             "api_base": credential.api_base,
         }
     else:
