@@ -2,7 +2,7 @@
 # Multi-stage build for smaller final image
 
 # =====================================================================
-# Stage 1: Build dependencies and install MiKTeX Portable + Bun
+# Stage 1: Build dependencies and install Bun
 # =====================================================================
 FROM python:3.11-slim AS builder
 
@@ -17,29 +17,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
-# Install MiKTeX Portable
-WORKDIR /app
-RUN mkdir -p /app/app/external/latex/miktex-portable
-# Download MiKTeX Portable installer
-RUN curl -fsSL -o miktex-portable.exe "https://miktex.org/download/portable" \
-    && chmod +x miktex-portable.exe \
-    && ./miktex-portable.exe --extract-only --target=/app/app/external/latex/miktex-portable \
-    && rm miktex-portable.exe
-
 # Install Python dependencies
 COPY pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e .
 
 # =====================================================================
-# Stage 2: Runtime image
+# Stage 2: Runtime image with MiKTeX installed via apt
 # =====================================================================
 FROM python:3.11-slim AS runtime
 
-# Install runtime dependencies
+# Install runtime dependencies + MiKTeX
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    gnupg \
+    && curl -fsSL https://miktex.org/download/key.asc | gpg --dearmor -o /usr/share/keyrings/miktex-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/miktex-keyring.gpg] https://miktex.org/download/debian bookworm universe" > /etc/apt/sources.list.d/miktex.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends miktex \
+    && rm -rf /var/lib/apt/lists/* \
+    && miktexsetup --shared=yes finish \
+    && initexmf --admin --set-config-value [MPM]AutoInstall=1
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -51,9 +50,6 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy MiKTeX Portable from builder
-COPY --from=builder /app/app/external/latex/miktex-portable /app/app/external/latex/miktex-portable
-
 # Copy Bun from builder
 COPY --from=builder /root/.bun /home/appuser/.bun
 ENV PATH="/home/appuser/.bun/bin:${PATH}"
@@ -61,8 +57,8 @@ ENV PATH="/home/appuser/.bun/bin:${PATH}"
 # Copy application code
 COPY --chown=appuser:appuser . .
 
-# Set MiKTeX binary path
-ENV LATEX_BIN_DIR=/app/app/external/latex/miktex-portable/miktex/bin/x64
+# Set MiKTeX binary path (installed via apt)
+ENV LATEX_BIN_DIR=/usr/bin
 
 # Switch to non-root user
 USER appuser
