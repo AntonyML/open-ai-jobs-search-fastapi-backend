@@ -1,6 +1,6 @@
 """Rank router — endpoints for ranking job postings."""
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -9,13 +9,14 @@ from app.schemas.rank import RankRequest, RankResult
 from app.schemas.rank import RankEvaluationOut as RankEvaluationOutSchema
 from app.schemas.scrape import JobPostingSummary
 from app.services import rank
+from app.services import rank_jobs
+from app.db.session import async_session_factory
 
 router = APIRouter(prefix="/rank", tags=["rank"])
 
 
 @router.post(
     "/",
-    response_model=RankResult,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def trigger_rank(
@@ -28,14 +29,16 @@ async def trigger_rank(
     Runs synchronously in the request. For large batches, consider
     moving to a background task in a future iteration.
     """
-    result = await rank.execute_rank(
-        db=db,
-        user_id=user["sub"],
-        focus_area=payload.focus_area,
-        re_rank=payload.re_rank,
-        top_n=payload.top_n,
-    )
-    return result
+    job_id = await rank_jobs.start(async_session_factory, user["sub"], payload.model_dump())
+    return {"job_id": job_id, "status": "running"}
+
+@router.get("/status/{job_id}")
+async def rank_status(job_id: str):
+    return rank_jobs.get(job_id) or {"detail": "Ranking job not found"}
+
+@router.post("/cancel/{job_id}")
+async def cancel_rank(job_id: str):
+    return {"cancelled": await rank_jobs.cancel(job_id)}
 
 
 @router.get("/jobs", response_model=list[JobPostingSummary])
