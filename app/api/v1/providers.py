@@ -278,6 +278,21 @@ async def list_models_for_provider(
     return await list_provider_models(db, user["sub"], provider)
 
 
+@router.post("/{provider}/models", response_model=ModelListOut)
+async def preview_provider_models(
+    provider: str,
+    payload: ProviderCredentialCreate,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ModelListOut:
+    """Load models using unsaved form credentials."""
+    await set_provider_credential(
+        db, user["sub"], provider, payload.api_key,
+        str(payload.api_base) if payload.api_base else None,
+    )
+    return await list_provider_models(db, user["sub"], provider)
+
+
 @router.put(
     "/{provider}/model",
     response_model=ActiveModelOut,
