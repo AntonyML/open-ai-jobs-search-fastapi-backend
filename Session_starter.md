@@ -4,12 +4,12 @@
 
 ## 👤 Tareas Manuales (antes del front)
 
-- [ ] Configurar `.env` (DATABASE_URL, API keys, JWT_SECRET_KEY)
+- [ ] Configurar `.env` (DATABASE_URL, JWT_SECRET_KEY, CORS_ORIGINS)
 - [ ] Crear proyecto Supabase (Session Pooler)
 - [ ] Instalar Bun
 - [ ] `bun install` en los 6 scrapers (`app/external/scrapers/*/cli/`)
 - [ ] Instalar LaTeX (lualatex + xelatex)
-- [ ] Registrar API keys en `/providers` (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama)
+- [ ] Registrar API keys desde el front vía `/providers` (se cifran en DB)
 - [ ] Probar flujo end-to-end completo
 - [ ] Verificar migraciones en Supabase (`alembic upgrade head`)
 
