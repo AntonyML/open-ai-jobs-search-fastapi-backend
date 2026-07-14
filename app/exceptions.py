@@ -78,9 +78,17 @@ class ConfirmationRequiredError(AppError):
 
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    origin = request.headers.get("origin", "")
+    from app.core.settings import get_settings
+    settings = get_settings()
+    allow_origin = origin if origin in settings.cors_origins else (settings.cors_origins[0] if settings.cors_origins else "")
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.code, "message": exc.message},
+        headers={
+            "Access-Control-Allow-Origin": allow_origin,
+            "Access-Control-Allow-Credentials": "true",
+        },
     )
 
 
