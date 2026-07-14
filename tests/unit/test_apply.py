@@ -678,3 +678,24 @@ async def test_compile_latex_wrong_page_count():
                         "lualatex",
                         2,
                     )
+
+
+# ── _resolve_latex_binary tests ────────────────────────────────────
+
+
+def test_resolve_latex_binary_returns_bare_name_when_no_dir():
+    """When latex_bin_dir is None, returns the bare binary name (uses PATH)."""
+    with patch("app.services.apply.settings") as mock_settings:
+        mock_settings.latex_bin_dir = None
+        result = apply._resolve_latex_binary("lualatex")
+    assert result == "lualatex"
+
+
+def test_resolve_latex_binary_returns_full_path_when_dir_set():
+    """When latex_bin_dir is set, returns the full path with .exe extension."""
+    with patch("app.services.apply.settings") as mock_settings:
+        mock_settings.latex_bin_dir = "app/external/latex/miktex-portable/miktex/bin/x64"
+        result = apply._resolve_latex_binary("lualatex")
+    assert isinstance(result, Path)
+    assert result.name == "lualatex.exe"
+    assert result.parent.name == "x64"

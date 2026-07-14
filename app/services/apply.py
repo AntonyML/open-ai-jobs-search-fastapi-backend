@@ -84,6 +84,28 @@ COVER_CLS = COVER_TEMPLATE_DIR / "cover.cls"
 OPENFONTS_DIR = COVER_TEMPLATE_DIR / "OpenFonts"
 
 
+# ── LaTeX binary resolution ─────────────────────────────────────────
+
+
+def _resolve_latex_binary(name: str) -> str | Path:
+    """Resolve the full path to a LaTeX-related binary.
+
+    If ``settings.latex_bin_dir`` is set (e.g. MiKTeX Portable), return the
+    full path to the binary inside that directory. Otherwise return the
+    bare name so the system PATH is used.
+
+    Args:
+        name: Binary name without extension (e.g. ``"lualatex"``).
+
+    Returns:
+        ``Path`` to the binary if ``latex_bin_dir`` is configured, otherwise
+        the bare ``name`` string.
+    """
+    if settings.latex_bin_dir:
+        return Path(settings.latex_bin_dir) / f"{name}.exe"
+    return name
+
+
 # ── Prompt builders ─────────────────────────────────────────────────
 
 
@@ -602,9 +624,10 @@ async def compile_latex(
     tex_file.write_text(tex_content, encoding="utf-8")
 
     # Run LaTeX (twice for references)
+    engine_bin = _resolve_latex_binary(engine)
     for _ in range(2):
         proc = await asyncio.create_subprocess_exec(
-            engine,
+            str(engine_bin),
             "-interaction=nonstopmode",
             "-output-directory",
             str(output_dir),
@@ -637,7 +660,9 @@ async def compile_latex(
 async def _get_pdf_page_count(pdf_path: Path) -> int:
     """Get page count of a PDF using pdftotext or pdfinfo."""
     # Try pdfinfo first (poppler-utils)
-    for cmd in [["pdfinfo", str(pdf_path)], ["pdftotext", str(pdf_path), "-"]]:
+    pdfinfo_bin = _resolve_latex_binary("pdfinfo")
+    pdftotext_bin = _resolve_latex_binary("pdftotext")
+    for cmd in [[str(pdfinfo_bin), str(pdf_path)], [str(pdftotext_bin), str(pdf_path), "-"]]:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

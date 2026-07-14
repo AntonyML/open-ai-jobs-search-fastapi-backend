@@ -62,3 +62,19 @@ job_search_tracker.csv
 # DB
 *.db
 *.sqlite3
+
+# Bun / Node
+node_modules/
+bun.lockb
+
+# MiKTeX Portable (binarios grandes, no commitear)
+app/external/latex/miktex-portable/
+
+# Generated documents
+documents/
+
+# Python build/test artifacts
+*.sqlite3
+coverage.xml
+.tox/
+.nox/

@@ -4,11 +4,12 @@
 
 ## 👤 Tareas Manuales (antes del front)
 
-- [ ] Configurar `.env` (DATABASE_URL, JWT_SECRET_KEY, CORS_ORIGINS)
-- [ ] Crear proyecto Supabase (Session Pooler)
-- [ ] Instalar Bun
-- [ ] `bun install` en los 6 scrapers (`app/external/scrapers/*/cli/`)
-- [ ] Instalar LaTeX (lualatex + xelatex)
+- [X] Configurar `.env` (DATABASE_URL, JWT_SECRET_KEY, CORS_ORIGINS)
+- [X] Crear proyecto Supabase (Session Pooler)
+- [x] Instalar Bun
+- [x] `bun install` en los 6 scrapers (`app/external/scrapers/*/cli/`)
+- [ ] Instalar MiKTeX Portable en `app/external/latex/miktex-portable/`
+- [ ] Configurar `LATEX_BIN_DIR` en `.env` (si se usa portable)
 - [ ] Registrar API keys desde el front vía `/providers` (se cifran en DB)
 - [ ] Probar flujo end-to-end completo
 - [ ] Verificar migraciones en Supabase (`alembic upgrade head`)

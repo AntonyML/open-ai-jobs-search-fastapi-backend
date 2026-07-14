@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     documents_dir: str = "documents"
     tracker_path: str = "documents/tracker.json"
 
+    # ── LaTeX ─────────────────────────────────────────────────
+    # Directorio con los binarios de LaTeX (lualatex, xelatex, pdfinfo, pdftotext).
+    # Si es None, usa los binarios del PATH del sistema.
+    # Para MiKTeX Portable: app/external/latex/miktex-portable/miktex/bin/x64
+    latex_bin_dir: str | None = None
+
     @property
     def latex_cv_dir(self) -> Path:
         return Path(__file__).resolve().parent.parent / "external" / "latex" / "cv"
