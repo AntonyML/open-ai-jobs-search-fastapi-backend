@@ -286,11 +286,11 @@ async def preview_provider_models(
     db: AsyncSession = Depends(get_db),
 ) -> ModelListOut:
     """Load models using unsaved form credentials."""
-    await set_provider_credential(
-        db, user["sub"], provider, payload.api_key,
-        str(payload.api_base) if payload.api_base else None,
+    return await list_provider_models(
+        db, user["sub"], provider,
+        api_key=payload.api_key,
+        api_base=str(payload.api_base) if payload.api_base else None,
     )
-    return await list_provider_models(db, user["sub"], provider)
 
 
 @router.put(

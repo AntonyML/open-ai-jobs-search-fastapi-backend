@@ -155,6 +155,8 @@ async def list_provider_models(
     db: AsyncSession,
     user_id: str,
     provider: str,
+    api_key: str | None = None,
+    api_base: str | None = None,
 ) -> ModelListOut:
     """List the models available to the user for the given provider.
 
@@ -179,7 +181,8 @@ async def list_provider_models(
     if provider not in _DEFAULT_API_BASE:
         raise NotFoundError(f"Unknown provider '{provider}'")
 
-    api_key, api_base = await _resolve_credential(db, user_id, provider)
+    if api_key is None and api_base is None:
+        api_key, api_base = await _resolve_credential(db, user_id, provider)
     base_url = api_base or _DEFAULT_API_BASE[provider]
 
     if provider == "ollama":

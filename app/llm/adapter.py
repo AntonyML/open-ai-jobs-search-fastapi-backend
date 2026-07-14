@@ -119,6 +119,7 @@ async def llm_completion(
     kwargs = _build_kwargs(provider, model, api_key, api_base)
     kwargs["temperature"] = temperature
     kwargs["max_tokens"] = max_tokens
+    kwargs["timeout"] = 30
 
     if response_format:
         kwargs["response_format"] = response_format
