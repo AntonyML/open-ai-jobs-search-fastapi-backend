@@ -33,11 +33,16 @@ RUN pip install --no-cache-dir --upgrade pip \
 FROM python:3.11-slim-bookworm AS runtime
 
 # Install runtime dependencies + MiKTeX
+# MiKTeX's key.asc URL is no longer available (404), so we retrieve the
+# signing key from the Ubuntu keyserver as documented by MiKTeX.
+# Key ID: D6BC243565B2087BC3F897C9277A7293F59E4889
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
     gnupg \
-    && curl -fsSL https://miktex.org/download/key.asc | gpg --dearmor -o /usr/share/keyrings/miktex-keyring.gpg \
+    ca-certificates \
+    && gpg --homedir /tmp --no-default-keyring --keyring /usr/share/keyrings/miktex-keyring.gpg \
+        --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys D6BC243565B2087BC3F897C9277A7293F59E4889 \
     && echo "deb [signed-by=/usr/share/keyrings/miktex-keyring.gpg] https://miktex.org/download/debian bookworm universe" > /etc/apt/sources.list.d/miktex.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends miktex \
