@@ -19,6 +19,8 @@ from app.api.v1.providers import router as providers_router
 from app.api.v1.orchestrator import router as orchestrator_router
 from app.api.v1.salary import router as salary_router
 from app.api.v1.verification import router as verification_router
+from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.dashboard import analytics_router
 
 router = APIRouter()
 
@@ -53,3 +55,7 @@ router.include_router(add_portal_router)
 router.include_router(add_template_router)
 router.include_router(pipeline_reset_router)
 router.include_router(reset_router)
+
+# ── Dashboard + Analytics ───────────────────────────────────────────
+router.include_router(dashboard_router)
+router.include_router(analytics_router)
