@@ -35,7 +35,7 @@ from app.core.settings import get_settings
 from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation, User
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
-from app.services import ats_check, cv_cutter
+from app.services import ats_check, cv_cutter, pdf_compiler
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
@@ -1319,6 +1319,84 @@ async def execute_apply(
         shutil.copy2(cover_pdf, cover_pdf_final)
         cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
         cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
+
+        # ═══════════════════════════════════════════════════════════
+        # STAGE 6c: COMPILATION VERIFICATION LOOP
+        # ═══════════════════════════════════════════════════════════
+        # Runs the iterative verification loop: checks for orphaned
+        # \cventry entries, cover letter signature presence, and
+        # applies \needspace{}/\enlargethispage{} fixes as needed.
+        # Only runs if LaTeX compilation succeeded. Non-blocking:
+        # if verification fails, the pipeline continues with warnings.
+
+        if cv_compile_success:
+            try:
+                # Create compile wrappers that don't raise on page count
+                from app.services.apply import compile_latex_get_pages
+
+                async def _verify_compile_cv(tex, out_dir, name):
+                    return await compile_latex_get_pages(
+                        tex, out_dir, name, "lualatex"
+                    )
+
+                async def _verify_compile_cover(tex, out_dir, name):
+                    return await compile_latex_get_pages(
+                        tex, out_dir, name, "xelatex"
+                    )
+
+                # Optional ATS check function for the verification loop
+                async def _verify_ats(pdf):
+                    return await ats_check.check_ats_parseability(
+                        pdf_path=pdf, job_posting=job, candidate=candidate
+                    )
+
+                verify_result = await pdf_compiler.compile_with_verification(
+                    cv_latex=final_cv_tex,
+                    cover_letter_latex=final_cover_tex,
+                    cv_name=f"cv_{job.company}_{job.title}",
+                    cover_name=f"cover_{job.company}_{job.title}",
+                    candidate_name=candidate.full_name,
+                    output_dir=tmpdir_path,
+                    compile_cv_fn=_verify_compile_cv,
+                    compile_cover_fn=_verify_compile_cover,
+                    ats_check_fn=_verify_ats,
+                )
+
+                if verify_result.total_iterations > 1:
+                    logger.info(
+                        f"Compilation verification: {verify_result.total_iterations} "
+                        f"iteration(s), {len(verify_result.final_issues)} "
+                        f"remaining issue(s)."
+                    )
+
+                # If verification applied fixes and recompiled, update
+                # the final generated files
+                if verify_result.cv_pdf_path and str(verify_result.cv_pdf_path) != str(cv_pdf_final):
+                    cv_pdf = Path(verify_result.cv_pdf_path)
+                    if cv_pdf.exists():
+                        shutil.copy2(cv_pdf, cv_pdf_final)
+                if verify_result.cover_pdf_path and str(verify_result.cover_pdf_path) != str(cover_pdf_final):
+                    cover_pdf = Path(verify_result.cover_pdf_path)
+                    if cover_pdf.exists():
+                        shutil.copy2(cover_pdf, cover_pdf_final)
+
+                # Update final LaTeX if verification modified it
+                if verify_result.cv_latex and verify_result.cv_latex != final_cv_tex:
+                    final_cv_tex = verify_result.cv_latex
+                    cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
+                if verify_result.cover_latex and verify_result.cover_latex != final_cover_tex:
+                    final_cover_tex = verify_result.cover_latex
+                    cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
+
+                # Log any unresolved issues
+                for issue in verify_result.final_issues:
+                    logger.warning(
+                        f"Compilation issue ({issue.category.value}): {issue.description}"
+                    )
+
+            except Exception as e:
+                # Compilation verification should never block the pipeline
+                logger.warning(f"Compilation verification loop failed (non-blocking): {e}")
 
         # ═══════════════════════════════════════════════════════════
         # STAGE 7: ATS CHECK (inside tempdir, cv_pdf still exists)
