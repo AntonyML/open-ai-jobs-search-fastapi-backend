@@ -72,8 +72,9 @@ def mock_subprocess_run(stdout: str = "", stderr: str = "", returncode: int = 0)
 @pytest.mark.asyncio
 async def test_execute_scrape_single_portal(db_session):
     """execute_scrape runs a single portal scraper and stores results."""
-    # Mock the linkedin-search CLI output
-    linkedin_output = {
+    from app.schemas.scrape import ScraperOutput
+
+    linkedin_output = ScraperOutput.model_validate({
         "meta": {"count": 2, "page": 1},
         "results": [
             {
@@ -93,13 +94,12 @@ async def test_execute_scrape_single_portal(db_session):
                 "url": "https://linkedin.com/jobs/2",
             },
         ],
-    }
+    })
 
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_exec.return_value = mock_subprocess_run(
-            stdout=__import__("json").dumps(linkedin_output)
-        )
-
+    with (
+        patch("app.services.scrape.run_scraper", return_value=linkedin_output),
+        patch("app.services.scrape.check_bun_available", return_value=True),
+    ):
         run = await scrape.execute_scrape(
             db=db_session,
             user_id="test-user-id",
@@ -130,7 +130,9 @@ async def test_execute_scrape_single_portal(db_session):
 @pytest.mark.asyncio
 async def test_execute_scrape_deduplicates(db_session):
     """execute_scrape deduplicates jobs by (portal, external_id)."""
-    linkedin_output = {
+    from app.schemas.scrape import ScraperOutput
+
+    linkedin_output = ScraperOutput.model_validate({
         "meta": {"count": 1, "page": 1},
         "results": [
             {
@@ -142,13 +144,12 @@ async def test_execute_scrape_deduplicates(db_session):
                 "url": "https://linkedin.com/jobs/1",
             }
         ],
-    }
+    })
 
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_exec.return_value = mock_subprocess_run(
-            stdout=__import__("json").dumps(linkedin_output)
-        )
-
+    with (
+        patch("app.services.scrape.run_scraper", return_value=linkedin_output),
+        patch("app.services.scrape.check_bun_available", return_value=True),
+    ):
         # First run
         await scrape.execute_scrape(
             db=db_session,
