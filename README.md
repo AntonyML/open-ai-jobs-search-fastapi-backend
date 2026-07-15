@@ -18,6 +18,10 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 - [Endpoints](#endpoints)
 - [LLM Orchestrator](#llm-orchestrator)
 - [Drafter-Reviewer Pipeline](#drafter-reviewer-pipeline)
+- [Calibración](#calibración)
+- [Dashboard & Analytics](#dashboard--analytics)
+- [WebSocket](#websocket)
+- [i18n](#i18n)
 - [Variables de entorno](#variables-de-entorno)
 - [Testing](#testing)
 - [Deployment](#deployment)
@@ -373,7 +377,7 @@ alembic history
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| DELETE | `/api/v1/pipeline-reset` | Resetear pipeline (borra jobs, runs, métricas) |
+| DELETE | `/api/v1/pipeline-reset` | Resetear pipeline (borra jobs, runs, métricas, health metrics) |
 
 ### Orchestrator — Monitoreo y control
 
@@ -623,6 +627,4 @@ Los binarios de MiKTeX Portable **no se commitean** (~150 MB, en `.gitignore`).
 
 | Herramienta | Archivo | Propósito |
 |-------------|---------|-----------|
-| **PDF Verifier** | `app/utils/pdf_verifier.py` | Verifica que un PDF sea parseable por ATS |
-| **Skill Linter** | `app/utils/skill_linter.py` | Valida skills contra ~120 términos conocidos, detecta typos y sugiere canónicos |
-| **Content Guard** | `app/middleware/content_guard.py` | Middleware que detecta PII (SSN, tarjetas, placeholders) en outputs generados por LLM |
+| **PDF Verifier** | `app/utils/pdf_verifier.py` | Verifica que un PDF generado sea parseable por sistemas ATS: - Detección de marcadores `(cid:*)` que indican caracteres no parseables - Verificación de estructura de PDF (encabezados, objetos, xref) - Validación de que el PDF no esté corrupto o vacío - Wrapper para integrar en el pipeline de generación de documentos ### Skill Linter (`app/utils/skill_linter.py`) Valida skills del perfil del candidato contra un catálogo de ~120 términos conocidos: - Detección de typos y variaciones comunes - Sugerencia de términos canónicos - Normalización de skills para mejorar el matching en ranking - Validación de formato y consistencia ### Content Guard (`app/middleware/content_guard.py`) Middleware de seguridad que detecta PII y contenido sensible en outputs generados por LLM: - Detección de SSN, números de tarjeta, passwords - Detección de placeholders sin reemplazar (`[YOUR_NAME]`, etc.) - Bloqueo de respuestas que contienen información sensible - Integración en el pipeline de generación de documentos
