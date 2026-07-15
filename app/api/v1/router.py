@@ -14,6 +14,7 @@ from app.api.v1.upskill import router as upskill_router
 from app.api.v1.add_portal import router as add_portal_router
 from app.api.v1.add_template import router as add_template_router
 from app.api.v1.reset import router as reset_router
+from app.api.v1.pipeline_reset import router as pipeline_reset_router
 from app.api.v1.providers import router as providers_router
 from app.api.v1.orchestrator import router as orchestrator_router
 
@@ -46,4 +47,5 @@ router.include_router(expand_router)
 router.include_router(upskill_router)
 router.include_router(add_portal_router)
 router.include_router(add_template_router)
+router.include_router(pipeline_reset_router)
 router.include_router(reset_router)

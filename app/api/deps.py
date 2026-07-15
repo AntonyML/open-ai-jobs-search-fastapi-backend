@@ -17,14 +17,17 @@ get_db = _get_db
 
 
 async def get_current_user(
-    authorization: str = Header(..., description="Bearer <token>"),
+    authorization: str | None = Header(None, description="Bearer <token>"),
 ) -> dict:
     """Validate JWT and return the payload {sub, exp, ...}.
 
     Attach to any endpoint that requires authentication:
         user: dict = Depends(get_current_user)
+
+    NOTE: Header uses ``None`` default instead of ``...`` so that missing
+    auth returns 401 (Unauthorized) instead of 422 (Unprocessable).
     """
-    if not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or malformed Authorization header",

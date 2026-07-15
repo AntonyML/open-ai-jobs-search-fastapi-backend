@@ -1,1 +1,37 @@
 """Business logic — one module per skill (setup, scrape, rank, apply, ...)."""
+
+from app.services import (
+    add_portal,
+    add_template,
+    apply,
+    auth,
+    expand,
+    interview,
+    outcome,
+    pipeline_reset,
+    provider_credentials,
+    provider_models,
+    rank,
+    reset,
+    scrape,
+    setup,
+    upskill,
+)
+
+__all__ = [
+    "add_portal",
+    "add_template",
+    "apply",
+    "auth",
+    "expand",
+    "interview",
+    "outcome",
+    "pipeline_reset",
+    "provider_credentials",
+    "provider_models",
+    "rank",
+    "reset",
+    "scrape",
+    "setup",
+    "upskill",
+]
