@@ -11,6 +11,7 @@ Implements the /interview workflow from the original repo:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -919,3 +920,251 @@ async def list_interview_preps(
         .offset(offset)
     )
     return list(result.scalars().all())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MOCK INTERVIEW  (FASE 8 — chat where LLM plays the interviewer)
+# ═══════════════════════════════════════════════════════════════════
+
+
+async def start_mock_interview(
+    db: AsyncSession,
+    user_id: str,
+    prep_id: str,
+) -> dict[str, Any]:
+    """Start a mock interview session for an existing prep pack.
+
+    The LLM plays the interviewer role and asks the first question
+    from the prep pack's likely_questions list.
+
+    Args:
+        db: Database session
+        user_id: Authenticated user ID
+        prep_id: Interview prep pack ID
+
+    Returns:
+        dict with first question and session info
+    """
+    # 1. Load prep pack
+    prep = await get_interview_prep(db, prep_id, user_id)
+
+    # 2. Get likely questions from prep
+    likely_questions = prep.likely_questions or []
+    if not likely_questions:
+        return {
+            "prep_id": prep_id,
+            "question": "",
+            "feedback": None,
+            "question_number": 0,
+            "total_questions": 0,
+            "is_complete": True,
+            "transcript": [],
+            "message": "No questions available in this prep pack. Generate a new one first.",
+        }
+
+    # 3. Extract first question from likely questions
+    first_question = likely_questions[0].get("question", "Tell me about yourself.")
+
+    return {
+        "prep_id": prep_id,
+        "question": first_question,
+        "feedback": None,
+        "question_number": 1,
+        "total_questions": len(likely_questions),
+        "is_complete": False,
+        "transcript": [
+            {"role": "interviewer", "content": first_question}
+        ],
+        "message": f"Mock interview started. {len(likely_questions)} questions total.",
+    }
+
+
+def _build_mock_feedback_prompt(
+    prep: InterviewPrep,
+    question: str,
+    user_answer: str,
+    transcript: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Build prompt for mock interview feedback."""
+    # Build context from prep pack
+    context_parts = []
+
+    # Company research
+    if prep.company_research:
+        cr = prep.company_research
+        context_parts.append(f"Company: {cr.get('mission', 'N/A')}")
+        if cr.get("values"):
+            context_parts.append(f"Values: {', '.join(cr['values'])}")
+        if cr.get("recent_news"):
+            context_parts.append(f"Recent news: {', '.join(n.get('title','') for n in cr['recent_news'][:2])}")
+
+    # Likely questions
+    qs = prep.likely_questions or []
+    remaining = []
+    for q in qs:
+        if isinstance(q, dict):
+            remaining.append(f"- [{q.get('priority','medium')}] {q.get('question','')}")
+        else:
+            remaining.append(f"- [{getattr(q, 'priority', 'medium')}] {getattr(q, 'question', '')}")
+
+    context = "\n".join(context_parts)
+    remaining_qs = "\n".join(remaining)
+
+    transcript_text = "\n".join(f"{t['role']}: {t['content']}" for t in transcript)
+    system_prompt = f"""{INTERVIEW_GUARDRAIL}
+
+You are playing the role of the INTERVIEWER in a mock interview.
+Your job: provide constructive feedback on the candidate's answer, then ask the next question.
+
+Company context:
+{context}
+
+All questions available (in order):
+{remaining_qs}
+
+TRANSCRIPT SO FAR:
+{transcript_text}
+
+CURRENT QUESTION ASKED:"{question}"
+CANDIDATE'S ANSWER: "{user_answer}"
+
+YOUR RESPONSE MUST:
+1. First, give brief feedback (2-3 sentences) on the candidate's answer:
+   - What was strong
+   - What could be improved
+   - A specific tip
+2. Then, ask the next question from the list.
+
+Keep feedback constructive and specific. Use the 'you don't have X' bridge answers from the prep pack if relevant.
+Be friendly but professional — like a real interviewer giving honest feedback.
+
+Respond in JSON format:
+{{"feedback": "your feedback here...", "next_question": "the next question here..."}}
+
+If ALL questions have been asked, set next_question to "__COMPLETE__".
+"""
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_answer},
+    ]
+
+
+async def submit_mock_answer(
+    db: AsyncSession,
+    user_id: str,
+    prep_id: str,
+    user_answer: str,
+    prep: InterviewPrep,
+    transcript: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Submit an answer during a mock interview and get feedback + next question.
+
+    The LLM evaluates the candidate's answer and provides:
+    1. Constructive feedback (strengths, improvements, tips)
+    2. The next interview question
+
+    Args:
+        db: Database session
+        user_id: Authenticated user ID
+        prep_id: Interview prep pack ID
+        user_answer: The candidate's answer to the current question
+        prep: Pre-loaded InterviewPrep object (avoids N+1 query)
+        transcript: Transcript so far (list of {role, content})
+
+    Returns:
+        dict with feedback, next question, and updated transcript
+    """
+    # Prep is already loaded by the caller (avoids duplicate query)
+    # Verify ownership
+    if prep.user_id != user_id:
+        from app.exceptions import NotFoundError
+        raise NotFoundError("Interview prep not found.")
+
+    # 2. Get the current question (last interviewer turn in transcript)
+    current_question = ""
+    for t in reversed(transcript):
+        if t["role"] == "interviewer":
+            current_question = t["content"]
+            break
+
+    if not current_question:
+        return {
+            "prep_id": prep_id,
+            "question": "",
+            "feedback": "No active question found. Please start a new mock interview.",
+            "question_number": 0,
+            "total_questions": len(prep.likely_questions or []),
+            "is_complete": True,
+            "transcript": transcript,
+            "message": "Session expired. Start a new mock interview.",
+        }
+
+    # 3. Add user's answer to transcript
+    updated_transcript = list(transcript)
+    updated_transcript.append({"role": "candidate", "content": user_answer})
+
+    # 4. Call LLM for feedback + next question
+    try:
+        messages = _build_mock_feedback_prompt(prep, current_question, user_answer, updated_transcript)
+
+        # Use a simple LLM completion (not structured since we want free-form JSON with feedback)
+        from app.llm.adapter import llm_completion
+
+        llm_response = await llm_completion(
+            messages=messages,
+            provider=settings.llm_default_provider,
+            temperature=0.7,
+            max_tokens=1024,
+        )
+
+        # Parse JSON from response (handle both dict and string return types)
+        content = llm_response if isinstance(llm_response, str) else llm_response.get("content", "")
+
+        # Try to extract JSON from the response
+        feedback = "Great answer! Let me think about the next question..."
+        next_question = "__COMPLETE__"
+
+        try:
+            # Find JSON block in response
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                parsed = json.loads(json_match.group(0))
+                feedback = parsed.get("feedback", feedback)
+                next_question = parsed.get("next_question", next_question)
+        except (json.JSONDecodeError, Exception):
+            # Fallback: use the raw response as feedback
+            feedback = content[:500] if content else feedback
+
+    except Exception as e:
+        feedback = f"Note: I couldn't generate detailed feedback right now. Let's continue with the next question."
+        next_question = "__COMPLETE__"
+
+    # 5. Check if complete
+    is_complete = next_question == "__COMPLETE__"
+
+    if not is_complete:
+        updated_transcript.append({"role": "interviewer", "content": next_question})
+
+    # 6. Save transcript to prep pack
+    transcript_text = "\n".join(
+        f"{t['role'].upper()}: {t['content']}"
+        for t in updated_transcript
+    )
+    prep.mock_transcript = transcript_text
+    await db.commit()
+
+    # 7. Count which question we're on
+    question_number = sum(1 for t in updated_transcript if t["role"] == "interviewer")
+    total = len(prep.likely_questions or [])
+
+    return {
+        "prep_id": prep_id,
+        "question": "" if is_complete else next_question,
+        "feedback": feedback,
+        "question_number": question_number,
+        "total_questions": total,
+        "is_complete": is_complete,
+        "transcript": updated_transcript,
+        "message": "Mock interview complete!" if is_complete else f"Question {question_number} of {total}",
+    }

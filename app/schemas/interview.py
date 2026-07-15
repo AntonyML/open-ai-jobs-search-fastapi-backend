@@ -180,6 +180,33 @@ class InterviewPrepOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Mock interview schemas ──────────────────────────────────────────
+
+
+class MockInterviewRequest(BaseModel):
+    """Submit an answer during a mock interview.
+
+    Omit user_answer (or send empty) to start the mock interview.
+    """
+    user_answer: str | None = Field(
+        None, description="The candidate's answer to the current question. Omit to start."
+    )
+
+
+class MockInterviewResponse(BaseModel):
+    """Response from a mock interview turn."""
+    prep_id: str
+    question: str
+    feedback: str | None = Field(
+        None, description="Feedback on previous answer (null for first question)"
+    )
+    question_number: int
+    total_questions: int
+    is_complete: bool
+    transcript: list[dict[str, str]] = []
+    message: str = ""
+
+
 class InterviewPrepSummaryOut(BaseModel):
     """Lightweight interview prep for list views."""
 

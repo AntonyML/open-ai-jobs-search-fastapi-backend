@@ -962,3 +962,205 @@ async def test_compile_latex_wrong_page_count():
                         "lualatex",
                         2,
                     )
+
+
+# ── Mock interview tests ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_start_mock_interview_returns_first_question(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+    """start_mock_interview returns first question from prep pack."""
+    # First create a prep pack with mock LLM
+    with patch("app.services.interview.llm_completion_structured") as mock_llm:
+        mock_llm.side_effect = [
+            mock_company_research(),
+            mock_likely_questions(),
+            mock_star_mapping(),
+            mock_new_star_drafts(),
+            mock_consistency_brief(),
+            mock_tough_questions(),
+            mock_questions_to_ask(),
+            mock_logistics(),
+        ]
+        prep = await interview.execute_interview_prep(
+            db=db_session,
+            user_id="test-user-id",
+            application_id=sample_application.id,
+            stage="technical",
+        )
+
+    # Start mock interview
+    result = await interview.start_mock_interview(
+        db_session, "test-user-id", prep.id
+    )
+
+    assert result["prep_id"] == prep.id
+    assert result["question_number"] == 1
+    assert result["total_questions"] == 5
+    assert result["is_complete"] is False
+    assert result["feedback"] is None  # No feedback on first question
+    assert len(result["transcript"]) == 1  # First interviewer question
+    assert result["transcript"][0]["role"] == "interviewer"
+    assert "ML pipeline" in result["question"].lower() or "building" in result["question"].lower()
+    assert "Mock interview started" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_start_mock_interview_no_questions(db_session):
+    """start_mock_interview handles prep pack with no likely questions."""
+    # Create a prep pack directly (without LLM) that has empty likely_questions
+    prep = InterviewPrep(
+        user_id="test-user-id",
+        application_id="dummy-app-id",
+        stage="technical",
+        likely_questions=[],
+    )
+    db_session.add(prep)
+    await db_session.commit()
+    await db_session.refresh(prep)
+
+    result = await interview.start_mock_interview(
+        db_session, "test-user-id", prep.id
+    )
+
+    assert result["is_complete"] is True
+    assert "No questions available" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_submit_mock_answer_completes_last_question(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+    """submit_mock_answer returns feedback and marks complete when LLM returns __COMPLETE__."""
+    # Create a prep pack with 1 question
+    with patch("app.services.interview.llm_completion_structured") as mock_llm:
+        mock_llm.side_effect = [
+            mock_company_research(),
+            mock_likely_questions(),
+            mock_star_mapping(),
+            mock_new_star_drafts(),
+            mock_consistency_brief(),
+            mock_tough_questions(),
+            mock_questions_to_ask(),
+            mock_logistics(),
+        ]
+        prep = await interview.execute_interview_prep(
+            db=db_session,
+            user_id="test-user-id",
+            application_id=sample_application.id,
+            stage="technical",
+        )
+
+    # Mock the llm_completion call for mock interview feedback
+    transcript = [
+        {"role": "interviewer", "content": "Tell me about your experience with ML pipelines."}
+    ]
+
+    with patch("app.llm.adapter.llm_completion") as mock_completion:
+        mock_completion.return_value = {
+            "content": '{"feedback": "Great structured answer! You covered the key technologies well.", "next_question": "__COMPLETE__"}'
+        }
+
+        result = await interview.submit_mock_answer(
+            db=db_session,
+            user_id="test-user-id",
+            prep_id=prep.id,
+            user_answer="I built ML pipelines using PyTorch and Kubernetes.",
+            prep=prep,
+            transcript=transcript,
+        )
+
+    assert result["is_complete"] is True
+    assert "Great structured answer" in result["feedback"]
+    assert result["question"] == ""  # No next question
+    assert result["prep_id"] == prep.id
+    assert len(result["transcript"]) == 2  # interviewer + candidate (no next question since complete)
+
+
+@pytest.mark.asyncio
+async def test_submit_mock_answer_with_llm_error(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+    """submit_mock_answer handles LLM error gracefully (doesn't crash)."""
+    with patch("app.services.interview.llm_completion_structured") as mock_llm:
+        mock_llm.side_effect = [
+            mock_company_research(),
+            mock_likely_questions(),
+            mock_star_mapping(),
+            mock_new_star_drafts(),
+            mock_consistency_brief(),
+            mock_tough_questions(),
+            mock_questions_to_ask(),
+            mock_logistics(),
+        ]
+        prep = await interview.execute_interview_prep(
+            db=db_session,
+            user_id="test-user-id",
+            application_id=sample_application.id,
+            stage="technical",
+        )
+
+    transcript = [
+        {"role": "interviewer", "content": "Tell me about your experience."}
+    ]
+
+    # Mock LLM to raise an error
+    with patch("app.llm.adapter.llm_completion") as mock_completion:
+        mock_completion.side_effect = Exception("LLM timeout")
+
+        result = await interview.submit_mock_answer(
+            db=db_session,
+            user_id="test-user-id",
+            prep_id=prep.id,
+            user_answer="My experience includes...",
+            prep=prep,
+            transcript=transcript,
+        )
+
+    # Should not crash — returns completion with fallback message
+    assert result["is_complete"] is True
+    assert result["feedback"] is not None
+    assert "couldn't generate" in result["feedback"].lower() or "continue" in result["feedback"].lower()
+
+
+@pytest.mark.asyncio
+async def test_submit_mock_answer_saves_transcript_to_db(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+    """submit_mock_answer saves the transcript to prep.mock_transcript."""
+    with patch("app.services.interview.llm_completion_structured") as mock_llm:
+        mock_llm.side_effect = [
+            mock_company_research(),
+            mock_likely_questions(),
+            mock_star_mapping(),
+            mock_new_star_drafts(),
+            mock_consistency_brief(),
+            mock_tough_questions(),
+            mock_questions_to_ask(),
+            mock_logistics(),
+        ]
+        prep = await interview.execute_interview_prep(
+            db=db_session,
+            user_id="test-user-id",
+            application_id=sample_application.id,
+            stage="technical",
+        )
+
+    transcript = [
+        {"role": "interviewer", "content": "Tell me about your experience."}
+    ]
+
+    with patch("app.llm.adapter.llm_completion") as mock_completion:
+        mock_completion.return_value = {
+            "content": '{"feedback": "Good answer!", "next_question": "__COMPLETE__"}'
+        }
+
+        await interview.submit_mock_answer(
+            db=db_session,
+            user_id="test-user-id",
+            prep_id=prep.id,
+            user_answer="My experience...",
+            prep=prep,
+            transcript=transcript,
+        )
+
+    # Check transcript was saved
+    await db_session.refresh(prep)
+    assert prep.mock_transcript is not None
+    assert "INTERVIEWER" in prep.mock_transcript
+    assert "CANDIDATE" in prep.mock_transcript
+    assert "My experience" in prep.mock_transcript

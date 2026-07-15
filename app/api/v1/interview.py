@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.db.session import get_db as _get_db
-from app.schemas.interview import InterviewPrepOut, InterviewPrepRequest, InterviewPrepSummaryOut
+from app.schemas.interview import InterviewPrepOut, InterviewPrepRequest, InterviewPrepSummaryOut, MockInterviewRequest, MockInterviewResponse
 from app.services import interview
 
 router = APIRouter(prefix="/interview", tags=["interview"])
@@ -57,3 +57,48 @@ async def list_interview_preps(
 ):
     """List all interview preparation packs for the authenticated user."""
     return await interview.list_interview_preps(db, user["sub"], limit=limit, offset=offset)
+
+
+# ── Mock interview endpoints ────────────────────────────────────────
+
+
+@router.post("/{prep_id}/mock", response_model=MockInterviewResponse)
+async def start_or_answer_mock(
+    prep_id: str,
+    payload: MockInterviewRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Start a mock interview or submit an answer.
+
+    First call (omit user_answer): starts the mock interview and returns the first question.
+    Subsequent calls: submit your answer and get feedback + the next question.
+
+    The entire transcript is saved to the prep pack's mock_transcript field.
+    """
+    # If no answer provided, start the mock interview
+    if not payload.user_answer:
+        return await interview.start_mock_interview(db, user["sub"], prep_id)
+
+    # Otherwise, submit an answer
+    # Load prep once (avoids N+1 — used by both transcript parsing and service)
+    prep = await interview.get_interview_prep(db, prep_id, user["sub"])
+    transcript = _parse_transcript(prep.mock_transcript)
+
+    return await interview.submit_mock_answer(
+        db, user["sub"], prep_id, payload.user_answer, prep, transcript
+    )
+
+
+def _parse_transcript(raw: str | None) -> list[dict[str, str]]:
+    """Parse a saved mock_transcript string back into a list of turns."""
+    if not raw:
+        return []
+    turns = []
+    for line in raw.strip().split("\n"):
+        line = line.strip()
+        if line.startswith("INTERVIEWER:"):
+            turns.append({"role": "interviewer", "content": line[len("INTERVIEWER:"):].strip()})
+        elif line.startswith("CANDIDATE:"):
+            turns.append({"role": "candidate", "content": line[len("CANDIDATE:"):].strip()})
+    return turns
