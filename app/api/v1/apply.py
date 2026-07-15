@@ -84,7 +84,7 @@ async def get_application_status(
         "reviewed": (30, "Reviewing draft documents for issues..."),
         "revised": (60, "Applying reviewer feedback and refining..."),
         "compiled": (80, "Compiling LaTeX and verifying PDF..."),
-        "verified": (100, "Application complete."),
+        "verified": (100, "Application complete — ATS verified."),
     }
     progress_pct, current_action = stage_progress.get(
         app.pipeline_stage, (0, "Initializing...")

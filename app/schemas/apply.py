@@ -84,6 +84,11 @@ class ApplicationOut(BaseModel):
     cover_letter_template: str
     language: str
 
+    # ATS check results
+    ats_score: float | None = Field(None, description="ATS keyword coverage 0.0-1.0")
+    ats_missing_keywords: list[str] | None = Field(None, description="Keywords not found in PDF")
+    ats_pass: bool | None = Field(None, description="Overall ATS compatibility verdict")
+
     created_at: datetime
     updated_at: datetime
 

@@ -455,6 +455,12 @@ class Application(Base, TimestampMixin):
     review_feedback: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
     review_issues: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
+    # ── ATS check (post-compilation quality gate) ───────────────
+    ats_score: Mapped[float | None] = mapped_column(comment="ATS keyword coverage 0.0-1.0 (None = check not run)")
+    ats_missing_keywords: Mapped[list[str] | None] = mapped_column(FlexJSON, comment="Job keywords not found in PDF text")
+    ats_pass: Mapped[bool | None] = mapped_column(comment="Overall ATS compatibility verdict")
+    ats_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="When ATS check was performed")
+
     # ── Metadata ──────────────────────────────────────────────
     cv_template: Mapped[str] = mapped_column(String(100), default="moderncv-banking")
     cover_letter_template: Mapped[str] = mapped_column(String(100), default="cover-cls")

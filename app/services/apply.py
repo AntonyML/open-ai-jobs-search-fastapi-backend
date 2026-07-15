@@ -35,6 +35,7 @@ from app.core.settings import get_settings
 from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation, User
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
+from app.services import ats_check
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
@@ -1186,6 +1187,35 @@ async def execute_apply(
         cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
         cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
 
+        # ═══════════════════════════════════════════════════════════
+        # STAGE 7: ATS CHECK (inside tempdir, cv_pdf still exists)
+        # ═══════════════════════════════════════════════════════════
+        # Runs a 100% deterministic ATS parseability check on the
+        # compiled CV PDF. Checks: CID markers, keyword coverage,
+        # email/phone/name as extractable text, reading order.
+        # Non-blocking — if pdftotext is not available, the check
+        # is skipped gracefully. Must run INSIDE the temp directory
+        # block because cv_pdf points to a temp file that will be
+        # deleted when the block exits.
+        ats_result = None
+        try:
+            ats_result = await ats_check.check_ats_parseability(
+                pdf_path=cv_pdf,
+                job_posting=job,
+                candidate=candidate,
+            )
+            logger.info(
+                f"ATS check for {job.company}/{job.title}: "
+                f"pass={ats_result.pass_ats}, "
+                f"keyword_coverage={ats_result.keyword_coverage:.0%}, "
+                f"cid_markers={ats_result.has_cid_markers}, "
+                f"email_found={ats_result.has_email}, "
+                f"name_found={ats_result.has_candidate_name}"
+            )
+        except Exception as e:
+            # ATS check should never block the pipeline
+            logger.warning(f"ATS check failed (non-blocking): {e}")
+
     # 8. Extract incorporated keywords and addressed red flags
     incorporated_keywords = _extract_incorporated_keywords(revised_experience, evaluation.missing_keywords or [])
     addressed_red_flags = _extract_addressed_red_flags(revised_experience, evaluation.red_flags or [])
@@ -1210,11 +1240,16 @@ async def execute_apply(
         cover_letter_template=cover_letter_template,
         language=job.language or "en",
         # Pipeline tracking
-        pipeline_stage="compiled",
+        pipeline_stage="verified" if (ats_result and ats_result.pass_ats) else "compiled",
         draft_cv_tex=draft_cv_tex,  # Pre-review draft for audit
         draft_cover_letter_tex=draft_cover_tex,  # Pre-review draft for audit
         review_feedback=review_feedback.model_dump(),
         review_issues=[i.model_dump() for i in review_feedback.issues],
+        # ATS check results
+        ats_score=ats_result.keyword_coverage if ats_result else None,
+        ats_missing_keywords=ats_result.missing_keywords if ats_result else None,
+        ats_pass=ats_result.pass_ats if ats_result else None,
+        ats_checked_at=datetime.now(timezone.utc) if ats_result else None,
     )
     db.add(application)
 
@@ -1224,7 +1259,7 @@ async def execute_apply(
     await db.commit()
     await db.refresh(application)
 
-    # Build a comprehensive result message including review insights
+    # Build a comprehensive result message including review + ATS insights
     issues_summary = ""
     if review_feedback.issues:
         high_severity = [i for i in review_feedback.issues if i.severity == "high"]
@@ -1235,6 +1270,17 @@ async def execute_apply(
         else:
             issues_summary = f" {len(review_feedback.issues)} issue(s) addressed."
 
+    ats_summary = ""
+    if ats_result is not None:
+        if ats_result.pass_ats:
+            ats_summary = f" ATS check passed ({ats_result.keyword_coverage:.0%} keyword coverage)."
+        else:
+            ats_summary = f" ATS check flagged {len(ats_result.missing_keywords)} missing keywords."
+
+    final_stage = "compiled"
+    if ats_result and ats_result.pass_ats:
+        final_stage = "verified"
+
     return ApplyResult(
         application_id=application.id,
         cv_compiled=True,
@@ -1243,8 +1289,8 @@ async def execute_apply(
         cover_letter_pages=cover_pages,
         message=f"Application generated with Drafter-Reviewer pipeline: "
                 f"CV ({cv_pages} pages), Cover Letter ({cover_pages} page)."
-                f"{issues_summary}"
-                f" Pipeline stages: draft → reviewed → revised → compiled.",
+                f"{issues_summary}{ats_summary}"
+                f" Pipeline stages: draft → reviewed → revised → compiled → ats_check.",
     )
 
 
