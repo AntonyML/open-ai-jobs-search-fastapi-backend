@@ -24,6 +24,7 @@ from app.services.orchestrator.llm_response_sanitizer import default_field_const
 from app.schemas.rank import RankLLMOutput, RankResult, RankedJobOut
 from app.schemas.scrape import JobPostingSummary
 from app.services.provider_credentials import get_user_active_provider_config
+from app.services.salary import service as salary_service
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -278,9 +279,32 @@ async def execute_rank(
         reverse=True,
     )
 
-    # 5. Build shortlist and counts
+    # 5. Build shortlist and counts — with salary benchmarks
+    # NOTE: Salary lookup is best-effort.  If the UserSalaryData table
+    # doesn't exist yet (e.g. migration not run), we silently skip.
+    salary_available = False
+    salary_company_count = 0
+    try:
+        salary_data = await salary_service.get_user_salary_data(db, user_id)
+        salary_available = salary_data is not None
+        salary_company_count = len(salary_data.get("companies", [])) if salary_data else 0
+    except Exception as exc:
+        logger.debug("Salary data unavailable for user %s: %s", user_id, exc)
+
     shortlist = []
     for job, eval_ in ranked_jobs:
+        salary_benchmark = None
+        if salary_available and job.company:
+            try:
+                salary_benchmark = await salary_service.benchmark_job(
+                    db=db, user_id=user_id,
+                    company_name=job.company,
+                    job_title=job.title,
+                    job_location=job.location,
+                )
+            except Exception as exc:
+                logger.debug("Salary lookup failed for %s: %s", job.company, exc)
+
         if eval_.location_status == "FAIL":
             expired_or_vetoed += 1
         elif len(shortlist) < top_n:
@@ -288,6 +312,7 @@ async def execute_rank(
                 RankedJobOut(
                     job=JobPostingSummary.model_validate(job),
                     evaluation=eval_,
+                    salary=salary_benchmark,
                 )
             )
         elif eval_.overall_score < 30:
@@ -311,6 +336,8 @@ async def execute_rank(
         below_threshold=below_threshold,
         expired_or_vetoed=expired_or_vetoed,
         message=f"Ranked {len(ranked_jobs)} jobs. Top {len(shortlist)} in shortlist. {failed_jobs} failed.",
+        salary_data_available=salary_available,
+        salary_data_company_count=salary_company_count,
     )
 
 

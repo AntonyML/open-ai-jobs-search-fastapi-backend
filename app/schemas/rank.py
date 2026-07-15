@@ -3,10 +3,14 @@
 Request/response shapes for ranking job postings against the candidate profile.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from app.schemas.salary import SalaryBenchmark
 
 
 # ── Request schemas ─────────────────────────────────────────────────
@@ -73,10 +77,18 @@ class RankEvaluationOut(BaseModel):
 
 
 class RankedJobOut(BaseModel):
-    """A ranked job with its evaluation (for shortlist responses)."""
+    """A ranked job with its evaluation (for shortlist responses).
+
+    Includes optional salary benchmark when the user has uploaded
+    salary data and the company is found in it.
+    """
 
     job: "JobPostingSummary"
     evaluation: RankEvaluationOut | None = None
+
+    # Salary benchmark (typed, only present when salary data is available
+    # AND the company is found in the user's data)
+    salary: "SalaryBenchmark | None" = None
 
     model_config = {"from_attributes": True}
 
@@ -89,6 +101,10 @@ class RankResult(BaseModel):
     below_threshold: int
     expired_or_vetoed: int
     message: str
+
+    # Salary data status (present when user has uploaded salary data)
+    salary_data_available: bool = False
+    salary_data_company_count: int = 0
 
 
 # ── LLM output schema (for structured output parsing) ───────────────

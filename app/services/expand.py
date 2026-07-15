@@ -25,25 +25,108 @@ from app.db.models import (
     CompetencyExpansion,
     User,
 )
-from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
-from app.llm.adapter import llm_completion_structured
+from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.schemas.expand import (
     EnrichedCompetenciesLLMOutput,
     EnrichedCompetency,
-    ExperienceItemLLMOutput,
     ProposedAdditionsLLMOutput,
     ProposedAddition,
     ExpandRequest,
-    CompetencyExpansionOut,
-    CompetencyExpansionSummaryOut,
-    ExperienceItemOut,
-    EnrichedCompetencyOut,
-    ProposedAdditionOut,
 )
-from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.services.apply import compile_latex  # noqa: F401  — re-export for tests/callers
+from app.services.orchestrator.orchestrator_deps import get_orchestrator
 
 settings = get_settings()
+
+# ── HTTP timeout for safe_fetch ──────────────────────────────────────
+
+HTTP_TIMEOUT = 15.0  # seconds
+USER_AGENT = "Mozilla/5.0 (compatible; CareerOS-Expand/1.0; +https://careeros.dev)"
+
+
+async def safe_fetch(url: str) -> str:
+    """Fetch content from a URL with timeout and error handling.
+
+    Args:
+        url: The URL to fetch.
+
+    Returns:
+        Extracted text content from the page, or empty string on failure.
+
+    Fails gracefully (logs warning, returns empty) — never blocks the pipeline.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
+            response = await client.get(url, headers={"User-Agent": USER_AGENT})
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").lower()
+
+            # Extract text from HTML
+            if "html" in content_type:
+                text = response.text
+                # Basic HTML tag stripping
+                import re
+                text = re.sub(r"<script[^>]*>[^<]*</script>", "", text, flags=re.IGNORECASE | re.DOTALL)
+                text = re.sub(r"<style[^>]*>[^<]*</style>", "", text, flags=re.IGNORECASE | re.DOTALL)
+                text = re.sub(r"<[^>]+>", " ", text)
+                text = re.sub(r"\s+", " ", text)
+                return text.strip()[:5000]
+
+            # JSON response
+            if "json" in content_type:
+                return response.text[:5000]
+
+            # Plain text
+            return response.text[:5000]
+
+    except Exception as exc:
+        logger.warning("safe_fetch failed for %s: %s", url, exc)
+        return ""
+
+
+async def fetch_github_repos(username: str) -> list[dict[str, Any]]:
+    """Fetch public repositories for a GitHub user via the GitHub API.
+
+    Uses httpx with a 15-second timeout.
+
+    Args:
+        username: GitHub username.
+
+    Returns:
+        List of repo dicts with name, description, language, topics, stars.
+    """
+    url = f"https://api.github.com/users/{username}/repos?sort=updated&per_page=30"
+    text = await safe_fetch(url)
+
+    if not text:
+        return []
+
+    import json
+
+    try:
+        repos = json.loads(text)
+        if not isinstance(repos, list):
+            return []
+
+        result = []
+        for repo in repos:
+            if repo.get("fork"):
+                continue  # Skip forked repos
+            result.append({
+                "name": repo.get("name", ""),
+                "description": repo.get("description", "") or "",
+                "language": repo.get("language", "") or "",
+                "topics": repo.get("topics", []),
+                "stars": repo.get("stargazers_count", 0),
+                "url": repo.get("html_url", ""),
+            })
+        return result
+
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Failed to parse GitHub API response for %s", username)
+        return []
 
 # ── Guardrail constant ──────────────────────────────────────────────
 
@@ -187,21 +270,11 @@ def _scan_references_folder() -> list[dict[str, Any]]:
     return items
 
 
-def _fetch_github_repos(username: str) -> list[dict[str, Any]]:
-    """Fetch public repositories for a GitHub user. Stub — replace with real GitHub API call in production."""
-    # In production, use httpx.get(f"https://api.github.com/users/{username}/repos") or PyGithub
-    return []
-
-def _scan_github_profile(candidate: CandidateProfile | str) -> list[dict[str, Any]]:
-    """Scan GitHub profile for repositories as experience items."""
-    if isinstance(candidate, str):
-        username = candidate
-        github_url = f"https://github.com/{username}"
-    else:
-        github_url = candidate.github_url or ""
-        match = re.search(r"github\.com/([^/?#]+)", github_url)
-        username = match.group(1) if match else ""
-    repos = _fetch_github_repos(username) if username else []
+def _make_github_items(
+    repos: list[dict[str, Any]],
+    github_url: str,
+) -> list[dict[str, Any]]:
+    """Convert GitHub repo data to experience items."""
     items = []
     for repo in repos:
         items.append({
@@ -210,25 +283,35 @@ def _scan_github_profile(candidate: CandidateProfile | str) -> list[dict[str, An
             "title": repo.get("name", ""),
             "description": repo.get("description", "") or "",
             "date": None,
-            "source_file": github_url,
+            "source_file": repo.get("url", github_url),
             "language": repo.get("language", ""),
             "topics": repo.get("topics", []),
+            "stars": repo.get("stars", 0),
         })
     return items
 
 
 def _scan_other_urls(candidate: CandidateProfile) -> list[dict[str, Any]]:
-    """Scan other URLs from candidate profile (portfolio, Kaggle, etc.)."""
+    """Scan other URLs from candidate profile (portfolio, Kaggle, etc.).
+
+    Returns items WITHOUT fetched content (content is fetched async
+    in execute_expand).
+    """
     items = []
-    urls = []
+    other_urls = []
 
-    if candidate.linkedin_url:
-        urls.append(("linkedin", candidate.linkedin_url))
-    if candidate.github_url:
-        urls.append(("github", candidate.github_url))
-    # Add other URLs from profile if present
+    linkedin_url = candidate.linkedin_url or ""
+    github_url = candidate.github_url or ""
+    additional_urls = getattr(candidate, "portfolio_url", None)
 
-    for source, url in urls:
+    if linkedin_url and "linkedin.com" in linkedin_url:
+        other_urls.append(("linkedin", linkedin_url))
+    if github_url and "github.com" in github_url:
+        other_urls.append(("github", github_url))
+    if additional_urls:
+        other_urls.append(("portfolio", additional_urls))
+
+    for source, url in other_urls:
         items.append({
             "source": "other_url",
             "type": "profile",
@@ -237,6 +320,25 @@ def _scan_other_urls(candidate: CandidateProfile) -> list[dict[str, Any]]:
             "date": None,
             "source_file": url,
         })
+
+    return items
+
+
+async def _scan_other_urls_async(
+    candidate: CandidateProfile,
+) -> list[dict[str, Any]]:
+    """Async version — actually fetches content from each URL.
+
+    Called from execute_expand() which runs in an async context.
+    """
+    items = _scan_other_urls(candidate)
+
+    for item in items:
+        url = item.get("source_file", "")
+        if url:
+            content = await safe_fetch(url)
+            if content:
+                item["description"] = content[:3000]
 
     return items
 
@@ -435,13 +537,21 @@ async def execute_expand(
             all_items.extend(ref_items)
 
         if scan_github:
-            gh_items = _scan_github_profile(candidate)
+            # Fetch GitHub repos via the real API
+            github_url = candidate.github_url or ""
+            gh_match = re.search(r"github\.com/([^/?#]+)", github_url)
+            gh_username = gh_match.group(1) if gh_match else ""
+            gh_repos = []
+            if gh_username:
+                gh_repos = await fetch_github_repos(gh_username)
+            gh_items = _make_github_items(gh_repos, github_url)
             for item in gh_items:
                 item["id"] = f"gh_{len(all_items)}"
             all_items.extend(gh_items)
 
         if scan_other_urls:
-            url_items = _scan_other_urls(candidate)
+            # Fetch other URLs via safe_fetch (async)
+            url_items = await _scan_other_urls_async(candidate)
             for item in url_items:
                 item["id"] = f"url_{len(all_items)}"
             all_items.extend(url_items)
@@ -450,15 +560,20 @@ async def execute_expand(
         expansion.experience_items = all_items
         await db.flush()
 
-        # 4. Enrich competencies via LLM (if items found)
+        # 4. Enrich competencies via orchestrator (if items found)
         enriched = []
+        orchestrator = get_orchestrator()
+
         if all_items:
             messages = build_competency_enrichment_prompt(all_items)
             try:
-                result: EnrichedCompetenciesLLMOutput = await llm_completion_structured(
+                result: EnrichedCompetenciesLLMOutput = await orchestrator.execute(
+                    db=db,
+                    user_id=user_id,
                     messages=messages,
                     output_schema=EnrichedCompetenciesLLMOutput,
-                    provider=settings.llm_default_provider,
+                    pipeline="expand",
+                    description=f"Enrich {len(all_items)} experience items with competencies",
                     temperature=0.3,
                     max_tokens=3000,
                 )
@@ -477,10 +592,13 @@ async def execute_expand(
 
             messages = build_proposed_additions_prompt(candidate, enriched)
             try:
-                result: ProposedAdditionsLLMOutput = await llm_completion_structured(
+                result: ProposedAdditionsLLMOutput = await orchestrator.execute(
+                    db=db,
+                    user_id=user_id,
                     messages=messages,
                     output_schema=ProposedAdditionsLLMOutput,
-                    provider=settings.llm_default_provider,
+                    pipeline="expand",
+                    description="Propose profile additions from discovered competencies",
                     temperature=0.3,
                     max_tokens=2000,
                 )
@@ -564,13 +682,18 @@ async def _execute_expand_background(expansion_id: str) -> None:
                 all_items.extend(ref_items)
 
             if expansion.scanned_github:
-                gh_items = _scan_github_profile(candidate)
+                # Fetch GitHub repos via the real API
+                github_url = candidate.github_url or ""
+                gh_match = re.search(r"github\.com/([^/?#]+)", github_url)
+                gh_username = gh_match.group(1) if gh_match else ""
+                gh_repos = await fetch_github_repos(gh_username) if gh_username else []
+                gh_items = _make_github_items(gh_repos, github_url)
                 for item in gh_items:
                     item["id"] = f"gh_{len(all_items)}"
                 all_items.extend(gh_items)
 
             if expansion.scanned_other_urls:
-                url_items = _scan_other_urls(candidate)
+                url_items = await _scan_other_urls_async(candidate)
                 for item in url_items:
                     item["id"] = f"url_{len(all_items)}"
                 all_items.extend(url_items)
@@ -579,15 +702,20 @@ async def _execute_expand_background(expansion_id: str) -> None:
             expansion.experience_items = all_items
             await db.flush()
 
-            # 4. Enrich competencies via LLM (if items found)
+            # 4. Enrich competencies via orchestrator (if items found)
             enriched = []
+            orchestrator = get_orchestrator()
+
             if all_items:
                 messages = build_competency_enrichment_prompt(all_items)
                 try:
-                    result: EnrichedCompetenciesLLMOutput = await llm_completion_structured(
+                    result: EnrichedCompetenciesLLMOutput = await orchestrator.execute(
+                        db=db,
+                        user_id=expansion.user_id,
                         messages=messages,
                         output_schema=EnrichedCompetenciesLLMOutput,
-                        provider=settings.llm_default_provider,
+                        pipeline="expand",
+                        description=f"Enrich {len(all_items)} experience items with competencies",
                         temperature=0.3,
                         max_tokens=3000,
                     )
@@ -600,10 +728,13 @@ async def _execute_expand_background(expansion_id: str) -> None:
             if enriched:
                 messages = build_proposed_additions_prompt(candidate, enriched)
                 try:
-                    result: ProposedAdditionsLLMOutput = await llm_completion_structured(
+                    result: ProposedAdditionsLLMOutput = await orchestrator.execute(
+                        db=db,
+                        user_id=expansion.user_id,
                         messages=messages,
                         output_schema=ProposedAdditionsLLMOutput,
-                        provider=settings.llm_default_provider,
+                        pipeline="expand",
+                        description="Propose profile additions from discovered competencies",
                         temperature=0.3,
                         max_tokens=2000,
                     )

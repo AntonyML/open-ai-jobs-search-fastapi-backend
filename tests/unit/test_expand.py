@@ -19,6 +19,7 @@ from app.db.models import (
     User,
 )
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
+from app.schemas.expand import EnrichedCompetency, EnrichedCompetenciesLLMOutput, ProposedAddition, ProposedAdditionsLLMOutput
 from app.services import expand
 
 
@@ -118,14 +119,14 @@ async def sample_candidate(db_session):
     return candidate
 
 
-# ── Helper: mock LLM ────────────────────────────────────────────────
+# ── Helper: mock orchestrator ───────────────────────────────────────
 
 
 def mock_enriched_competencies():
-    """Mock enriched competencies output from LLM."""
-    return expand.EnrichedCompetenciesLLMOutput(
+    """Mock enriched competencies output from orchestrator."""
+    return EnrichedCompetenciesLLMOutput(
         enrichments=[
-            expand.EnrichedCompetency(
+            EnrichedCompetency(
                 experience_item_id="cv_0",
                 competencies=[
                     "TensorRT optimization",
@@ -135,7 +136,7 @@ def mock_enriched_competencies():
                     "Performance profiling",
                 ],
             ),
-            expand.EnrichedCompetency(
+            EnrichedCompetency(
                 experience_item_id="cv_1",
                 competencies=[
                     "Collaborative filtering",
@@ -145,7 +146,7 @@ def mock_enriched_competencies():
                     "Academic writing",
                 ],
             ),
-            expand.EnrichedCompetency(
+            EnrichedCompetency(
                 experience_item_id="li_0",
                 competencies=[
                     "Kubernetes",
@@ -159,20 +160,20 @@ def mock_enriched_competencies():
 
 
 def mock_proposed_additions():
-    """Mock proposed additions output from LLM."""
-    return expand.ProposedAdditionsLLMOutput(
+    """Mock proposed additions output from orchestrator."""
+    return ProposedAdditionsLLMOutput(
         additions=[
-            expand.ProposedAddition(
+            ProposedAddition(
                 category="skills.programming_ml",
                 item={"language": "TensorRT", "proficiency": "Advanced", "frameworks": ["TensorRT", "ONNX Runtime"]},
                 reason="Used for model optimization in production ML pipeline at Acme Corp",
             ),
-            expand.ProposedAddition(
+            ProposedAddition(
                 category="skills.software_tools",
                 item="Kubernetes",
                 reason="Managed K8s clusters for ML model serving at Acme Corp",
             ),
-            expand.ProposedAddition(
+            ProposedAddition(
                 category="skills.domain_expertise",
                 item="MLOps",
                 reason="Built and maintained production ML pipelines with CI/CD",
@@ -187,9 +188,8 @@ def mock_proposed_additions():
 @pytest.mark.asyncio
 async def test_execute_expand_basic(db_session, sample_candidate):
     """execute_expand runs a full expansion and returns results."""
-    with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        # Mock all LLM calls in sequence
-        mock_llm.side_effect = [
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
+        mock_orc.side_effect = [
             mock_enriched_competencies(),  # enrichment
             mock_proposed_additions(),     # proposed additions
         ]
@@ -198,8 +198,8 @@ async def test_execute_expand_basic(db_session, sample_candidate):
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand._scan_github_profile", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
                                 expansion = await expand.execute_expand(
                                     db=db_session,
                                     user_id="test-user-id",
@@ -237,15 +237,15 @@ async def test_execute_expand_profile_incomplete(db_session):
 @pytest.mark.asyncio
 async def test_execute_expand_llm_error(db_session, sample_candidate):
     """execute_expand raises LLMError when LLM call fails."""
-    with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = LLMError("LLM timeout")
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
+        mock_orc.side_effect = LLMError("LLM timeout")
 
         with patch("app.services.expand._scan_cv_folder", return_value=[{"id": "cv_0", "title": "Test"}]):
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand._scan_github_profile", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
                                 with pytest.raises(LLMError):
                                     await expand.execute_expand(
                                         db=db_session,
@@ -257,25 +257,23 @@ async def test_execute_expand_llm_error(db_session, sample_candidate):
 @pytest.mark.asyncio
 async def test_execute_expand_with_experience_items(db_session, sample_candidate):
     """execute_expand processes experience items and enriches them."""
-    with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        # Create a dynamic mock that returns enrichments only for items in the input
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
+        # Create a dynamic mock that returns enrichments based on the input items
         call_count = 0
-        
-        async def dynamic_mock_enriched(messages, output_schema, provider, temperature, max_tokens):
+
+        async def dynamic_mock_enriched(db, user_id, messages, output_schema, pipeline, description, temperature, max_tokens):
             nonlocal call_count
             call_count += 1
-            
+
             if call_count == 1:
                 # First call: competency enrichment
-                # Parse the user message to find which item IDs are being enriched
-                user_msg = messages[1]["content"] if len(messages) > 1 else ""
-                # Extract item IDs from all messages (they appear in system prompt as "ID: cv_0")
+                # Extract item IDs from the system prompt
                 full_text = " ".join(m.get("content", "") for m in messages)
                 item_ids = re.findall(r'ID:\s*(\w+)', full_text)
-                
+
                 # Return enrichments only for those items
                 all_enrichments = [
-                    expand.EnrichedCompetency(
+                    EnrichedCompetency(
                         experience_item_id="cv_0",
                         competencies=[
                             "TensorRT optimization",
@@ -285,33 +283,14 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
                             "Performance profiling",
                         ],
                     ),
-                    expand.EnrichedCompetency(
-                        experience_item_id="cv_1",
-                        competencies=[
-                            "Collaborative filtering",
-                            "A/B testing",
-                            "Recommendation systems",
-                            "Research methodology",
-                            "Academic writing",
-                        ],
-                    ),
-                    expand.EnrichedCompetency(
-                        experience_item_id="li_0",
-                        competencies=[
-                            "Kubernetes",
-                            "Docker",
-                            "CI/CD pipelines",
-                            "Cloud infrastructure",
-                        ],
-                    ),
                 ]
                 filtered = [e for e in all_enrichments if e.experience_item_id in item_ids]
-                return expand.EnrichedCompetenciesLLMOutput(enrichments=filtered)
+                return EnrichedCompetenciesLLMOutput(enrichments=filtered)
             else:
                 # Second call: proposed additions
                 return mock_proposed_additions()
-        
-        mock_llm.side_effect = dynamic_mock_enriched
+
+        mock_orc.side_effect = dynamic_mock_enriched
 
         with patch("app.services.expand._scan_cv_folder", return_value=[
             {"id": "cv_0", "source": "cv", "type": "job_bullet", "title": "Senior ML Engineer", "description": "Built ML pipeline", "date": "2020-01", "source_file": "cv.pdf"},
@@ -319,8 +298,8 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand._scan_github_profile", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
                                 expansion = await expand.execute_expand(
                                     db=db_session,
                                     user_id="test-user-id",
@@ -338,8 +317,8 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
 @pytest.mark.asyncio
 async def test_execute_expand_proposes_additions(db_session, sample_candidate):
     """execute_expand proposes profile additions based on enriched competencies."""
-    with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
+        mock_orc.side_effect = [
             mock_enriched_competencies(),
             mock_proposed_additions(),
         ]
@@ -350,8 +329,8 @@ async def test_execute_expand_proposes_additions(db_session, sample_candidate):
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand._scan_github_profile", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
                                 expansion = await expand.execute_expand(
                                     db=db_session,
                                     user_id="test-user-id",
@@ -360,7 +339,6 @@ async def test_execute_expand_proposes_additions(db_session, sample_candidate):
 
     assert expansion.proposed_additions is not None
     assert len(expansion.proposed_additions) == 3
-    # Check that proposed additions reference the right categories
     categories = [a["category"] for a in expansion.proposed_additions]
     assert "skills.programming_ml" in categories
     assert "skills.software_tools" in categories
@@ -370,8 +348,8 @@ async def test_execute_expand_proposes_additions(db_session, sample_candidate):
 @pytest.mark.asyncio
 async def test_get_expansion(db_session, sample_candidate):
     """get_expansion returns the expansion by ID."""
-    with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
+        mock_orc.side_effect = [
             mock_enriched_competencies(),
             mock_proposed_additions(),
         ]
@@ -380,8 +358,8 @@ async def test_get_expansion(db_session, sample_candidate):
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand._scan_github_profile", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
                                 created = await expand.execute_expand(
                                     db=db_session,
                                     user_id="test-user-id",
@@ -403,8 +381,8 @@ async def test_get_expansion_not_found(db_session):
 @pytest.mark.asyncio
 async def test_get_expansion_wrong_user(db_session, sample_candidate):
     """get_expansion raises NotFoundError when expansion belongs to another user."""
-    with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
+        mock_orc.side_effect = [
             mock_enriched_competencies(),
             mock_proposed_additions(),
         ]
@@ -413,8 +391,8 @@ async def test_get_expansion_wrong_user(db_session, sample_candidate):
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand._scan_github_profile", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
                                 created = await expand.execute_expand(
                                     db=db_session,
                                     user_id="test-user-id",
@@ -428,8 +406,8 @@ async def test_get_expansion_wrong_user(db_session, sample_candidate):
 @pytest.mark.asyncio
 async def test_list_expansions(db_session, sample_candidate):
     """list_expansions returns expansions for the user."""
-    with patch("app.services.expand.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
+        mock_orc.side_effect = [
             mock_enriched_competencies(),
             mock_proposed_additions(),
         ]
@@ -438,9 +416,8 @@ async def test_list_expansions(db_session, sample_candidate):
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand._scan_github_profile", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
-                                # Create 3 expansions
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
                                 for i in range(3):
                                     await expand.execute_expand(
                                         db=db_session,
@@ -464,7 +441,6 @@ async def test_scan_cv_folder():
             items = expand._scan_cv_folder()
 
     assert isinstance(items, list)
-    # Should return list of experience items
 
 
 @pytest.mark.asyncio
@@ -501,17 +477,19 @@ async def test_scan_references_folder():
 
 
 @pytest.mark.asyncio
-async def test_scan_github_profile():
-    """_scan_github_profile returns experience items from GitHub repos."""
-    with patch("app.services.expand._fetch_github_repos") as mock_fetch:
-        mock_fetch.return_value = [
-            {"name": "ml-lib", "description": "ML library", "language": "Python", "topics": ["machine-learning", "pytorch"]},
-            {"name": "cv-tool", "description": "CV tool", "language": "Python", "topics": ["computer-vision"]},
-        ]
-        items = expand._scan_github_profile("janedoe")
+async def test_make_github_items():
+    """_make_github_items converts repo data to experience items."""
+    repos = [
+        {"name": "ml-lib", "description": "ML library", "language": "Python", "topics": ["machine-learning", "pytorch"], "stars": 42, "url": "https://github.com/user/ml-lib"},
+        {"name": "cv-tool", "description": "CV tool", "language": "Python", "topics": ["computer-vision"], "stars": 10, "url": "https://github.com/user/cv-tool"},
+    ]
+    items = expand._make_github_items(repos, "https://github.com/user")
 
     assert isinstance(items, list)
     assert len(items) == 2
+    assert items[0]["title"] == "ml-lib"
+    assert items[0]["source"] == "github"
+    assert items[0]["stars"] == 42
 
 
 @pytest.mark.asyncio
@@ -552,7 +530,7 @@ async def test_build_competency_enrichment_prompt():
 async def test_build_proposed_additions_prompt(sample_candidate):
     """build_proposed_additions_prompt creates correct prompt structure."""
     enriched = [
-        expand.EnrichedCompetency(
+        EnrichedCompetency(
             experience_item_id="cv_0",
             competencies=["TensorRT optimization", "ML pipeline architecture", "Distributed training"],
         ),

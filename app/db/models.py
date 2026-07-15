@@ -667,6 +667,50 @@ class CompetencyExpansion(Base, TimestampMixin):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# USER SALARY DATA  (maps to /salary commands — per-user benchmarks)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class UserSalaryData(Base, TimestampMixin):
+    """Per-user salary benchmark data.
+
+    Users can upload salary data (JSON or converted from Excel) so that
+    the rank flow can show salary estimates alongside each job evaluation.
+
+    The data is stored as a JSONB column matching the same schema as the
+    global salary_data.json file, but scoped to a single user.
+
+    If a user has uploaded their own data, it takes priority over the
+    global file-based data.  If no data is available, the salary step
+    is silently skipped during ranking.
+    """
+
+    __tablename__ = "user_salary_data"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+
+    # ── Source info ────────────────────────────────────────────
+    source: Mapped[str] = mapped_column(String(20), default="json_upload")
+    # "json_upload" | "excel_converted"
+
+    # ── Raw data ───────────────────────────────────────────────
+    # The full companies array from salary_data.json format:
+    # [{"company": "...", "city": "...", "categories": {...}}]
+    companies: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
+
+    # ── Source metadata ────────────────────────────────────────
+    # {"source": "union_statistics", "index_baseline": 100, "index_label": "Index", ...}
+    # NOTE: named 'data_metadata' because 'metadata' is a SQLAlchemy reserved attribute.
+    data_metadata: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+
+    # ── Company count (denormalized for quick display) ─────────
+    company_count: Mapped[int] = mapped_column(default=0)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # UPSKILL  (maps to /upskill command)
 # ═══════════════════════════════════════════════════════════════════
 
