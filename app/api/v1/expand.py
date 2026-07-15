@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user
 from app.db.models import CandidateProfile, CompetencyExpansion
 from app.db.session import get_db as _get_db
 from app.exceptions import ProfileIncompleteError
@@ -85,5 +85,11 @@ async def list_expansions(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """List all competency expansions for the authenticated user."""
-    return await expand.list_expansions(db, user["sub"], limit=limit, offset=offset)
+    """List all competency expansions for the authenticated user.
+
+    Errors are silently handled — returns empty list instead of 500.
+    """
+    try:
+        return await expand.list_expansions(db, user["sub"], limit=limit, offset=offset)
+    except Exception:
+        return []

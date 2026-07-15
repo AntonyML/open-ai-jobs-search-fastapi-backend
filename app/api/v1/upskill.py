@@ -82,5 +82,11 @@ async def list_upskills(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """List all upskill analyses for the authenticated user."""
-    return await upskill.list_upskills(db, user["sub"], limit=limit, offset=offset)
+    """List all upskill analyses for the authenticated user.
+
+    Errors are silently handled — returns empty list instead of 500.
+    """
+    try:
+        return await upskill.list_upskills(db, user["sub"], limit=limit, offset=offset)
+    except Exception:
+        return []
