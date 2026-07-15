@@ -5,12 +5,11 @@ import base64
 import os
 
 from cryptography.fernet import Fernet
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.settings import get_settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 settings = get_settings()
 
 # Fernet key for API key encryption (derived from JWT secret)
@@ -21,12 +20,19 @@ _fernet = Fernet(_fernet_key)
 
 def hash_password(password: str) -> str:
     """Return bcrypt hash of the plaintext password."""
-    return pwd_context.hash(password)
+    # Use bcrypt directly.  passlib 1.7.4 runs a >72-byte backend probe that
+    # raises with newer Python/bcrypt combinations, making every login 500.
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     """Check a plaintext password against its bcrypt hash."""
-    return pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        # Treat malformed/unsupported stored hashes as invalid credentials,
+        # never as an internal server error from the login endpoint.
+        return False
 
 
 def create_access_token(subject: str, expires_minutes: int | None = None) -> str:
