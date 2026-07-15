@@ -11,6 +11,7 @@ from app.schemas.scrape import JobPostingSummary
 from app.services import rank
 from app.services import rank_jobs
 from app.db.session import async_session_factory
+from app.services.rank import count_jobs_to_rank
 
 router = APIRouter(prefix="/rank", tags=["rank"])
 
@@ -30,7 +31,11 @@ async def trigger_rank(
     moving to a background task in a future iteration.
     """
     job_id = await rank_jobs.start(async_session_factory, user["sub"], payload.model_dump())
-    return {"job_id": job_id, "status": "running"}
+
+    # Count total jobs that will be processed
+    counts = await count_jobs_to_rank(db, user["sub"], payload.model_dump())
+
+    return {"job_id": job_id, "status": "running", "total_jobs": counts["total"]}
 
 @router.get("/status/{job_id}")
 async def rank_status(job_id: str):
@@ -42,8 +47,17 @@ async def cancel_rank(job_id: str):
     return {"cancelled": await rank_jobs.cancel(job_id)}
 
 
+@router.get("/jobs/count")
+async def get_jobs_count(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Get count of total jobs to rank and how many are already ranked."""
+    return await rank.count_jobs_to_rank(db, user["sub"])
+
+
 @router.get("/jobs", response_model=list[JobPostingSummary])
-async def list_ranked_jobs(
+async def list_ranked_jobs_endpoint(
     min_score: int | None = Query(None, ge=0, le=100),
     verdict: str | None = Query(None, pattern="^(Strong Fit|Good Fit|Moderate Fit|Weak Fit|Poor Fit)$"),
     limit: int = Query(50, ge=1, le=200),

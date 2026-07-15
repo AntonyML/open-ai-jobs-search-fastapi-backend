@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
@@ -534,6 +534,55 @@ async def get_rank_evaluation(
     if evaluation is None:
         raise NotFoundError("Rank evaluation not found.")
     return evaluation
+
+
+async def count_jobs_to_rank(
+    db: AsyncSession,
+    user_id: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, int]:
+    """Count total unranked jobs and already ranked jobs for a user.
+
+    Args:
+        db: Database session.
+        user_id: The authenticated user's ID.
+        payload: Optional rank request parameters (focus_area, re_rank).
+
+    Returns:
+        Dict with total, ranked, and unranked counts.
+    """
+    re_rank = (payload or {}).get("re_rank", False) if payload else False
+
+    # Total jobs that need ranking
+    total_query = select(func.count()).select_from(JobPosting).where(
+        JobPosting.user_id == user_id
+    )
+    if not re_rank:
+        total_query = total_query.where(
+            or_(
+                JobPosting.status == "new",
+                JobPosting.rank_score.is_(None),
+            )
+        )
+
+    # Already ranked jobs
+    ranked_query = select(func.count()).select_from(JobPosting).where(
+        JobPosting.user_id == user_id,
+        JobPosting.status == "ranked",
+        JobPosting.rank_score.isnot(None),
+    )
+
+    total_result = await db.execute(total_query)
+    ranked_result = await db.execute(ranked_query)
+
+    total = total_result.scalar() or 0
+    ranked = ranked_result.scalar() or 0
+
+    return {
+        "total": total,
+        "ranked": ranked,
+        "unranked": total - ranked,
+    }
 
 
 async def list_ranked_jobs(
