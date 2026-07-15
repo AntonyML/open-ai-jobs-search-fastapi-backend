@@ -117,15 +117,21 @@ async def complete_setup(
 
 @router.get(
     "/behavioral-profile",
-    response_model=BehavioralProfileOut,
+    response_model=BehavioralProfileOut | None,
 )
 async def get_behavioral_profile(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """Retrieve the behavioral profile for the authenticated user."""
-    candidate = await setup.get_profile(db, user["sub"])
-    return await setup.get_behavioral_profile(db, candidate.id)
+    """Retrieve the behavioral profile for the authenticated user.
+
+    Returns null (not 404) when no profile has been created yet.
+    """
+    try:
+        candidate = await setup.get_profile(db, user["sub"])
+        return await setup.get_behavioral_profile(db, candidate.id)
+    except NotFoundError:
+        return None
 
 
 @router.put(
