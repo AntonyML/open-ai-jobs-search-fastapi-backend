@@ -1,11 +1,8 @@
 """Rank service — evaluates job postings against the candidate profile.
 
-Implements the triage scoring from the original /rank command:
-- Fetches unranked jobs (or re-ranks if requested)
-- For each job, builds a prompt with candidate profile + job posting
-- Calls LLM via LiteLLM for structured evaluation
-- Parses, validates, and stores the evaluation
-- Returns a ranked shortlist
+REFACTORED: Uses LLMOrchestrator (with failover, retries, health tracking)
++ deterministic RankAnalyzer for quantitative scores.
+The LLM now only handles qualitative reasoning (strengths, gaps, red flags).
 """
 
 from __future__ import annotations
@@ -21,7 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.settings import get_settings
 from app.db.models import CandidateProfile, JobPosting, RankEvaluation, User
 from app.exceptions import NotFoundError, ProfileIncompleteError, LLMError
-from app.llm.adapter import llm_completion_structured
+from app.services.rank_analyzer import compute_quantitative_scores
+from app.services.orchestrator.orchestrator_deps import get_orchestrator
+from app.services.orchestrator.llm_response_sanitizer import default_field_constraints
 from app.schemas.rank import RankLLMOutput, RankResult, RankedJobOut
 from app.schemas.scrape import JobPostingSummary
 from app.services.provider_credentials import get_user_active_provider_config
@@ -52,19 +51,28 @@ The candidate must be able to defend every claim in an interview without backtra
 def build_rank_prompt(
     candidate: CandidateProfile,
     job: JobPosting,
+    quantitative: dict[str, Any],
 ) -> list[dict[str, str]]:
-    """Build the messages for the LLM rank evaluation."""
+    """Build the messages for the LLM rank evaluation.
 
-    # Build candidate summary
+    The LLM now only needs to reason about:
+    - behavioral_score (0-100)
+    - career_score (0-100)
+    - strengths (max 3)
+    - gaps (max 3)
+    - red_flags (max 3)
+
+    Everything else is pre-computed by the deterministic rank analyzer.
+    """
     candidate_summary = _build_candidate_summary(candidate)
-
-    # Build job summary
     job_summary = _build_job_summary(job)
+
+    missing_kw_text = ", ".join(quantitative.get("missing_keywords", [])[:5]) or "None detected"
 
     system_prompt = f"""{GUARDRAIL_SYSTEM_PROMPT}
 
 You are an expert technical recruiter evaluating a candidate's fit for a specific role.
-Score each dimension 0-100 and provide structured insights.
+Focus on qualitative reasoning that cannot be automated.
 
 CANDIDATE PROFILE:
 {candidate_summary}
@@ -72,43 +80,25 @@ CANDIDATE PROFILE:
 JOB POSTING:
 {job_summary}
 
-EVALUATION FRAMEWORK (from the candidate's personalized evaluation criteria):
+PRE-COMPUTED ANALYSIS (deterministic — do NOT override):
+- Technical score: {quantitative.get('technical_score', 50)}/100
+- Experience score: {quantitative.get('experience_score', 50)}/100
+- Location: {quantitative.get('location_status', 'FLAG')}
+- Language: {quantitative.get('language', 'en')}
+- Missing keywords (algorithmic): {missing_kw_text}
 
-Technical Skills Match (30% weight):
-- Strong match areas: {candidate.skills.get('programming_ml', []) if candidate.skills else 'Not specified'}
-- Moderate match areas: {candidate.skills.get('domain_expertise', []) if candidate.skills else 'Not specified'}
-- Weak match areas: {candidate.skills.get('software_tools', []) if candidate.skills else 'Not specified'}
-
-Experience Match (25% weight):
-- Direct experience domains: {candidate.experience[0].get('company') if candidate.experience else 'Not specified'}
-- Adjacent experience: {candidate.projects if candidate.projects else 'Not specified'}
-
-Behavioral/Culture Fit (15% weight):
-- Profile type: {candidate.profile_statement if candidate.profile_statement else 'Not specified'}
-
-Career Alignment (30% weight):
-- Career goals: {candidate.profile_statement if candidate.profile_statement else 'Not specified'}
-
-Location constraint: {candidate.location if candidate.location else 'Not specified'}
+YOUR TASK — qualitative reasoning only:
+1. **Behavioral score** (0-100): How well does the candidate's work style match the role?
+2. **Career score** (0-100): How well does this role advance career goals?
+3. **Strengths** (max 3): Strongest qualitative reasons this candidate is a good fit
+4. **Gaps** (max 3): Honest qualitative gaps NOT captured by keyword matching
+5. **Red flags** (max 3): Things a recruiter would notice negatively in first 10 seconds
 
 Return ONLY valid JSON matching the RankLLMOutput schema.
+The quantitative scores above will be merged automatically — do NOT repeat them.
 """
 
-    user_prompt = f"""Evaluate this candidate for the job posting. Be honest about gaps — do not invent experience.
-
-Return JSON with:
-- technical_score (0-100)
-- experience_score (0-100)
-- behavioral_score (0-100)
-- career_score (0-100)
-- location_status: "PASS" | "FAIL" | "FLAG"
-- deadline (YYYY-MM-DD or null)
-- deadline_urgent (boolean)
-- strengths (max 3 items)
-- gaps (max 3 items)
-- missing_keywords (max 5 items) — terms from the job posting absent from the candidate's profile
-- red_flags (max 3 items) — things a recruiter would notice negatively in first 10 seconds
-- language (en/da/...)"""
+    user_prompt = "Provide your qualitative evaluation. Return JSON with behavioral_score, career_score, strengths, gaps, and red_flags."
 
     return [
         {"role": "system", "content": system_prompt},
@@ -271,12 +261,12 @@ async def execute_rank(
     for index, job in enumerate(jobs, start=1):
         logger.info("Evaluating job %d/%d: %s", index, len(jobs), job.id)
         try:
-            evaluation = await _rank_single_job(db, candidate, job, provider_config)
+            evaluation = await _rank_single_job(db=db, candidate=candidate, job=job, provider_config=provider_config, user_id=user_id)
             ranked_jobs.append((job, evaluation))
             logger.info("Finished job %d/%d: %s", index, len(jobs), job.id)
         except LLMError as exc:
             failed_jobs += 1
-            logger.exception("LLM ranking failed for job %s: %s", job.id, exc)
+            logger.warning("LLM ranking failed for job %s: %s", job.id, exc)
             continue
 
     # 4. Sort by overall score (desc), deadline urgency as tiebreaker
@@ -383,35 +373,71 @@ async def _rank_single_job(
     candidate: CandidateProfile,
     job: JobPosting,
     provider_config: dict[str, Any],
+    user_id: str,
 ) -> RankEvaluation:
-    """Rank a single job posting against the candidate profile."""
-    messages = build_rank_prompt(candidate, job)
+    """Rank a single job posting against the candidate profile.
+    Merges deterministic quant scores with LLM qualitative reasoning."""
+    # Step 1: Deterministic analysis (no LLM needed)
+    candidate_dict = {
+        "skills": candidate.skills,
+        "experience": candidate.experience,
+        "location": candidate.location,
+        "constraints": candidate.constraints,
+    }
+    job_dict = {
+        "title": job.title,
+        "description": job.description,
+        "requirements": job.requirements,
+        "location": job.location,
+        "deadline": job.deadline,
+        "language": job.language,
+    }
 
-    # Call LLM with structured output
-    try:
-        llm_output: RankLLMOutput = await llm_completion_structured(
-            messages=messages,
-            output_schema=RankLLMOutput,
-            provider=provider_config["provider"],
-            model=provider_config["model"],
-            api_key=provider_config.get("api_key"),
-            api_base=provider_config.get("api_base"),
-            temperature=0.3,
-            max_tokens=2048,
-        )
-    except Exception as exc:
-        raise LLMError(f"LLM rank evaluation failed: {exc}") from exc
+    quantitative = compute_quantitative_scores(candidate_dict, job_dict)
 
-    # Compute overall score and verdict
+    # Step 2: Build the LLM prompt with pre-computed quantitative data
+    messages = build_rank_prompt(candidate, job, quantitative)
+
+    # Step 3: Call LLM through orchestrator for qualitative reasoning
+    orchestrator = get_orchestrator()
+
+    llm_output: RankLLMOutput = await orchestrator.execute(
+        db=db,
+        user_id=user_id,
+        messages=messages,
+        output_schema=RankLLMOutput,
+        pipeline="rank",
+        description=f"Rank {job.title} at {job.company or 'Unknown'}",
+        provider=provider_config.get("provider"),
+        model=provider_config.get("model"),
+        temperature=0.3,
+        max_tokens=1536,
+        field_constraints=default_field_constraints(),
+    )
+
+    # Step 4: Merge deterministic scores with LLM qualitative scores
+    technical_score = quantitative["technical_score"]
+    experience_score = quantitative["experience_score"]
+    behavioral_score = llm_output.behavioral_score
+    career_score = llm_output.career_score
+
+    location_status = quantitative["location_status"]
+    deadline = quantitative["deadline"]
+    deadline_urgent = quantitative["deadline_urgent"]
+    language = quantitative["language"]
+    missing_keywords = quantitative["missing_keywords"]
+
+    strengths = llm_output.strengths
+    gaps = llm_output.gaps
+    red_flags = llm_output.red_flags
+
+    # Compute overall score
     overall = compute_overall_score(
-        llm_output.technical_score,
-        llm_output.experience_score,
-        llm_output.behavioral_score,
-        llm_output.career_score,
+        technical_score, experience_score, behavioral_score, career_score,
     )
     verdict = score_to_verdict(overall)
 
-    # Upsert evaluation record (one evaluation per job_posting_id)
+    # Step 5: Upsert evaluation record
     existing_result = await db.execute(
         select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
     )
@@ -422,21 +448,25 @@ async def _rank_single_job(
             user_id=candidate.user_id,
         )
         db.add(evaluation)
-    evaluation.technical_score = llm_output.technical_score
-    evaluation.experience_score = llm_output.experience_score
-    evaluation.behavioral_score = llm_output.behavioral_score
-    evaluation.career_score = llm_output.career_score
+
+    evaluation.technical_score = technical_score
+    evaluation.experience_score = experience_score
+    evaluation.behavioral_score = behavioral_score
+    evaluation.career_score = career_score
     evaluation.overall_score = overall
     evaluation.verdict = verdict
-    evaluation.location_status = llm_output.location_status
-    evaluation.deadline = llm_output.deadline
-    evaluation.deadline_urgent = llm_output.deadline_urgent
-    evaluation.strengths = llm_output.strengths
-    evaluation.gaps = llm_output.gaps
-    evaluation.missing_keywords = llm_output.missing_keywords
-    evaluation.red_flags = llm_output.red_flags
-    evaluation.language = llm_output.language
-    evaluation.raw_response = llm_output.model_dump()
+    evaluation.location_status = location_status
+    evaluation.deadline = deadline
+    evaluation.deadline_urgent = deadline_urgent
+    evaluation.strengths = strengths
+    evaluation.gaps = gaps
+    evaluation.missing_keywords = missing_keywords
+    evaluation.red_flags = red_flags
+    evaluation.language = language or job.language
+    evaluation.raw_response = {
+        "quantitative": quantitative,
+        "llm_qualitative": llm_output.model_dump(),
+    }
     await db.flush()
     await db.refresh(evaluation)
 

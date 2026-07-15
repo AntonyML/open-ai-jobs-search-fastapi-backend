@@ -715,3 +715,169 @@ class Upskill(Base, TimestampMixin):
     # ── Relationships ─────────────────────────────────────────────
     candidate: Mapped["CandidateProfile"] = relationship(backref="upskills")
     target_job_posting: Mapped["JobPosting | None"] = relationship()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ORCHESTRATOR  (execution queue, provider health, model health)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class ExecutionJob(Base, TimestampMixin):
+    """Persistent execution job record for the LLM orchestrator queue.
+
+    Every LLM call goes through the orchestrator, which creates a row here
+    tracking the entire lifecycle: from queued through to completed or failed.
+
+    If the backend restarts, unfinished jobs can be resumed from their
+    last checkpoint (never restart from zero).
+    """
+
+    __tablename__ = "execution_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # ── Job identity ──────────────────────────────────────────
+    pipeline: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    group_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    description: Mapped[str | None] = mapped_column(String(500))
+
+    # ── LLM task ──────────────────────────────────────────────
+    messages: Mapped[dict | None] = mapped_column(FlexJSON)
+    output_schema: Mapped[str | None] = mapped_column(String(100))
+
+    # ── Status (state machine) ────────────────────────────────
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+
+    # ── Provider / model assignment ───────────────────────────
+    provider: Mapped[str | None] = mapped_column(String(50))
+    model: Mapped[str | None] = mapped_column(String(100))
+    attempt_tier: Mapped[int | None] = mapped_column(default=1)
+
+    # ── Retry tracking ────────────────────────────────────────
+    retry_count: Mapped[int] = mapped_column(default=0)
+    max_retries: Mapped[int] = mapped_column(default=3)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error_code: Mapped[str | None] = mapped_column(String(50))
+
+    # ── Timing ────────────────────────────────────────────────
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    execution_time_ms: Mapped[int | None] = mapped_column()
+
+    # ── Checkpoint data ───────────────────────────────────────
+    checkpoint_data: Mapped[dict | None] = mapped_column(FlexJSON)
+    result: Mapped[dict | None] = mapped_column(FlexJSON)
+
+    # ── Worker info ───────────────────────────────────────────
+    worker_id: Mapped[str | None] = mapped_column(String(50))
+
+
+class ProviderHealth(Base, TimestampMixin):
+    """Health metrics per LLM provider for a user.
+
+    Tracks real-time status so the orchestrator can make intelligent
+    failover decisions. One row per (user_id, provider).
+    """
+
+    __tablename__ = "provider_health"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # ── Priority tier (lower = higher priority, 1 = highest) ──
+    priority: Mapped[int] = mapped_column(default=10)
+
+    # ── Health state ──────────────────────────────────────────
+    status: Mapped[str] = mapped_column(String(20), default="healthy")
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # ── Metrics ───────────────────────────────────────────────
+    last_latency_ms: Mapped[int | None] = mapped_column()
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error_code: Mapped[str | None] = mapped_column(String(50))
+    total_calls: Mapped[int] = mapped_column(default=0)
+    success_count: Mapped[int] = mapped_column(default=0)
+    failure_count: Mapped[int] = mapped_column(default=0)
+    rate_limit_count: Mapped[int] = mapped_column(default=0)
+    timeout_count: Mapped[int] = mapped_column(default=0)
+    consecutive_failures: Mapped[int] = mapped_column(default=0)
+
+    # ── Health score (0.0 = dead, 1.0 = perfect) ─────────────
+    health_score: Mapped[float] = mapped_column(default=1.0)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_provider_health_user_provider"),
+    )
+
+
+class ModelHealth(Base, TimestampMixin):
+    """Health metrics per model within a provider.
+
+    Models can be in various states: READY, BUSY, COOLDOWN, DISABLED.
+    One row per (user_id, provider, model_name).
+    """
+
+    __tablename__ = "model_health"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # ── Priority within provider (lower = higher priority) ────
+    priority: Mapped[int] = mapped_column(default=5)
+
+    # ── Cost & capability ─────────────────────────────────────
+    cost_rank: Mapped[int] = mapped_column(default=5)
+    context_window: Mapped[int | None] = mapped_column(default=None)
+
+    # ── Model state ───────────────────────────────────────────
+    state: Mapped[str] = mapped_column(String(20), default="READY")
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # ── Metrics ───────────────────────────────────────────────
+    average_latency_ms: Mapped[float | None] = mapped_column()
+    average_success_rate: Mapped[float] = mapped_column(default=1.0)
+    total_calls: Mapped[int] = mapped_column(default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error_code: Mapped[str | None] = mapped_column(String(50))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "provider", "model_name",
+            name="uq_model_health_user_provider_model",
+        ),
+    )
+
+
+class ExecutionQueueState(Base):
+    """Global queue state — persisted so the queue survives restarts.
+
+    Singleton pattern: there should be only one row, keyed by user_id.
+    """
+
+    __tablename__ = "execution_queue_state"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+
+    # ── Queue control ─────────────────────────────────────────
+    paused: Mapped[bool] = mapped_column(default=False)
+    max_concurrency: Mapped[int] = mapped_column(default=4)
+    active_workers: Mapped[int] = mapped_column(default=0)
+
+    # ── Metrics ───────────────────────────────────────────────
+    total_enqueued: Mapped[int] = mapped_column(default=0)
+    total_completed: Mapped[int] = mapped_column(default=0)
+    total_failed: Mapped[int] = mapped_column(default=0)
+    total_cancelled: Mapped[int] = mapped_column(default=0)

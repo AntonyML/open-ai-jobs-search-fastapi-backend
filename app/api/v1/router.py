@@ -15,6 +15,7 @@ from app.api.v1.add_portal import router as add_portal_router
 from app.api.v1.add_template import router as add_template_router
 from app.api.v1.reset import router as reset_router
 from app.api.v1.providers import router as providers_router
+from app.api.v1.orchestrator import router as orchestrator_router
 
 router = APIRouter()
 
@@ -30,6 +31,9 @@ router.include_router(auth_router)
 
 # ── Providers router ───────────────────────────────────────────────
 router.include_router(providers_router)
+
+# ── Orchestrator router ────────────────────────────────────────────
+router.include_router(orchestrator_router)
 
 # ── Skill routers ──────────────────────────────────────────────────
 router.include_router(setup_router)

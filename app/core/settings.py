@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     documents_dir: str = "documents"
     tracker_path: str = "documents/tracker.json"
 
+    # ── Orchestrator ───────────────────────────────────────────
+    # Max concurrent LLM workers in the execution queue
+    orchestrator_max_concurrency: int = 4
+
     # ── LaTeX ─────────────────────────────────────────────────
     # Directorio con los binarios de LaTeX (lualatex, xelatex, pdfinfo, pdftotext).
     # Si es None, usa los binarios del PATH del sistema.
