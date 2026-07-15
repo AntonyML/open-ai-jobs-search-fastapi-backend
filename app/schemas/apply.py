@@ -101,6 +101,22 @@ class ApplyResult(BaseModel):
     message: str
 
 
+class ApplicationStatusOut(BaseModel):
+    """Lightweight status response for polling."""
+
+    id: str
+    pipeline_stage: str
+    progress_pct: int
+    current_action: str
+    review_issues_count: int = 0
+    cv_compiled: bool = False
+    cover_letter_compiled: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ── LLM output schemas ──────────────────────────────────────────────
 
 

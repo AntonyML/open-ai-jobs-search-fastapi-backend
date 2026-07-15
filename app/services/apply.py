@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.settings import get_settings
 from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation, User
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
-from app.llm.adapter import llm_completion_structured, get_provider_kwargs
+from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
@@ -280,18 +280,28 @@ def build_review_prompt(
     cover_letter_latex: str,
     tailored_experience: list[TailoredExperienceEntry],
     cover_letter_content: CoverLetterLLMOutput,
+    company_research: str | None = None,
 ) -> list[dict[str, str]]:
     """Build prompt for the reviewer agent.
 
     The reviewer receives the FULL rendered LaTeX of both documents,
-    the job posting, and the candidate profile. It must return structured
-    feedback including any issues found.
+    the job posting, candidate profile, and optional company research
+    context. It must return structured feedback including any issues found.
+
+    Company research is included so the reviewer can verify cover letter
+    claims about the target company (products, mission, recent news).
 
     Temperature 0 is used for reproducibility.
     """
     candidate_summary = _build_candidate_summary_for_apply(candidate)
     job_summary = _build_job_summary_for_apply(job)
     missing_keywords = evaluation.missing_keywords or []
+
+    company_context = ""
+    if company_research:
+        company_context = f"\nCOMPANY RESEARCH (verified facts about {job.company}):\n{company_research}\n"
+        company_context += "Use this context to verify claims in the cover letter. \n"
+        company_context += "Flag any cover letter claims about the company that are NOT supported by this research.\n"
 
     system_prompt = f"""{REVIEWER_GUARDRAIL}
 
@@ -304,7 +314,7 @@ JOB POSTING:
 RANK EVALUATION:
 - Missing keywords that should have been incorporated: {', '.join(missing_keywords) if missing_keywords else 'None'}
 - Verdict: {evaluation.verdict} ({evaluation.overall_score}/100)
-
+{company_context}
 DRAFT CV (full rendered LaTeX):
 ```latex
 {cv_latex[:4000]}
@@ -320,7 +330,7 @@ Review these draft documents critically. Return structured JSON with ReviewFeedb
 Be specific — reference exact bullet points, paragraph sections, and keywords.
 """
 
-    user_prompt = "Review the draft CV and cover letter for issues."
+    user_prompt = f"Review the draft CV and cover letter for the {job.title} role at {job.company}."
 
     return [
         {"role": "system", "content": system_prompt},
@@ -844,6 +854,52 @@ async def _get_pdf_page_count(pdf_path: Path) -> int:
     return 1
 
 
+# ── Company research ────────────────────────────────────────────────
+
+
+async def _fetch_company_info(
+    job: JobPosting,
+    provider_config: dict | None = None,
+) -> str | None:
+    """Fetch basic company information for the reviewer.
+
+    Uses a lightweight LLM call to generate company context from the
+    job posting's company name. The output is a short summary of what
+    the company does, recent news, and products — so the reviewer can
+    verify cover letter claims.
+
+    Falls back gracefully (returns None) if the LLM call fails or the
+    company name is not meaningful.
+
+    The prompt is kept small ("What is [Company] known for?" style)
+    to minimize token usage — this is auxiliary context, not an analysis.
+    """
+    if not job.company or job.company in ("Not specified", "Unknown", ""):
+        return None
+
+    try:
+        provider_kwargs = _get_provider_kwargs(provider_config)
+
+        result = await llm_completion(
+            messages=[
+                {"role": "system", "content":
+                 "You are a company research assistant. Given a company name, "
+                 "provide a brief, factual summary (2-3 sentences) of what the "
+                 "company does, its industry, known products/services, and any "
+                 "recent news or growth signals. If you don't know specific details, "
+                 "say so — don't fabricate."},
+                {"role": "user", "content": f"What is {job.company} known for? Provide a short factual summary."},
+            ],
+            **provider_kwargs,
+            temperature=0.0,
+            max_tokens=300,
+        )
+        return result.strip() if result else None
+    except Exception as e:
+        logger.warning(f"Company research failed for {job.company}: {e}")
+        return None
+
+
 # ── Drafter-Reviewer LLM functions ─────────────────────────────────
 
 
@@ -856,17 +912,20 @@ async def _generate_review(
     tailored_experience: list[TailoredExperienceEntry],
     cover_letter_content: CoverLetterLLMOutput,
     provider_config: dict | None = None,
+    company_research: str | None = None,
 ) -> ReviewFeedback:
     """Call LLM REVIEWER to critique the draft documents.
 
     The reviewer runs with temperature 0 for reproducibility.
-    It receives the FULL rendered LaTeX, job posting, and candidate profile.
-    It returns structured feedback identifying issues.
+    It receives the FULL rendered LaTeX, job posting, candidate profile,
+    and optional company research context. It returns structured feedback
+    identifying issues.
     """
     messages = build_review_prompt(
         candidate, job, evaluation,
         cv_latex, cover_letter_latex,
         tailored_experience, cover_letter_content,
+        company_research=company_research,
     )
 
     try:
@@ -1036,10 +1095,16 @@ async def execute_apply(
 
     # ═══════════════════════════════════════════════════════════════
     # STAGE 2: RENDER DRAFT — Produce LaTeX from draft content
+    # Save draft LaTeX for audit trail (pre-review content).
     # ═══════════════════════════════════════════════════════════════
 
     draft_cv_tex = render_cv_latex(candidate, tailored_experience, job)
     draft_cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
+
+    # ── Company research ──────────────────────────────────────────
+    # Fetch basic company info so the reviewer can verify cover letter
+    # claims about the target company.
+    company_research = await _fetch_company_info(job, provider_config)
 
     # ═══════════════════════════════════════════════════════════════
     # STAGE 3: REVIEW — Second agent critiques the draft
@@ -1050,6 +1115,7 @@ async def execute_apply(
         draft_cv_tex, draft_cover_tex,
         tailored_experience, cover_letter_content,
         provider_config,
+        company_research=company_research,
     )
 
     # ═══════════════════════════════════════════════════════════════
@@ -1063,52 +1129,20 @@ async def execute_apply(
     )
 
     # ═══════════════════════════════════════════════════════════════
-    # STAGE 4b: REVISE COVER LETTER — Apply reviewer feedback to cover letter
-    # Uses review_feedback to regenerate the cover letter aligned with the
-    # revised experience. Falls back to original if the LLM call fails.
+    # STAGE 4b: REVISE COVER LETTER — Always regenerate cover letter
+    # using the revised experience section. This ensures the cover letter
+    # stays aligned with the CV after revision, even if the reviewer found
+    # no specific cover letter issues. Falls back to original on LLM error.
     # ═══════════════════════════════════════════════════════════════
 
-    revised_cover_letter = cover_letter_content
-    if review_feedback.issues:
-        cover_letter_issues = [
-            i for i in review_feedback.issues
-            if i.location in ("cover_letter", "both")
-        ]
-        if cover_letter_issues:
-            try:
-                provider_kwargs_cover = _get_provider_kwargs(provider_config)
-                # Build a targeted prompt to revise the cover letter
-                # based on the reviewer's feedback about cover letter issues
-                cover_revise_prompt = [
-                    {"role": "system", "content":
-                     f"{APPLY_GUARDRAIL}\n\n"
-                     f"REVIEWER FEEDBACK (cover letter issues only):\n"
-                     + "\n".join(f"- [{i.severity}] {i.description} — {i.suggestion or 'Fix this.'}" for i in cover_letter_issues)
-                     + f"\n\nORIGINAL COVER LETTER:\n"
-                     f"Opening: {cover_letter_content.opening_paragraph}\n"
-                     f"Body: {' '.join(cover_letter_content.body_paragraphs)}\n"
-                     f"Company: {cover_letter_content.company_connection_paragraph}\n"
-                     f"Fit: {cover_letter_content.personal_fit_paragraph}\n"
-                     f"Closing: {cover_letter_content.closing_paragraph}\n\n"
-                     f"REVISED EXPERIENCE SECTION (for reference):\n"
-                     + "\n".join(f"- {e.title} at {e.company}: {' '.join(e.bullets)}" for e in revised_experience)
-                     + "\n\nTASK: Revise the cover letter to address ALL reviewer issues. "
-                     "Keep the same structure but fix every problem listed above. "
-                     "Return JSON with CoverLetterLLMOutput schema."
-                    },
-                    {"role": "user", "content": "Revise the cover letter based on reviewer feedback."},
-                ]
-                revised_cl: CoverLetterLLMOutput = await llm_completion_structured(
-                    messages=cover_revise_prompt,
-                    output_schema=CoverLetterLLMOutput,
-                    **provider_kwargs_cover,
-                    temperature=0.2,
-                    max_tokens=2000,
-                )
-                revised_cover_letter = revised_cl
-                logger.info(f"Cover letter revised: {len(cover_letter_issues)} issue(s) addressed")
-            except Exception as e:
-                logger.warning(f"Cover letter revision failed — keeping original: {e}")
+    try:
+        revised_cover_letter = await _generate_cover_letter(
+            candidate, job, evaluation, revised_experience, provider_config
+        )
+        logger.info("Cover letter regenerated with revised experience")
+    except Exception as e:
+        logger.warning(f"Cover letter revision failed — keeping original: {e}")
+        revised_cover_letter = cover_letter_content
 
     # ═══════════════════════════════════════════════════════════════
     # STAGE 5: RENDER FINAL — Produce final LaTeX from revised content
@@ -1156,7 +1190,7 @@ async def execute_apply(
     incorporated_keywords = _extract_incorporated_keywords(revised_experience, evaluation.missing_keywords or [])
     addressed_red_flags = _extract_addressed_red_flags(revised_experience, evaluation.red_flags or [])
 
-    # 9. Create Application record with pipeline stage tracking
+    # 9. Create Application record with pipeline stage and draft tracking
     application = Application(
         user_id=user_id,
         job_posting_id=job_posting_id,
@@ -1177,6 +1211,8 @@ async def execute_apply(
         language=job.language or "en",
         # Pipeline tracking
         pipeline_stage="compiled",
+        draft_cv_tex=draft_cv_tex,  # Pre-review draft for audit
+        draft_cover_letter_tex=draft_cover_tex,  # Pre-review draft for audit
         review_feedback=review_feedback.model_dump(),
         review_issues=[i.model_dump() for i in review_feedback.issues],
     )

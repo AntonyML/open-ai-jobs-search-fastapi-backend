@@ -448,6 +448,9 @@ class Application(Base, TimestampMixin):
         String(20), default="draft",
         comment="draft → reviewed → revised → compiled → verified",
     )
+    # Draft LaTeX content (pre-review, for audit trail)
+    draft_cv_tex: Mapped[str | None] = mapped_column(Text, comment="First draft CV LaTeX before review")
+    draft_cover_letter_tex: Mapped[str | None] = mapped_column(Text, comment="First draft cover letter LaTeX before review")
     # Reviewer feedback (JSON)
     review_feedback: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
     review_issues: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)

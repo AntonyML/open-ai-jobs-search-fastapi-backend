@@ -1,11 +1,13 @@
 """Apply router — endpoints for generating tailored CV and cover letter."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_llm_provider
+from app.db.models import Application
 from app.db.session import get_db as _get_db
-from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut
+from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
 from app.services import apply
 
 router = APIRouter(prefix="/apply", tags=["apply"])
@@ -47,6 +49,58 @@ async def get_application(
 ):
     """Get a generated application by ID."""
     return await apply.get_application(db, application_id, user["sub"])
+
+
+@router.get("/{application_id}/status", response_model=ApplicationStatusOut)
+async def get_application_status(
+    application_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Get the current pipeline stage and progress of an application.
+
+    Returns lightweight status for frontend polling:
+    - pipeline_stage: draft | reviewed | revised | compiled | verified
+    - progress_pct: 0-100
+    - current_action: human-readable description of what is happening
+    - review_issues_count: number of issues found by reviewer
+
+    This endpoint is designed to be polled frequently (up to every 2s)
+    during long-running apply operations.
+    """
+    result = await db.execute(
+        select(Application).where(
+            Application.id == application_id,
+            Application.user_id == user["sub"],
+        )
+    )
+    app = result.scalar_one_or_none()
+    if app is None:
+        raise HTTPException(status_code=404, detail="Application not found.")
+
+    # Map pipeline_stage to progress percentage and action text
+    stage_progress = {
+        "draft": (10, "Generating tailored experience and cover letter..."),
+        "reviewed": (30, "Reviewing draft documents for issues..."),
+        "revised": (60, "Applying reviewer feedback and refining..."),
+        "compiled": (80, "Compiling LaTeX and verifying PDF..."),
+        "verified": (100, "Application complete."),
+    }
+    progress_pct, current_action = stage_progress.get(
+        app.pipeline_stage, (0, "Initializing...")
+    )
+
+    return ApplicationStatusOut(
+        id=app.id,
+        pipeline_stage=app.pipeline_stage,
+        progress_pct=progress_pct,
+        current_action=current_action,
+        review_issues_count=len(app.review_issues) if app.review_issues else 0,
+        cv_compiled=app.cv_compiled,
+        cover_letter_compiled=app.cover_letter_compiled,
+        created_at=app.created_at,
+        updated_at=app.updated_at,
+    )
 
 
 @router.get("/", response_model=list[ApplicationOut])

@@ -680,6 +680,129 @@ async def test_compile_latex_wrong_page_count():
                     )
 
 
+# ── Drafter-Reviewer happy path tests ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_execute_apply_full_pipeline(db_session, sample_candidate, sample_job, sample_evaluation):
+    """Full Drafter-Reviewer pipeline: 5 LLM calls, draft→review→revise→compile."""
+    with patch("app.services.apply.llm_completion_structured") as mock_llm:
+        # 5 LLM calls in order:
+        # 1. Tailored experience (draft)
+        # 2. Cover letter (draft)
+        # 3. Review feedback
+        # 4. Revise experience
+        # 5. Cover letter (revised)
+        mock_review = apply.ReviewFeedback(
+            overall_assessment="Good draft, but can improve keyword coverage.",
+            passes=["Strong X-Y-Z formula usage", "Good company connection"],
+            issues=[
+                apply.ReviewIssue(
+                    type="missing_keyword",
+                    description="Keyword 'CI/CD' from job posting not incorporated",
+                    severity="medium",
+                    location="cv",
+                    suggestion="Add CI/CD experience from Acme Corp pipeline work",
+                ),
+                apply.ReviewIssue(
+                    type="generic_bullet",
+                    description="Team leadership bullet lacks metrics",
+                    severity="high",
+                    location="both",
+                    suggestion="Add team size, project impact, and timeline",
+                ),
+            ],
+            missed_keywords=["CI/CD"],
+            strong_recommendations=["Add CI/CD experience", "Quantify leadership impact"],
+        )
+        mock_llm.side_effect = [
+            mock_tailored_experience(),  # 1. Draft experience
+            mock_cover_letter(),         # 2. Draft cover letter
+            mock_review,                 # 3. Review feedback
+            mock_tailored_experience(),  # 4. Revised experience
+            mock_cover_letter(),         # 5. Revised cover letter
+        ]
+
+        with patch("app.services.apply.compile_latex") as mock_compile:
+            mock_compile.side_effect = [
+                (Path("/tmp/cv.pdf"), 2),
+                (Path("/tmp/cover.pdf"), 1),
+            ]
+
+            with patch("app.services.apply.shutil.copy2"):
+                with patch("app.services.apply.Path.mkdir"):
+                    with patch("app.services.apply.Path.exists", return_value=True):
+                        with patch("app.services.apply.Path.write_text"):
+                            result = await apply.execute_apply(
+                                db=db_session,
+                                user_id="test-user-id",
+                                job_posting_id=sample_job.id,
+                                rank_evaluation_id=sample_evaluation.id,
+                            )
+
+    assert result.application_id is not None
+    assert result.cv_compiled is True
+    assert result.cover_letter_compiled is True
+    assert "reviewed" in result.message or "issue" in result.message.lower()
+
+    # Verify pipeline_stage was stored
+    app_result = await db_session.execute(
+        select(Application).where(Application.id == result.application_id)
+    )
+    app = app_result.scalar_one_or_none()
+    assert app is not None
+    assert app.pipeline_stage == "compiled"
+    assert app.draft_cv_tex is not None, "draft_cv_tex should be saved"
+    assert app.draft_cover_letter_tex is not None, "draft_cover_letter_tex should be saved"
+    assert app.review_feedback is not None, "review_feedback should be saved"
+    assert len(app.review_issues) == 2, "2 issues should be saved"
+
+
+@pytest.mark.asyncio
+async def test_execute_apply_reviewer_fallback(db_session, sample_candidate, sample_job, sample_evaluation):
+    """When reviewer LLM fails, pipeline continues with original draft."""
+    with patch("app.services.apply.llm_completion_structured") as mock_llm:
+        # First 2 calls succeed (draft), 3rd call (review) fails
+        mock_llm.side_effect = [
+            mock_tailored_experience(),   # 1. Draft OK
+            mock_cover_letter(),          # 2. Draft OK
+            LLMError("Reviewer timeout"), # 3. Review FAILS → fallback
+            mock_cover_letter(),          # 4. Cover letter revise (uses revised exp)
+        ]
+
+        with patch("app.services.apply.compile_latex") as mock_compile:
+            mock_compile.side_effect = [
+                (Path("/tmp/cv.pdf"), 2),
+                (Path("/tmp/cover.pdf"), 1),
+            ]
+
+            with patch("app.services.apply.shutil.copy2"):
+                with patch("app.services.apply.Path.mkdir"):
+                    with patch("app.services.apply.Path.exists", return_value=True):
+                        with patch("app.services.apply.Path.write_text"):
+                            result = await apply.execute_apply(
+                                db=db_session,
+                                user_id="test-user-id",
+                                job_posting_id=sample_job.id,
+                                rank_evaluation_id=sample_evaluation.id,
+                            )
+
+    assert result.application_id is not None
+    assert result.cv_compiled is True
+    assert result.cover_letter_compiled is True
+    # Should still complete even with reviewer failure
+    assert "Application generated" in result.message
+
+    app_result = await db_session.execute(
+        select(Application).where(Application.id == result.application_id)
+    )
+    app = app_result.scalar_one_or_none()
+    assert app is not None
+    assert app.pipeline_stage == "compiled"
+    # Reviewer fallback should have empty issues
+    assert len(app.review_issues) == 0
+
+
 # ── _resolve_latex_binary tests ────────────────────────────────────
 
 
