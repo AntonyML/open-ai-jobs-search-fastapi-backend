@@ -1,7 +1,7 @@
 """add_preferred_language_to_users
 
-Revision ID: 770526833bdb
-Revises: 113c1bad5c0a
+Revision ID: 9a8b7c6d5e4f
+Revises: 44fb43fcc877
 Create Date: 2026-07-15 02:50:00.000000
 
 """
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = "770526833bdb"
-down_revision: Union[str, None] = "113c1bad5c0a"
+revision: str = "9a8b7c6d5e4f"
+down_revision: Union[str, None] = "44fb43fcc877"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
