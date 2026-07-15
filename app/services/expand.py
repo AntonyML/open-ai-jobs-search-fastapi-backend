@@ -27,6 +27,7 @@ from app.db.models import (
 )
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.schemas.expand import (
+    CompetencyExpansionSummaryOut,
     EnrichedCompetenciesLLMOutput,
     EnrichedCompetency,
     ProposedAdditionsLLMOutput,
@@ -778,8 +779,12 @@ async def list_expansions(
     user_id: str,
     limit: int = 20,
     offset: int = 0,
-) -> list[CompetencyExpansion]:
-    """List competency expansions for a user."""
+) -> list[CompetencyExpansionSummaryOut]:
+    """List competency expansions for a user.
+
+    Returns summary objects with computed fields (items_found, competencies_enriched,
+    proposed_additions) computed from the JSON columns to avoid serialization errors.
+    """
     result = await db.execute(
         select(CompetencyExpansion)
         .where(CompetencyExpansion.user_id == user_id)
@@ -787,4 +792,16 @@ async def list_expansions(
         .limit(limit)
         .offset(offset)
     )
-    return list(result.scalars().all())
+    expansions = list(result.scalars().all())
+    return [
+        CompetencyExpansionSummaryOut(
+            id=e.id,
+            candidate_id=e.candidate_id,
+            status=e.status,
+            items_found=len(e.experience_items or []),
+            competencies_enriched=len(e.enriched_competencies or []),
+            proposed_additions=len(e.proposed_additions or []),
+            created_at=e.created_at,
+        )
+        for e in expansions
+    ]

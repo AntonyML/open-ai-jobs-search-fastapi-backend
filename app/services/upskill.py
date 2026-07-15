@@ -28,6 +28,7 @@ from app.schemas.upskill import (
     HardSkillGapsLLMOutput,
     LearningPlanLLMOutput,
     SynthesizedGapsLLMOutput,
+    UpskillSummaryOut,
 )
 
 settings = get_settings()
@@ -605,8 +606,12 @@ async def list_upskills(
     user_id: str,
     limit: int = 20,
     offset: int = 0,
-) -> list[Upskill]:
-    """List upskill analyses for a user."""
+) -> list[UpskillSummaryOut]:
+    """List upskill analyses for a user.
+
+    Returns summary objects with computed fields (gaps_found, learning_plan_items)
+    computed from the JSON columns to avoid serialization errors.
+    """
     result = await db.execute(
         select(Upskill)
         .where(Upskill.user_id == user_id)
@@ -614,4 +619,17 @@ async def list_upskills(
         .limit(limit)
         .offset(offset)
     )
-    return list(result.scalars().all())
+    upskills = list(result.scalars().all())
+    return [
+        UpskillSummaryOut(
+            id=u.id,
+            user_id=u.user_id,
+            candidate_id=u.candidate_id,
+            mode=u.mode,
+            status=u.status,
+            gaps_found=len(u.gap_heatmap or []),
+            learning_plan_items=len(u.learning_plan or []),
+            created_at=u.created_at,
+        )
+        for u in upskills
+    ]

@@ -116,6 +116,7 @@ class UpskillSummaryOut(BaseModel):
     """Lightweight upskill for list views."""
 
     id: str
+    user_id: str
     candidate_id: str
     mode: str
     status: str

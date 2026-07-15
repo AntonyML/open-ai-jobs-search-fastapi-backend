@@ -381,6 +381,7 @@ def test_upskill_summary_gaps_found():
 
     summary = UpskillSummaryOut(
         id=record.id,
+        user_id=record.user_id,
         candidate_id=record.candidate_id,
         mode=record.mode,
         status=record.status,
