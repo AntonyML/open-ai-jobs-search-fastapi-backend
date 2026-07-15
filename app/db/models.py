@@ -457,6 +457,10 @@ class Application(Base, TimestampMixin):
 
     # ── ATS check (post-compilation quality gate) ───────────────
     ats_score: Mapped[float | None] = mapped_column(comment="ATS keyword coverage 0.0-1.0 (None = check not run)")
+    # FASE 2 — Verification checklist result (stored as serialized VerificationResult JSON)
+    verification_result: Mapped[dict[str, Any] | None] = mapped_column(
+        FlexJSON, comment="FASE 2 — VerificationResult JSON from POST /apply/{id}/verify"
+    )
     ats_missing_keywords: Mapped[list[str] | None] = mapped_column(FlexJSON, comment="Job keywords not found in PDF text")
     ats_pass: Mapped[bool | None] = mapped_column(comment="Overall ATS compatibility verdict")
     ats_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="When ATS check was performed")
