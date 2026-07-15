@@ -7,7 +7,7 @@ and execution job management.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Provider health schemas ────────────────────────────────────────
@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 class ProviderHealthOut(BaseModel):
     """Health status for a single LLM provider."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     provider: str
     status: str  # healthy, degraded, cooldown, disabled
@@ -46,6 +48,8 @@ class ProviderListOut(BaseModel):
 class ModelHealthOut(BaseModel):
     """Health status for a single model within a provider."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     provider: str
     model_name: str
     state: str  # READY, BUSY, COOLDOWN, DISABLED
@@ -74,6 +78,8 @@ class ModelListOut(BaseModel):
 
 class ExecutionJobOut(BaseModel):
     """Execution job status."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: str
     user_id: str
