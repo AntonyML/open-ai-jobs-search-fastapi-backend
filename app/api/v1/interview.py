@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_locale
+from app.core.i18n.locale import t
 from app.db.session import get_db as _get_db
 from app.schemas.interview import InterviewPrepOut, InterviewPrepRequest, InterviewPrepSummaryOut, MockInterviewRequest, MockInterviewResponse
 from app.services import interview
@@ -20,12 +21,9 @@ async def trigger_interview_prep(
     payload: InterviewPrepRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    locale: str = Depends(get_locale),
 ):
-    """Generate interview preparation pack for an application.
-
-    Runs synchronously in the request. For production, consider moving
-    to a background task for long-running LLM calls.
-    """
+    """Generate interview preparation pack for an application."""
     result = await interview.execute_interview_prep(
         db=db,
         user_id=user["sub"],
@@ -69,13 +67,7 @@ async def start_or_answer_mock(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """Start a mock interview or submit an answer.
-
-    First call (omit user_answer): starts the mock interview and returns the first question.
-    Subsequent calls: submit your answer and get feedback + the next question.
-
-    The entire transcript is saved to the prep pack's mock_transcript field.
-    """
+    """Start a mock interview or submit an answer."""
     # If no answer provided, start the mock interview
     if not payload.user_answer:
         return await interview.start_mock_interview(db, user["sub"], prep_id)

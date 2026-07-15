@@ -4,7 +4,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_locale
+from app.core.i18n.locale import t
 from app.db.models import CandidateProfile, CompetencyExpansion
 from app.db.session import get_db as _get_db
 from app.exceptions import ProfileIncompleteError

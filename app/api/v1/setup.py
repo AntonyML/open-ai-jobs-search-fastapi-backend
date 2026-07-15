@@ -1,17 +1,10 @@
-"""Setup router — candidate profile onboarding endpoints.
-
-Implements the three paths from the original /setup command:
-A) POST /setup/profile — create profile (from documents, CV import, or interview)
-B) PATCH /setup/profile — update profile
-C) GET /setup/profile — retrieve profile
-
-Plus behavioral profile and STAR examples management.
-"""
+"""Setup router — candidate profile onboarding endpoints."""
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_locale
+from app.core.i18n.locale import t
 from app.db.session import get_db as _get_db
 from app.schemas.profile import (
     BehavioralProfileCreate,
@@ -40,14 +33,9 @@ async def create_profile(
     payload: CandidateProfileCreate,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    locale: str = Depends(get_locale),
 ):
-    """Create a new candidate profile.
-
-    Supports all three setup paths:
-    - ``setup_method="documents"`` — profile built from uploaded documents
-    - ``setup_method="cv_import"`` — profile built from a single pasted CV
-    - ``setup_method="interview"`` — profile built from guided Q&A
-    """
+    """Create a new candidate profile."""
     data = payload.model_dump(exclude_none=True)
     profile = await setup.create_profile(db, user["sub"], data)
     await db.commit()
@@ -70,6 +58,7 @@ async def update_profile(
     payload: CandidateProfileUpdate,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    locale: str = Depends(get_locale),
 ):
     """Partially update the candidate profile."""
     data = payload.model_dump(exclude_unset=True)
@@ -94,18 +83,12 @@ async def complete_setup(
     setup_method: str,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    locale: str = Depends(get_locale),
 ):
-    """Mark the profile setup as completed.
-
-    Args:
-        setup_method: One of "documents", "cv_import", "interview".
-    """
+    """Mark the profile setup as completed."""
     if setup_method not in ("documents", "cv_import", "interview"):
         from app.exceptions import AppError
-
-        raise AppError(
-            "Invalid setup_method. Must be one of: documents, cv_import, interview."
-        )
+        raise AppError(t("errors.validation", locale, detail="Invalid setup_method"))
     profile = await setup.complete_setup(db, user["sub"], setup_method)
     await db.commit()
     await db.refresh(profile)

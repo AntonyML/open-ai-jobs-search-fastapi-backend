@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_locale
+from app.core.i18n.locale import t
 from app.db.session import get_db as _get_db
 from app.schemas.scrape import (
     JobPostingOut,
@@ -26,12 +27,9 @@ async def trigger_scrape(
     payload: ScrapeRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    locale: str = Depends(get_locale),
 ):
-    """Trigger a scrape run.
-
-    The scrape runs synchronously in the request (for now).  For long-running
-    scrapes, consider moving to a background task in a future iteration.
-    """
+    """Trigger a scrape run."""
     run = await scrape.execute_scrape(
         db=db,
         user_id=user["sub"],
@@ -49,7 +47,7 @@ async def trigger_scrape(
         portals_queried=run.portals_queried,
         jobs_found=run.jobs_found,
         jobs_new=run.jobs_new,
-        message=f"Scrape completed: {run.jobs_new} new jobs from {len(run.portals_queried)} portals",
+        message=t("scrape.completed", locale, found=run.jobs_found, new=run.jobs_new),
     )
 
 

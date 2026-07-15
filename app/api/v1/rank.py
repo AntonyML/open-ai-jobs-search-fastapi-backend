@@ -3,7 +3,8 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_locale
+from app.core.i18n.locale import t
 from app.db.session import get_db as _get_db
 from app.schemas.rank import RankRequest, RankResult
 from app.schemas.rank import RankEvaluationOut as RankEvaluationOutSchema
@@ -24,27 +25,25 @@ async def trigger_rank(
     payload: RankRequest,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    locale: str = Depends(get_locale),
 ):
-    """Trigger a rank evaluation for unranked jobs.
-
-    Runs synchronously in the request. For large batches, consider
-    moving to a background task in a future iteration.
-    """
+    """Trigger a rank evaluation for unranked jobs."""
     job_id = await rank_jobs.start(async_session_factory, user["sub"], payload.model_dump())
-
-    # Count total jobs that will be processed
     counts = await count_jobs_to_rank(db, user["sub"], payload.model_dump())
-
     return {"job_id": job_id, "status": "running", "total_jobs": counts["total"]}
 
 @router.get("/status/{job_id}")
-async def rank_status(job_id: str):
+async def rank_status(
+    job_id: str,
+    locale: str = Depends(get_locale),
+):
     result = await rank_jobs.get(job_id)
-    return result or {"detail": "Ranking job not found"}
+    return result or {"detail": t("errors.not_found", locale)}
 
 @router.post("/cancel/{job_id}")
 async def cancel_rank(job_id: str):
-    return {"cancelled": await rank_jobs.cancel(job_id)}
+    cancelled = await rank_jobs.cancel(job_id)
+    return {"cancelled": cancelled}
 
 
 @router.get("/jobs/count")

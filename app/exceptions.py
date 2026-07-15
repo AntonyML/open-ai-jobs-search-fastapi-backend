@@ -8,14 +8,19 @@ from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
 
+from app.core.i18n.locale import t as _t
+
+
 class AppError(Exception):
     """Base exception for all business-logic errors."""
 
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
     code: str = "internal_error"
+    locale: str = "en"
 
-    def __init__(self, message: str = "An unexpected error occurred"):
-        self.message = message
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        self.locale = locale
+        self.message = message or _t("errors.internal", locale)
 
 
 class NotFoundError(AppError):
@@ -24,12 +29,18 @@ class NotFoundError(AppError):
     status_code = status.HTTP_404_NOT_FOUND
     code = "not_found"
 
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.not_found", locale), locale=locale)
+
 
 class ProviderAuthError(AppError):
     """The user has not configured API credentials for the requested LLM provider."""
 
     status_code = status.HTTP_400_BAD_REQUEST
     code = "provider_not_configured"
+
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.provider_not_configured", locale), locale=locale)
 
 
 class ProfileIncompleteError(AppError):
@@ -38,12 +49,18 @@ class ProfileIncompleteError(AppError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "profile_incomplete"
 
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.profile_incomplete", locale), locale=locale)
+
 
 class ScraperError(AppError):
     """A scraper subprocess exited with a non-zero code."""
 
     status_code = status.HTTP_502_BAD_GATEWAY
     code = "scraper_failed"
+
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.scraper_failed", locale), locale=locale)
 
 
 class LLMError(AppError):
@@ -52,12 +69,18 @@ class LLMError(AppError):
     status_code = status.HTTP_502_BAD_GATEWAY
     code = "llm_error"
 
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.llm_error", locale), locale=locale)
+
 
 class LatexCompileError(AppError):
     """LaTeX compilation failed or produced wrong page count."""
 
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     code = "latex_compile_error"
+
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.latex_compile_error", locale), locale=locale)
 
 
 class DuplicateError(AppError):
@@ -66,12 +89,18 @@ class DuplicateError(AppError):
     status_code = status.HTTP_409_CONFLICT
     code = "duplicate"
 
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.duplicate", locale), locale=locale)
+
 
 class ConfirmationRequiredError(AppError):
     """A destructive action was attempted without the required explicit confirmation."""
 
     status_code = status.HTTP_400_BAD_REQUEST
     code = "confirmation_required"
+
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.confirmation_required", locale), locale=locale)
 
 
 # ── Exception handlers (registered in create_app) ────────────────
@@ -112,20 +141,25 @@ def _json_safe(obj):
 
 async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch Pydantic validation errors from FastAPI and normalise the shape."""
+    from app.core.i18n.locale import get_locale_from_request, t
+
     from fastapi.exceptions import RequestValidationError
 
     if isinstance(exc, RequestValidationError):
+        locale = get_locale_from_request(request.headers, request.cookies)
         details = _json_safe(exc.errors())
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={
                 "error": "validation_error",
-                "message": "Request validation failed",
+                "message": t("errors.validation", locale, detail="Request validation failed"),
                 "details": details,
             },
         )
     # Fallback — should not happen if registered correctly
+    from app.core.i18n.locale import get_locale_from_request, t
+    locale = get_locale_from_request(request.headers, request.cookies)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"error": "internal_error", "message": "Unexpected validation error"},
+        content={"error": "internal_error", "message": t("errors.internal", locale)},
     )

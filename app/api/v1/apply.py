@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_llm_provider
+from app.api.deps import get_current_user, get_db, get_llm_provider, get_locale
+from app.core.i18n.locale import t
 from app.db.models import Application
 from app.db.session import get_db as _get_db
 from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
@@ -23,12 +24,9 @@ async def trigger_apply(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
     provider_config: dict = Depends(get_llm_provider),
+    locale: str = Depends(get_locale),
 ):
-    """Generate tailored CV and cover letter for a ranked job.
-
-    Runs synchronously in the request. For production, consider moving
-    to a background task for long-running LaTeX compilation.
-    """
+    """Generate tailored CV and cover letter for a ranked job."""
     result = await apply.execute_apply(
         db=db,
         user_id=user["sub"],
@@ -56,18 +54,9 @@ async def get_application_status(
     application_id: str,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
+    locale: str = Depends(get_locale),
 ):
-    """Get the current pipeline stage and progress of an application.
-
-    Returns lightweight status for frontend polling:
-    - pipeline_stage: draft | reviewed | revised | compiled | verified
-    - progress_pct: 0-100
-    - current_action: human-readable description of what is happening
-    - review_issues_count: number of issues found by reviewer
-
-    This endpoint is designed to be polled frequently (up to every 2s)
-    during long-running apply operations.
-    """
+    """Get the current pipeline stage and progress of an application."""
     result = await db.execute(
         select(Application).where(
             Application.id == application_id,
@@ -76,18 +65,18 @@ async def get_application_status(
     )
     app = result.scalar_one_or_none()
     if app is None:
-        raise HTTPException(status_code=404, detail="Application not found.")
+        raise HTTPException(status_code=404, detail=t("errors.not_found", locale))
 
     # Map pipeline_stage to progress percentage and action text
     stage_progress = {
-        "draft": (10, "Generating tailored experience and cover letter..."),
-        "reviewed": (30, "Reviewing draft documents for issues..."),
-        "revised": (60, "Applying reviewer feedback and refining..."),
-        "compiled": (80, "Compiling LaTeX and verifying PDF..."),
-        "verified": (100, "Application complete — ATS verified."),
+        "draft": (10, t("apply.stage.draft", locale)),
+        "reviewed": (30, t("apply.stage.reviewed", locale)),
+        "revised": (60, t("apply.stage.revised", locale)),
+        "compiled": (80, t("apply.stage.compiled", locale)),
+        "verified": (100, t("apply.stage.verified", locale)),
     }
     progress_pct, current_action = stage_progress.get(
-        app.pipeline_stage, (0, "Initializing...")
+        app.pipeline_stage, (0, t("apply.stage.initializing", locale))
     )
 
     return ApplicationStatusOut(
