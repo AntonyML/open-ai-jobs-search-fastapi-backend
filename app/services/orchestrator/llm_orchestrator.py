@@ -573,9 +573,9 @@ class LLMOrchestrator:
                     action="cancel", affected_jobs=1 if success else 0,
                     message="Job cancelled" if success else "Job not found or already completed",
                 )
-            # Cancel all queued jobs
+            # Cancel all non-terminal jobs (includes pending jobs when queue is paused)
             jobs = await self.queue.get_jobs_by_status(
-                db, user_id, eq.ACTIVE_STATES, limit=100
+                db, user_id, eq.ACTIVE_STATES | {eq.STATUS_PENDING}, limit=100
             )
             count = 0
             for j in jobs:

@@ -297,10 +297,12 @@ class ExecutionQueue:
         job.status = STATUS_CANCELLED
         job.finished_at = datetime.now(timezone.utc)
 
+        queue_state = await self._get_or_create_queue_state(db, job.user_id)
+
         # If it was running, release the worker slot
         if old_status == STATUS_RUNNING:
-            queue_state = await self._get_or_create_queue_state(db, job.user_id)
             queue_state.active_workers = max(0, queue_state.active_workers - 1)
+
         queue_state.total_cancelled += 1
 
         await db.flush()
