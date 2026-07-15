@@ -388,7 +388,7 @@ class ExecutionQueue:
         self,
         db: AsyncSession,
         user_id: str,
-        status: str | list[str] | None = None,
+        status: str | list[str] | set[str] | None = None,
         pipeline: str | None = None,
         limit: int = 50,
     ) -> list[ExecutionJobModel]:
@@ -398,7 +398,7 @@ class ExecutionQueue:
         )
 
         if status is not None:
-            if isinstance(status, list):
+            if isinstance(status, (list, set)):
                 query = query.where(ExecutionJobModel.status.in_(status))
             else:
                 query = query.where(ExecutionJobModel.status == status)
