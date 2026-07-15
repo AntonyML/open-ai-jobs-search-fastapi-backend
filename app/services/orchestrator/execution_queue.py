@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ExecutionJob as ExecutionJobModel
 from app.db.models import ExecutionQueueState
+from app.services.orchestrator.queue_notifier import get_queue_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ class ExecutionQueue:
 
         queue_state.total_enqueued += 1
         await db.commit()
+        get_queue_notifier().notify()
 
         logger.info(
             "Job %s enqueued | pipeline=%s user=%s status=%s",
@@ -137,6 +139,8 @@ class ExecutionQueue:
                 await db.flush()
                 await db.refresh(job)
 
+                get_queue_notifier().notify()
+
                 logger.info(
                     "Job %s started | provider=%s model=%s tier=%d",
                     job.id, provider, model, attempt_tier,
@@ -180,6 +184,7 @@ class ExecutionQueue:
 
         await db.flush()
         await db.refresh(job)
+        get_queue_notifier().notify()
 
         logger.info(
             "Job %s completed | exec_time=%dms",
@@ -233,6 +238,7 @@ class ExecutionQueue:
 
         await db.flush()
         await db.refresh(job)
+        get_queue_notifier().notify()
         return job
 
     async def rate_limit_job(
@@ -262,6 +268,7 @@ class ExecutionQueue:
 
         await db.flush()
         await db.refresh(job)
+        get_queue_notifier().notify()
 
         logger.info(
             "Job %s rate_limited | cooldown=%ds",
@@ -297,6 +304,7 @@ class ExecutionQueue:
         queue_state.total_cancelled += 1
 
         await db.flush()
+        get_queue_notifier().notify()
 
         logger.info("Job %s cancelled | was_status=%s", job.id, old_status)
         return True
@@ -322,6 +330,7 @@ class ExecutionQueue:
         job.status = STATUS_QUEUED
         await db.flush()
         await db.refresh(job)
+        get_queue_notifier().notify()
 
         logger.info("Job %s resumed to queued", job.id)
         return job
@@ -484,6 +493,7 @@ class ExecutionQueue:
 
         if count > 0:
             await db.flush()
+            get_queue_notifier().notify()
             logger.info("Retrying %d failed jobs for user %s", count, user_id)
 
         return count
@@ -497,6 +507,7 @@ class ExecutionQueue:
         state = await self._get_or_create_queue_state(db, user_id)
         state.paused = True
         await db.flush()
+        get_queue_notifier().notify()
         logger.info("Queue paused for user %s", user_id)
         return True
 
@@ -526,6 +537,7 @@ class ExecutionQueue:
             job.status = STATUS_QUEUED
 
         await db.flush()
+        get_queue_notifier().notify()
         logger.info(
             "Queue resumed for user %s, queued %d pending jobs",
             user_id, len(pending_jobs),

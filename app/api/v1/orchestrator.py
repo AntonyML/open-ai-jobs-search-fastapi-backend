@@ -9,10 +9,13 @@ Exposes monitoring and control endpoints:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+import logging
+
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.security import decode_access_token
 from app.schemas.orchestrator import (
     ExecutionJobOut,
     ModelListOut,
@@ -23,6 +26,9 @@ from app.schemas.orchestrator import (
 )
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.orchestrator import LLMOrchestrator
+from app.services.orchestrator.queue_notifier import get_queue_notifier
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/orchestrator", tags=["orchestrator"])
 
@@ -106,3 +112,66 @@ async def get_model_health(
     success rates, and error information.
     """
     return await orchestrator.get_model_health(db, user["sub"], provider)
+
+
+# ── WebSocket for real-time queue updates ───────────────────────────
+
+
+@router.websocket("/ws")
+async def queue_websocket(ws: WebSocket):
+    """WebSocket endpoint for real-time queue status updates.
+
+    Authentication: pass JWT token as query parameter (?token=...).
+    Once connected, the server pushes QueueStatus JSON whenever the
+    execution queue state changes.
+
+    The client does NOT need to send any messages — this is a one-way
+    stream of status updates.
+    """
+    # ── Authenticate via token query param ────────────────────────
+    token = ws.query_params.get("token", "")
+    if not token:
+        await ws.close(code=4001, reason="Missing token")
+        return
+
+    try:
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+        if not user_id:
+            await ws.close(code=4001, reason="Invalid token")
+            return
+    except Exception:
+        await ws.close(code=4001, reason="Invalid or expired token")
+        return
+
+    await ws.accept()
+
+    # ── Listen for queue changes and push updates ─────────────────
+    notifier = get_queue_notifier()
+    from app.db.session import async_session_factory
+
+    try:
+        # Send initial state immediately
+        async with async_session_factory() as db:
+            orchestrator = get_orchestrator()
+            status = await orchestrator.get_queue_status(db, user_id)
+            await ws.send_text(status.model_dump_json())
+
+        # Then wait for changes and push updates
+        while True:
+            await notifier.wait_for_change()
+
+            # Re-fetch and send the full status
+            async with async_session_factory() as db:
+                orchestrator = get_orchestrator()
+                try:
+                    status = await orchestrator.get_queue_status(db, user_id)
+                    await ws.send_text(status.model_dump_json())
+                except Exception as exc:
+                    logger.warning("WS queue fetch failed: %s", exc)
+                    continue
+
+    except WebSocketDisconnect:
+        logger.debug("WebSocket disconnected for user %s", user_id)
+    except Exception as exc:
+        logger.warning("WebSocket error for user %s: %s", user_id, exc)

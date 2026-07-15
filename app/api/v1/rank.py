@@ -34,7 +34,8 @@ async def trigger_rank(
 
 @router.get("/status/{job_id}")
 async def rank_status(job_id: str):
-    return rank_jobs.get(job_id) or {"detail": "Ranking job not found"}
+    result = await rank_jobs.get(job_id)
+    return result or {"detail": "Ranking job not found"}
 
 @router.post("/cancel/{job_id}")
 async def cancel_rank(job_id: str):
