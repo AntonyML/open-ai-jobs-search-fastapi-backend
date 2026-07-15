@@ -1,195 +1,84 @@
-# Open AI Jobs Search — FastAPI Backend
+# Career OS — FastAPI Backend
 
-Backend multi-proveedor de IA para búsqueda de empleos. Reimplementa como servicio Python el framework de `ai-job-search` (originalmente comandos de Claude Code).
+Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta un pipeline completo: desde el scraping de portales hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas y tracking de resultados.
 
-> **App en producción:** https://open-ai-jobs-search-fastapi.fly.dev/
+> **Inspirado en:** [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search)
+
+---
 
 ## Tabla de contenidos
 
 - [Stack](#stack)
+- [Arquitectura](#arquitectura)
+- [Pipeline completo](#pipeline-completo)
 - [Estructura](#estructura)
-- [Prerequisites](#prerequisites)
+- [Prerrequisitos](#prerrequisitos)
 - [Setup](#setup)
 - [Migraciones (Alembic)](#migraciones-alembic)
 - [Endpoints](#endpoints)
-- [Flujo de la API](#flujo-de-la-api--orden-recomendado-para-el-cliente)
+- [LLM Orchestrator](#llm-orchestrator)
+- [Drafter-Reviewer Pipeline](#drafter-reviewer-pipeline)
 - [Variables de entorno](#variables-de-entorno)
 - [Testing](#testing)
 - [Deployment](#deployment)
 - [Convenciones de diseño](#convenciones-de-diseño)
-- [Constraints](#constraints)
+
+---
 
 ## Stack
 
 - **FastAPI** (async) + **Pydantic v2** + **SQLAlchemy 2.0** (async, asyncpg)
-- **LiteLLM** — capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, LM Studio)
+- **LiteLLM** — capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, Groq, OpenRouter, LM Studio, Ollama)
+- **LLMOrchestrator** — sistema de colas, failover automático, rate limiting, health monitoring
 - **Supabase** (PostgreSQL) — Session Pooler o Direct Connection
 - **APScheduler** — scraping periódico
-- **Bun/TypeScript** scrapers heredados del repo fuente (invocados vía subprocess)
-- **LaTeX** (lualatex + xelatex) — generación de CV y cartas tailored
+- **Bun/TypeScript** scrapers (linkedin, jobindex, jobnet, jobdanmark, freehire, jobbank)
+- **LaTeX** (lualatex + xelatex) — generación de CV y cover letters tailored
 
-## Estructura
+---
+
+## Arquitectura
 
 ```
-FastAPI-backend/
-├── app/
-│   ├── main.py              # app factory: create_app()
-│   ├── core/                # config, settings, seguridad
-│   ├── llm/                 # adaptador LiteLLM
-│   ├── db/                  # SQLAlchemy models, session, alembic
-│   ├── schemas/             # Pydantic request/response
-│   ├── services/            # lógica de negocio (un módulo por skill)
-│   ├── external/            # scrapers Bun/TS + LaTeX heredados
-│   ├── api/
-│   │   ├── deps.py          # get_db, get_current_user, get_llm_provider
-│   │   └── v1/              # routers versionados
-│   └── exceptions.py        # excepciones de negocio + handlers
-├── tests/
-│   ├── unit/
-│   └── integration/
-├── alembic/                 # migraciones de base de datos
-├── pyproject.toml
-├── alembic.ini
-└── .env.example
+┌─────────────────────────────────────────────────────────────┐
+│                     LLMOrchestrator                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
+│  │ Provider │  │  Model   │  │  Queue   │  │  Checkpoint │  │
+│  │ Registry │  │ Registry │  │ Manager  │  │  Manager    │  │
+│  └──────────┘  └──────────┘  └──────────┘  └────────────┘  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
+│  │ Failover │  │ Cooldown │  │ Metrics  │                   │
+│  └──────────┘  └──────────┘  └──────────┘                   │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Services Layer                          │
+│  Scrape → Rank → Apply → Interview → Outcome → Upskill      │
+│  Expand → Verification → ATS Check → CV Cutter              │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Deterministic Analyzers                    │
+│  RankAnalyzer │ SkillLinter │ ContentGuard │ PDFVerifier     │
+│  SalaryLookup │ KeywordExtractor │ AtsChecker               │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Prerequisites
+### Principios arquitectónicos
 
-Además de Python 3.11+, esta app requiere dependencias del sistema para funcionalidad completa:
+1. **El LLM es un componente del pipeline, no el centro.** Todo lo que puede resolverse con algoritmos deterministas (keyword extraction, score normalization, ATS checks, skill linting, content validation) se implementa sin LLM.
 
-| Componente | Propósito | Instalación (local) | En Docker/Fly.io |
-|------------|-----------|---------------------|-------------------|
-| **Bun** | Ejecutar scrapers heredados (Bun/TS) | `npm install -g bun` | Instalado automáticamente en el build |
-| **LaTeX** (lualatex + xelatex) | Compilar CV y cartas tailored | TeX Live o MiKTeX | MiKTeX instalado vía apt en el contenedor |
-| **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com | Configurar `DATABASE_URL` como secret |
-| **LLM Provider** | API key para LiteLLM (Anthropic, OpenAI, etc.) | Variable en `.env` o vía `/providers/` | Configurar como secret o vía API |
+2. **Failover automático.** Si un proveedor responde 429, timeout o error, el orquestador cambia automáticamente al siguiente modelo/proveedor sin interrumpir la cola.
 
-> **Nota:** Sin Bun, el endpoint `/scrape/` no funcionará. Sin LaTeX, el endpoint `/apply/` no podrá generar PDFs. Sin Supabase, la app no tiene persistencia.
->
-> **Deploy en Fly.io:** Si deployas con el `Dockerfile` incluido, **no necesitás instalar Bun ni MiKTeX localmente** — el contenedor los instala automáticamente. Solo necesitás configurar los secrets (ver sección [Deployment](#deployment)).
+3. **Checkpoints persistentes.** Cada job se persiste en DB. Si el backend se reinicia, retoma desde el último checkpoint. Nunca desde cero.
 
-## Setup
+4. **Sanitización antes de validación.** Las respuestas del LLM se sanitizan (truncar arrays, trim strings, reparar JSON, llenar defaults) ANTES de pasarlas por Pydantic. Solo se rechazan respuestas irrecuperables.
 
-```bash
-# 1. Crear entorno virtual
-python -m venv .venv
-source .venv/bin/activate  # o .venv\Scripts\activate en Windows
+---
 
-# 2. Instalar dependencias Python
-pip install -e ".[dev]"
-
-# 3. Configurar variables de entorno
-cp .env.example .env
-# Editar .env con tu DATABASE_URL de Supabase y API keys
-
-# 4. Ejecutar migraciones
-alembic upgrade head
-
-# 5. Arrancar el servidor de desarrollo
-uvicorn app.main:create_app --factory --reload
-```
-
-El servidor se levanta en `http://127.0.0.1:8000`.
-Healthcheck: `GET http://127.0.0.1:8000/api/v1/health`
-
-## Migraciones (Alembic)
-
-```bash
-alembic revision --autogenerate -m "descripción del cambio"  # generar migración
-alembic upgrade head                                          # aplicar migraciones
-alembic history                                               # ver historial
-```
-
-## Endpoints
-
-Todos los endpoints están versionados bajo `/api/v1/`. La autenticación (cuando se requiera) se provee vía `api/deps.py` (`get_current_user`).
-
-### Health
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | `/api/v1/health` | Liveness probe |
-
-### Setup — Perfil del candidato
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/setup/profile` | Crear perfil candidato |
-| GET | `/api/v1/setup/profile` | Obtener perfil |
-| PATCH | `/api/v1/setup/profile` | Actualizar perfil |
-| DELETE | `/api/v1/setup/profile` | Eliminar perfil |
-| POST | `/api/v1/setup/profile/complete` | Marcar perfil como completo |
-| GET | `/api/v1/setup/behavioral-profile` | Obtener perfil conductual |
-| PUT | `/api/v1/setup/behavioral-profile` | Actualizar perfil conductual |
-| GET | `/api/v1/setup/star-examples` | Listar ejemplos STAR |
-| POST | `/api/v1/setup/star-examples` | Crear ejemplo STAR |
-| DELETE | `/api/v1/setup/star-examples/{example_id}` | Eliminar ejemplo STAR |
-
-### Scrape — Búsqueda de empleos
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/scrape/` | Ejecutar scraping (portal + query) |
-| GET | `/api/v1/scrape/runs` | Listar corridas de scraping |
-| GET | `/api/v1/scrape/jobs` | Listar jobs encontrados |
-| GET | `/api/v1/scrape/jobs/{job_id}` | Obtener detalle de un job |
-
-### Rank — Evaluación de fit + shortlist
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/rank/` | Ejecutar ranking (focus_area, re_rank, top_n) |
-| GET | `/api/v1/rank/jobs` | Listar jobs rankeados (filtros: min_score, verdict) |
-| GET | `/api/v1/rank/jobs/{job_id}/evaluation` | Obtener evaluación de un job |
-
-### Apply — Generación de CV/carta tailored
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/apply/` | Generar aplicación (CV + carta LaTeX) |
-| GET | `/api/v1/apply/{application_id}` | Obtener aplicación por ID |
-| GET | `/api/v1/apply/` | Listar aplicaciones |
-
-### Interview — Preparación de entrevistas
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/interview/` | Generar prep de entrevista |
-| GET | `/api/v1/interview/{prep_id}` | Obtener prep por ID |
-| GET | `/api/v1/interview/` | Listar preps |
-
-### Outcome — Registro de resultados
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/outcome/` | Registrar outcome (estado de aplicación) |
-| PATCH | `/api/v1/outcome/{outcome_id}` | Actualizar outcome |
-| GET | `/api/v1/outcome/{outcome_id}` | Obtener outcome por ID |
-| GET | `/api/v1/outcome/` | Listar outcomes |
-| GET | `/api/v1/outcome/tracker/rows` | Filas del tracker (CSV-like) |
-
-### Expand — Expansión de competencias
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/expand/` | Expandir competencias (CV, LinkedIn, diplomas, refs, GitHub) |
-| GET | `/api/v1/expand/{expansion_id}` | Obtener expansión por ID |
-| GET | `/api/v1/expand/` | Listar expansiones |
-
-### Upskill — Plan de aprendizaje
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/upskill/` | Ejecutar análisis upskill (aggregate o targeted) |
-| GET | `/api/v1/upskill/{upskill_id}` | Obtener análisis por ID |
-| GET | `/api/v1/upskill/` | Listar análisis |
-
-### Add-portal / Add-template / Reset — Configuración
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| POST | `/api/v1/add-portal/` | Registrar nuevo portal de scraping |
-| GET | `/api/v1/add-portal/{skill_name}` | Obtener portal por skill |
-| GET | `/api/v1/add-portal/` | Listar portales |
-| POST | `/api/v1/add-template/` | Registrar template LaTeX |
-| POST | `/api/v1/add-template/switch` | Cambiar template activo |
-| GET | `/api/v1/add-template/{template_type}/{name}` | Obtener template |
-| GET | `/api/v1/add-template/` | Listar templates |
-| POST | `/api/v1/reset/` | Resetear datos del usuario |
-
-## Flujo de la API — Orden recomendado para el cliente
-
-La API está diseñada como un pipeline secuencial: cada fase produce datos que consume la siguiente. Un cliente que use la app por primera vez debe seguir este orden:
+## Pipeline completo
 
 ```mermaid
 flowchart LR
@@ -197,313 +86,521 @@ flowchart LR
     B --> C[2. Scrape<br/>Búsqueda de jobs]
     C --> D[3. Rank<br/>Evaluación de fit]
     D --> E[4. Apply<br/>CV + carta tailored]
-    E --> F[5. Interview<br/>Prep entrevista]
-    F --> G[6. Outcome<br/>Registro resultados]
     D --> H[7. Upskill<br/>Plan aprendizaje]
     D --> I[8. Expand<br/>Expansión competencias]
+    E --> F[5. Interview<br/>Prep entrevista]
+    F --> G[6. Outcome<br/>Registro resultados]
+    E --> J[9. Verify<br/>Checklist ATS + calidad]
 ```
 
-### Paso 0 — Configurar Proveedor LLM (¡OBLIGATORIO ANTES DE TODO!)
+### Fase 0 — Provider Setup
+Cada usuario configura su propio proveedor LLM (API key + modelo). Las credenciales se cifran con Fernet y se almacenan por usuario.
 
-**Antes de crear el perfil o hacer cualquier operación, debes configurar tu proveedor LLM y API key.** Cada usuario puede usar su propio proveedor y modelo.
+### Fase 1 — Setup (perfil candidato)
+Perfil completo: datos personales, experiencia, educación, skills, **perfil conductual** (DISC, fortalezas, áreas de crecimiento), y **ejemplos STAR** para entrevistas.
 
-**Endpoints disponibles en `/api/v1/providers/`:**
+### Fase 2 — Scrape
+Scraping multi-portal vía scrapers Bun/TS. Deduplicación automática por `(portal, external_id)`. Los scrapers corren en paralelo via `asyncio.gather`.
 
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| `GET` | `/providers/` | Catálogo de proveedores conocidos (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama) |
-| `POST` | `/providers/` | Guardar credencial: `{provider, api_key, api_base?, model?}` |
-| `GET` | `/providers/me` | Ver tus proveedores configurados (sin API keys) |
-| `GET` | `/providers/me/active` | Ver proveedor activo actual |
-| `PUT` | `/providers/active` | Cambiar proveedor activo: `{provider: "anthropic"}` |
-| `PATCH` | `/providers/{provider}` | Actualizar credencial parcial |
-| `DELETE` | `/providers/{provider}` | Eliminar credencial |
+### Fase 3 — Rank (evaluación de fit)
+Evaluación multi-dimensión usando el **RankAnalyzer** determinista:
+- **Técnico**: keyword overlap, experiencia requerida, skills matching
+- **Experiencia**: años, seniority, industrias relevantes
+- **Comportamental**: alineación con perfil conductual
+- **Carrera**: salario (si hay datos), ubicación, modalidad (remote/hybrid)
+- **Fit general**: combinación ponderada + qualitative reasoning del LLM
 
-**Ejemplo — Configurar Anthropic (Claude):**
-```bash
-curl -X POST "http://localhost:8000/api/v1/providers/" \
-  -H "Authorization: Bearer <tu_jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "anthropic", "api_key": "sk-ant-...", "model": "claude-sonnet-4-20250514"}'
-```
+### Fase 4 — Apply (generación de documentos)
+**Pipeline Drafter-Reviewer-Revise** de 3 etapas:
+1. **Drafter**: genera CV + cover letter en LaTeX adaptados al posting específico
+2. **Reviewer**: agente con contexto fresco que investiga la empresa y critica los drafts buscando keywords faltantes, framing débil, claims inventados, lenguaje genérico
+3. **Revise**: el drafter recibe el feedback y corrige
 
-**Ejemplo — Configurar NVIDIA NIM:**
-```bash
-curl -X POST "http://localhost:8000/api/v1/providers/" \
-  -H "Authorization: Bearer <tu_jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "nvidia_nim", "api_key": "nvapi-...", "api_base": "https://integrate.api.nvidia.com/v1", "model": "meta/llama-3.1-70b-instruct"}'
-```
+Luego de la revisión:
+- **CV Cutter**: si el CV supera 2 páginas, corta bullets por relevancia (keyword overlap + unicidad + referencias en cover letter)
+- **Compilación**: `lualatex` para CV, `xelatex` para cover letter, con verificación de páginas y orphans
+- **ATS Check**: verifica parseabilidad del PDF (sin `(cid:*)` markers, keyword coverage ≥70%, orden de lectura correcto)
+- **Verification Checklist**: 10+ checks deterministas + LLM para consistencia y claims fabricados
 
-**Ejemplo — Configurar LM Studio (local, sin API key):**
-```bash
-curl -X POST "http://localhost:8000/api/v1/providers/" \
-  -H "Authorization: Bearer <tu_jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "lm_studio", "api_base": "http://localhost:1234/v1", "model": "local-model"}'
-```
+### Fase 5 — Interview (preparación)
+Prep pack completo: research de empresa, preguntas probables mapeadas a ejemplos STAR del candidato, bridge answers para gaps de experiencia, **mock interview** (chat interactivo donde el LLM juega el rol del entrevistador).
 
-**Luego activar el proveedor:**
-```bash
-curl -X PUT "http://localhost:8000/api/v1/providers/active" \
-  -H "Authorization: Bearer <tu_jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "anthropic"}'
-```
+### Fase 6 — Outcome (tracking)
+Registro de resultados: entrevista, oferta, rechazo, silencio. Calibración del fit framework basada en qué realmente consiguió entrevistas.
 
-> **Nota:** Las API keys se guardan **cifradas (Fernet)** en la BD. El backend las descifra automáticamente al hacer llamadas al LLM. Cada usuario tiene sus propias credenciales aisladas.
+### Fase 7 — Upskill (análisis de gaps)
+4-pass analysis: hard gaps → synthesis → heatmap → learning plan. Compara skills del perfil contra los requerimientos de todos los jobs rankeados.
+
+### Fase 8 — Expand (enriquecimiento de perfil)
+Escanea fuentes públicas (GitHub, portfolio, LinkedIn) para descubrir competencias no explícitas en el CV.
 
 ---
 
-### Paso 1 — Setup (obligatorio, primero)
-El cliente **debe** crear su perfil de candidato antes de cualquier otra operación. Sin perfil, los endpoints posteriores fallan con `ProfileIncompleteError`.
+## Estructura
 
-1. `POST /api/v1/setup/profile` — crear perfil (nombre, experiencia, skills, educación, etc.)
-2. `POST /api/v1/setup/profile/complete` — marcar como completo (habilita el resto del pipeline)
-3. Opcional: `PUT /api/v1/setup/behavioral-profile` — perfil conductual para ranking más preciso
-4. Opcional: `POST /api/v1/setup/star-examples` — ejemplos STAR para entrevistas
+```
+FastAPI-backend/
+├── app/
+│   ├── main.py                    # app factory: create_app()
+│   ├── core/                      # config, settings, seguridad, scheduler
+│   ├── llm/                       # adaptador LiteLLM
+│   ├── db/
+│   │   ├── models.py              # SQLAlchemy models (~30 tablas)
+│   │   └── session.py             # async engine + session factory
+│   ├── schemas/                   # Pydantic v2 request/response
+│   ├── services/                  # Lógica de negocio (~20 módulos)
+│   │   ├── rank.py                # Ranking + RankAnalyzer determinista
+│   │   ├── apply.py               # Drafter-Reviewer-Revise pipeline
+│   │   ├── interview.py           # Prep + mock interview
+│   │   ├── outcome.py             # Tracking + fit calibration
+│   │   ├── upskill.py             # Skill gap analysis
+│   │   ├── expand.py              # Perfil enrichment
+│   │   ├── verification.py        # Verification checklist
+│   │   ├── ats_check.py           # ATS parseability
+│   │   ├── cv_cutter.py           # Relevance-weighted trimming
+│   │   ├── pdf_compiler.py        # LaTeX compilation loop
+│   │   ├── pipeline_reset.py      # Clean slate reset
+│   │   ├── provider_credentials.py # Fernet-encrypted creds
+│   │   ├── provider_models.py     # Model catalog per provider
+│   │   ├── salary/                # Salary benchmarking
+│   │   ├── scrape.py              # Web scraping orchestration
+│   │   └── setup.py               # Candidate profile management
+│   ├── utils/                     # Utility tools
+│   │   ├── pdf_verifier.py        # ATS verify wrapper
+│   │   ├── skill_linter.py        # Skill validation (~120 known skills)
+│   │   └── __init__.py
+│   ├── middleware/
+│   │   └── content_guard.py       # PII detection in LLM outputs
+│   ├── external/                  # Scrapers Bun/TS + LaTeX heredados
+│   ├── api/
+│   │   ├── deps.py                # get_db, get_current_user
+│   │   └── v1/                    # Routers versionados (~15 routers)
+│   └── exceptions.py              # Excepciones centralizadas
+├── tests/
+│   ├── unit/                      # ~367 tests (SQLite in-memory + mocks)
+│   └── integration/               # Tests de integración
+├── alembic/                       # Migraciones DB
+├── pyproject.toml
+└── Dockerfile                     # Multi-stage (builder + runtime con MiKTeX)
+```
 
-### Paso 2 — Scrape (buscar empleos)
-Una vez con perfil, el cliente busca jobs en uno o varios portales:
+---
 
-- `POST /api/v1/scrape/` con `{ portal, query, location? }` — lanza scraping (invoca scrapers Bun/TS por subprocess)
-- `GET /api/v1/scrape/jobs` — consulta los jobs encontrados (status `new`)
+## Prerrequisitos
 
-### Paso 3 — Rank (evaluar fit)
-Con jobs en estado `new`, el cliente los evalúa:
+| Componente | Propósito | Instalación |
+|------------|-----------|-------------|
+| **Python 3.11+** | Runtime | `python.org` o `pyenv` |
+| **Bun** | Ejecutar scrapers TS heredados | `npm install -g bun` |
+| **LaTeX** (lualatex + xelatex) | Compilar CV y cover letters | MiKTeX o TeX Live |
+| **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com |
+| **LLM Provider** | API key (Anthropic, OpenAI, NVIDIA, Groq, OpenRouter, etc.) | Según provider |
 
-- `POST /api/v1/rank/` con `{ focus_area?, re_rank?, top_n? }` — el LLM evalúa cada job (technical, experience, behavioral, career) y arma un shortlist
-- `GET /api/v1/rank/jobs?min_score=&verdict=` — filtra el shortlist
-- Los jobs pasan a status `ranked` con `rank_score` y `rank_verdict`
+---
 
-### Paso 4 — Apply (generar CV/carta)
-Para cada job del shortlist que el cliente quiera aplicar:
+## Setup
 
-- `POST /api/v1/apply/` con `{ job_posting_id }` — genera CV + carta tailored en LaTeX (lualatex/xelatex), optimizado ATS
-- `GET /api/v1/apply/{application_id}` — descarga/recupera la aplicación generada
+```bash
+# 1. Entorno virtual
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-### Paso 5 — Interview (preparar entrevista)
-Cuando el cliente consigue una entrevista:
+# 2. Instalar dependencias
+pip install -e ".[dev]"
 
-- `POST /api/v1/interview/` con `{ application_id }` — genera prep con preguntas probables, brief de consistencia y ejemplos STAR
-- `GET /api/v1/interview/{prep_id}` — recupera la prep
+# 3. Variables de entorno
+cp .env.example .env
+# Editar DATABASE_URL, JWT_SECRET_KEY y API keys
 
-### Paso 6 — Outcome (registrar resultado)
-Después de la entrevista, el cliente registra el resultado:
+# 4. Migraciones
+alembic upgrade head
 
-- `POST /api/v1/outcome/` — registra estado (rejected, offer, etc.)
-- `PATCH /api/v1/outcome/{outcome_id}` — actualiza estado
-- `GET /api/v1/outcome/tracker/rows` — vista tipo tracker de todas las aplicaciones
+# 5. Servidor de desarrollo
+uvicorn app.main:create_app --factory --reload
+```
 
-### Pasos opcionales (paralelos a Rank)
-- **Upskill** (`POST /api/v1/upskill/`): análisis de gaps de skills y plan de aprendizaje. Modo `aggregate` (todos los jobs rankeados) o `targeted` (un job específico).
-- **Expand** (`POST /api/v1/expand/`): expande competencias del candidato escaneando CV, LinkedIn, diplomas, referencias y GitHub.
+Servidor en `http://127.0.0.1:8000`. Healthcheck: `GET /api/v1/health`
 
-### Configuración (independiente del flujo)
-- `POST /api/v1/add-portal/` — registrar nuevos portales de scraping
-- `POST /api/v1/add-template/` — registrar/cambiar templates LaTeX
-- `POST /api/v1/reset/` — resetear todos los datos del usuario (empezar de cero)
+---
+
+## Migraciones (Alembic)
+
+```bash
+alembic revision --autogenerate -m "descripción"
+alembic upgrade head
+alembic history
+```
+
+---
+
+## Endpoints
+
+### Health
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/health` | Liveness probe |
+
+### Auth
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/auth/register` | Registro de usuario |
+| POST | `/api/v1/auth/login` | Login (devuelve JWT) |
+
+### Providers — Configuración LLM
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/providers/` | Catálogo de proveedores conocidos |
+| POST | `/api/v1/providers/` | Guardar credencial cifrada |
+| GET | `/api/v1/providers/me` | Proveedores del usuario |
+| GET | `/api/v1/providers/me/active` | Proveedor activo actual |
+| PUT | `/api/v1/providers/active` | Cambiar proveedor activo |
+| PATCH | `/api/v1/providers/{provider}` | Actualizar credencial parcial |
+| DELETE | `/api/v1/providers/{provider}` | Eliminar credencial |
+
+### Setup — Perfil del candidato
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/setup/profile` | Crear perfil |
+| GET | `/api/v1/setup/profile` | Obtener perfil |
+| PATCH | `/api/v1/setup/profile` | Actualizar perfil |
+| DELETE | `/api/v1/setup/profile` | Eliminar perfil |
+| POST | `/api/v1/setup/profile/complete` | Marcar completo |
+| GET | `/api/v1/setup/behavioral-profile` | Perfil conductual (DISC, fortalezas) |
+| PUT | `/api/v1/setup/behavioral-profile` | Actualizar perfil conductual |
+| GET | `/api/v1/setup/star-examples` | Listar ejemplos STAR |
+| POST | `/api/v1/setup/star-examples` | Crear ejemplo STAR |
+| DELETE | `/api/v1/setup/star-examples/{id}` | Eliminar ejemplo STAR |
+
+### Scrape — Búsqueda de empleos
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/scrape/` | Ejecutar scraping multi-portal |
+| GET | `/api/v1/scrape/runs` | Historial de corridas |
+| GET | `/api/v1/scrape/jobs` | Jobs encontrados (filtros: status, portal) |
+| GET | `/api/v1/scrape/jobs/{job_id}` | Detalle de un job |
+
+### Rank — Evaluación de fit
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/rank/` | Ejecutar ranking (focus_area, re_rank, top_n) |
+| GET | `/api/v1/rank/jobs` | Jobs rankeados (filtros: min_score, verdict) |
+| GET | `/api/v1/rank/jobs/{job_id}/evaluation` | Evaluación completa de un job |
+
+### Apply — Generación de CV/carta
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/apply/` | Generar aplicación (pipeline drafter-reviewer) |
+| GET | `/api/v1/apply/{application_id}` | Obtener aplicación por ID |
+| GET | `/api/v1/apply/` | Listar aplicaciones |
+| GET | `/api/v1/apply/{application_id}/status` | Estado del pipeline de generación |
+| POST | `/api/v1/apply/{application_id}/verify` | Ejecutar verification checklist |
+| GET | `/api/v1/apply/{application_id}/verify` | Resultado de verificación |
+
+### Interview — Preparación de entrevistas
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/interview/` | Generar prep pack |
+| GET | `/api/v1/interview/{prep_id}` | Obtener prep por ID |
+| GET | `/api/v1/interview/` | Listar preps |
+| POST | `/api/v1/interview/{prep_id}/mock` | Iniciar mock interview |
+| POST | `/api/v1/interview/{prep_id}/mock` | Enviar respuesta (pasa la conversación) |
+
+### Outcome — Registro de resultados
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/outcome/` | Registrar outcome |
+| PATCH | `/api/v1/outcome/{outcome_id}` | Actualizar outcome |
+| GET | `/api/v1/outcome/{outcome_id}` | Obtener outcome |
+| GET | `/api/v1/outcome/` | Listar outcomes |
+| GET | `/api/v1/outcome/tracker/rows` | Filas del tracker (CSV-like) |
+
+### Expand — Expansión de competencias
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/expand/` | Expandir competencias (CV, LinkedIn, diplomas, GitHub) |
+| GET | `/api/v1/expand/{expansion_id}` | Obtener expansión por ID |
+| GET | `/api/v1/expand/` | Listar expansiones |
+
+### Upskill — Plan de aprendizaje
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/upskill/` | Ejecutar análisis (aggregate o targeted) |
+| GET | `/api/v1/upskill/{upskill_id}` | Obtener análisis por ID |
+| GET | `/api/v1/upskill/` | Listar análisis |
+
+### Salary — Benchmarking salarial
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/salary/data` | Cargar datos de salario (JSON o Excel) |
+| GET | `/api/v1/salary/data` | Obtener datos de salario del usuario |
+| DELETE | `/api/v1/salary/data` | Eliminar datos de salario |
+
+### Pipeline Reset
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| DELETE | `/api/v1/pipeline-reset` | Resetear pipeline (borra jobs, runs, métricas) |
+
+### Orchestrator — Monitoreo y control
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/orchestrator/status` | Estado general del orquestador |
+| GET | `/api/v1/orchestrator/providers` | Estado de todos los proveedores |
+| POST | `/api/v1/orchestrator/providers/{provider}/toggle` | Habilitar/deshabilitar proveedor |
+| GET | `/api/v1/orchestrator/queue` | Estado de la cola de ejecución |
+| POST | `/api/v1/orchestrator/pause` | Pausar cola |
+| POST | `/api/v1/orchestrator/resume` | Reanudar cola |
+| POST | `/api/v1/orchestrator/cancel/{job_id}` | Cancelar job |
+| POST | `/api/v1/orchestrator/retry/{job_id}` | Reintentar job fallido |
+| POST | `/api/v1/orchestrator/clear` | Limpiar cola |
+
+### Configuración
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/add-portal/` | Registrar portal de scraping |
+| GET | `/api/v1/add-portal/` | Listar portales |
+| POST | `/api/v1/add-template/` | Registrar template LaTeX |
+| POST | `/api/v1/add-template/switch` | Cambiar template activo |
+| GET | `/api/v1/add-template/` | Listar templates |
+| POST | `/api/v1/reset/` | Resetear datos del usuario (requiere confirmación) |
+
+---
+
+## LLM Orchestrator
+
+El orchestrator es el corazón del sistema de ejecución. Reemplaza las llamadas directas a LiteLLM.
+
+### Provider Registry
+
+Cada proveedor tiene:
+- **status**: `healthy`, `degraded`, `down`, `disabled`
+- **priority**: orden de preferencia (1 = más preferido)
+- **cooldown_until**: timestamp de cuándo se desbloquea
+- **last_latency**: última latencia en ms
+- **success_rate**: ratio de éxito (0.0 - 1.0)
+- **429_count**: contador de rate limits
+- **timeout_count**: contador de timeouts
+- **health_score**: score compuesto (0-100)
+
+### Model Registry
+
+Cada modelo tiene:
+- **state**: `READY`, `BUSY`, `COOLDOWN`, `DISABLED`
+- **priority**: dentro del mismo proveedor
+- **cost**: costo por 1M tokens
+- **context**: tamaño de contexto máximo
+- **average_latency**: latencia promedio
+- **average_success**: tasa de éxito promedio
+
+### Failover automático
+
+```
+429 recibido
+  → Leer Retry-After o exponential backoff
+  → Marcar modelo en COOLDOWN
+  → Intentar: mismo proveedor → mismo proveedor otro modelo
+    → otro proveedor mismo modelo → siguiente proveedor
+  → Pausar cola solo si ningún modelo disponible
+```
+
+### Queue states
+
+`pending` → `queued` → `running` → `retrying` → `rate_limited` → `cooling_down` → `completed` | `failed` | `cancelled` | `skipped`
+
+### Concurrencia
+
+Configurable (2, 4, 8 workers). Semaphore-based. Respeta rate limits por proveedor.
+
+---
+
+## Drafter-Reviewer Pipeline
+
+El pipeline de 3 etapas para generación de documentos:
+
+```
+Job Posting + Candidate Profile
+        │
+        ▼
+┌───────────────────┐
+│    STAGE 1        │
+│    DRAFT          │
+│                   │
+│  Llama al LLM     │
+│  para generar     │
+│  CV + cover       │
+│  letter en LaTeX  │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│    STAGE 2        │
+│    REVIEW         │
+│                   │
+│  Llama SEPARADA   │
+│  (sin contexto    │
+│  del draft previo)│
+│                   │
+│  - Keywords       │
+│    faltantes      │
+│  - Claims         │
+│    inventados     │
+│  - Framing débil  │
+│  - Lenguaje       │
+│    genérico       │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│    STAGE 3        │
+│    REVISE         │
+│                   │
+│  Draft original + │
+│  feedback del     │
+│  reviewer         │
+│                   │
+│  Genera versión   │
+│  corregida        │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│    POST-REVISE    │
+│                   │
+│  - CV Cutter      │
+│    (≤2 páginas)   │
+│  - Compilación    │
+│    LaTeX          │
+│  - ATS Check      │
+│  - Verification   │
+│    Checklist      │
+└───────────────────┘
+```
+
+### Verification Checklist (~10 checks)
+
+**Deterministas:**
+- Nombre del candidato en el CV ✅
+- Email literal en el CV (no solo ícono) ✅
+- Rol del posting en el profile statement ✅
+- Empresa en la cover letter ✅
+- Fechas en formato consistente ✅
+- LaTeX balanceado (mismo número de `{` y `}`) ✅
+- Sin placeholders `[YOUR_NAME]` sin reemplazar ✅
+- Sin `(cid:*)` markers en PDF ✅
+- Keywords del posting ≥70% presentes en CV ✅
+
+**Con LLM (1 llamada al final):**
+- Profile statement específico al rol (no genérico)
+- Sin claims fabricados
+- Tono consistente entre CV y cover letter
+
+---
 
 ## Variables de entorno
 
-Todas las variables se cargan desde un archivo `.env` (ver `.env.example`) o desde el entorno del sistema. En producción (Fly.io) se configuran con `flyctl secrets set`.
-
 | Variable | Requerida | Default | Descripción |
 |----------|-----------|---------|-------------|
-| `DATABASE_URL` | ✅ | — | URL de PostgreSQL (asyncpg). Usar **Session Pooler** de Supabase, no Transaction Pooler (rompe prepared statements). |
-| `JWT_SECRET_KEY` | ✅ | `change-me` | Clave de firma JWT. En prod debe ser aleatoria (≥64 chars). |
-| `JWT_ALGORITHM` | — | `HS256` | Algoritmo de firma JWT. |
-| `JWT_EXPIRE_MINUTES` | — | `1440` | Expiración del token JWT (24 h por defecto). |
-| `LLM_DEFAULT_PROVIDER` | — | `anthropic` | Proveedor LLM por defecto (`anthropic`, `openai`, `nvidia_nim`, `lm_studio`, `ollama`). |
-| `ANTHROPIC_API_KEY` | — | — | Fallback si no hay credencial cifrada en DB. |
-| `OPENAI_API_KEY` | — | — | Fallback si no hay credencial cifrada en DB. |
-| `NVIDIA_NIM_API_KEY` | — | — | Fallback si no hay credencial cifrada en DB. |
-| `LM_STUDIO_API_BASE` | — | `http://localhost:1234/v1` | URL base de LM Studio local. |
-| `SCRAPE_INTERVAL_HOURS` | — | `6` | Intervalo del scheduler de scraping automático. |
-| `APP_ENV` | — | `development` | Entorno (`development` / `production`). |
-| `LOG_LEVEL` | — | `INFO` | Nivel de logging (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
-| `CORS_ORIGINS` | — | `["http://localhost:3000"]` | Lista JSON de orígenes permitidos para CORS. |
-| `LATEX_BIN_DIR` | — | `None` | Directorio con binarios LaTeX. `None` = usar PATH del sistema. En prod (Linux/MiKTeX apt): `/usr/bin`. En Windows/MiKTeX Portable: `app/external/latex/miktex-portable/miktex/bin/x64`. |
+| `DATABASE_URL` | ✅ | — | PostgreSQL async (`postgresql+asyncpg://...`) |
+| `JWT_SECRET_KEY` | ✅ | `change-me` | Firma JWT (≥64 chars en prod) |
+| `JWT_ALGORITHM` | — | `HS256` | Algoritmo JWT |
+| `JWT_EXPIRE_MINUTES` | — | `1440` | Expiración JWT (24h) |
+| `APP_ENV` | — | `development` | `development` / `production` |
+| `LOG_LEVEL` | — | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `CORS_ORIGINS` | — | `["http://localhost:3000"]` | Orígenes CORS permitidos |
+| `LATEX_BIN_DIR` | — | `None` | Directorio de binarios LaTeX |
+| `SCRAPE_INTERVAL_HOURS` | — | `6` | Intervalo del scheduler |
+| `ORCHESTRATOR_MAX_WORKERS` | — | `4` | Workers concurrentes del orquestador |
 
-> **Nota sobre API keys:** Las API keys de los proveedores LLM **no deben ir en `.env`** en producción. Se registran desde el front vía `POST /api/v1/providers/` y se guardan **cifradas (Fernet)** en la BD por usuario. Las variables de `.env` son solo fallback.
+> Las API keys de proveedores LLM se registran vía API (`POST /api/v1/providers/`) y se almacenan **cifradas con Fernet** en DB por usuario. No van en `.env`.
+
+---
 
 ## Testing
 
 ```bash
-# Tests unitarios
+# Tests unitarios (SQLite in-memory, sin dependencias externas)
 pytest tests/unit/ -v
 
-# Tests de integración (requieren DB de test configurada)
+# Tests de integración
 pytest tests/integration/ -v
 
-# Todos los tests
+# Todos los tests (~367)
 pytest -v
 
 # Con coverage
 pytest --cov=app --cov-report=term-missing
+
+# Módulo específico
+pytest tests/unit/test_rank.py -v --tb=short
 ```
+
+---
 
 ## Deployment
 
-La app está configurada para deployar en **Fly.io** con un `Dockerfile` multi-stage (builder + runtime) que instala **MiKTeX** vía apt para compilar LaTeX en el contenedor.
-
-### Arquitectura del Dockerfile
-
-```mermaid
-flowchart LR
-    subgraph Stage1[Stage 1: Builder]
-        B1[python:3.11-slim-bookworm]
-        B2[Instala Bun]
-        B3[Instala deps Python]
-    end
-    subgraph Stage2[Stage 2: Runtime]
-        R1[python:3.11-slim-bookworm]
-        R2[Instala MiKTeX vía apt]
-        R3[Copia site-packages + Bun]
-        R4[Copia código de la app]
-        R5[Usuario no-root appuser]
-    end
-    B3 --> R3
-    B2 --> R3
-```
-
-**Notas clave del Dockerfile:**
-- **Imagen base fijada a `python:3.11-slim-bookworm`** (Debian 12). No usar `python:3.11-slim` a secas porque ahora resuelve a Debian 13 (trixie), y el repositorio apt de MiKTeX solo soporta `bookworm`.
-- **MiKTeX** se instala vía apt desde `https://miktex.org/download/debian bookworm universe`. La clave GPG se obtiene del keyserver de Ubuntu (`hkp://keyserver.ubuntu.com:80`, key ID `D6BC243565B2087BC3F897C9277A7293F59E4889`) — la URL `key.asc` de MiKTeX está deprecada (404).
-- **`LATEX_BIN_DIR=/usr/bin`** en producción (donde MiKTeX apt instala los binarios). Los binarios en Linux **no tienen extensión `.exe`** (a diferencia de MiKTeX Portable en Windows).
-- La app corre como usuario no-root `appuser`.
-
-### Deploy con Fly.io
+La app deploya en **Fly.io** con Docker multi-stage (instala MiKTeX vía apt del repositorio de Debian bookworm).
 
 ```bash
-# 1. Instalar flyctl (si no lo tenés)
-#    Windows:  iwr https://fly.io/install.ps1 -useb | iex
-#    macOS:    brew install flyctl
-#    Linux:    curl -L https://fly.io/install.sh | sh
-
-# 2. Autenticarse
-flyctl auth login
-
-# 3. Configurar secrets (variables sensibles de producción)
 flyctl secrets set DATABASE_URL="postgresql+asyncpg://..." \
     JWT_SECRET_KEY="$(openssl rand -hex 32)" \
-    ANTHROPIC_API_KEY="sk-ant-..." \
     CORS_ORIGINS='["https://tu-frontend.com"]'
 
-# 4. Deployar
 flyctl deploy
-
-# 5. Abrir la app
-flyctl open
-# → https://open-ai-jobs-search-fastapi.fly.dev/
 ```
 
-### Configuración de `fly.toml`
+Ver `fly.toml` para configuración de máquina (1GB RAM mínimo por MiKTeX + LaTeX).
 
-El archivo `fly.toml` ya está configurado:
+### MiKTeX Portable (para compilar LaTeX sin instalación global)
 
-| Setting | Valor | Notas |
-|---------|-------|-------|
-| `app` | `open-ai-jobs-search-fastapi` | Nombre de la app en Fly.io |
-| `primary_region` | `iad` | Región (Washington DC). Cambiar si tu audiencia es otra. |
-| `internal_port` | `8000` | Puerto interno del contenedor |
-| `auto_stop_machines` | `false` | La app no se detiene por inactividad (scheduler de scraping) |
-| `auto_start_machines` | `true` | Arranca automáticamente si llega tráfico |
-| `min_machines_running` | `1` | Mínimo 1 máquina corriendo |
-| `memory` | `1gb` | MiKTeX + LaTeX requieren RAM suficiente |
-| `LATEX_BIN_DIR` | `/usr/bin` | Ruta de binarios MiKTeX en el contenedor |
+El endpoint `/apply` compila CV y cover letter con `lualatex` (CV) y `xelatex` (cover). Para funcionar en cualquier entorno sin instalar LaTeX globalmente:
 
-### Verificar el deploy
+1. **Descargar** el instalador portable desde: https://miktex.org/howto/portable-edition
+2. **Renombrar** a `miktex-portable.exe`
+3. **Colocar** en: `MikTex/miktex-portable.exe` (raíz del proyecto)
+4. **Ejecutar** — se extrae en `app/external/latex/miktex-portable/`
+5. **Configurar** en `.env`: `LATEX_BIN_DIR=app/external/latex/miktex-portable/miktex/bin/x64`
 
+**Verificación:**
 ```bash
-# Health check
-curl https://open-ai-jobs-search-fastapi.fly.dev/api/v1/health
-# → {"status":"ok","version":"0.1.0"}
-
-# Ver logs
-flyctl logs
-
-# Ver máquinas
-flyctl machines list
-
-# Abrir shell en el contenedor
-flyctl ssh console
+python scripts/check_miktex.py
+# → OK: MiKTeX Portable listo para usar
 ```
 
-### Troubleshooting del deploy
+Los binarios de MiKTeX Portable **no se commitean** (~150 MB, en `.gitignore`).
 
-| Problema | Causa | Solución |
-|----------|-------|----------|
-| `error building: failed to solve` en `apt-get install miktex` | Imagen base usa Debian 13 (trixie) pero MiKTeX solo soporta bookworm | Fijar imagen a `python:3.11-slim-bookworm` |
-| `curl: (22) The requested URL returned error: 404` al obtener `key.asc` | MiKTeX deprecó la URL `key.asc` | Obtener clave del keyserver de Ubuntu (ver Dockerfile) |
-| `gpg: no valid OpenPGP data found` | La descarga de la clave falló | Verificar conectividad al keyserver `hkp://keyserver.ubuntu.com:80` |
-| LaTeX no compila en el contenedor | `LATEX_BIN_DIR` apunta a ruta Windows | Usar `LATEX_BIN_DIR=/usr/bin` en `fly.toml` |
-| `FileNotFoundError: lualatex.exe` | El código busca `.exe` (Windows) pero en Linux no hay extensión | Ya corregido en `app/services/apply.py` (`_resolve_latex_binary`) |
-| `asyncpg... prepared statement does not exist` | Se está usando Transaction Pooler de Supabase | Cambiar a **Session Pooler** en `DATABASE_URL` |
+---
 
 ## Convenciones de diseño
 
-- **`main.py` es una app factory** (`create_app()`), no `app = FastAPI()` a nivel de módulo.
-- **`schemas/` vs `db/models.py`**: nunca exponer ORM directo. Cada recurso tiene `XCreate`, `XUpdate`, `XOut`.
-- **`api/deps.py`**: dependencias centralizadas (`get_db`, `get_current_user`, `get_llm_provider`).
-- **`api/v1/`**: versionado desde el arranque.
-- **`exceptions.py`**: excepciones de negocio con handlers registrados. No `HTTPException` sueltas en servicios.
-- **LLM siempre vía `app/llm/adapter.py`** — nunca SDK directo de proveedor.
-- **Scrapers Bun/TS** se invocan por subprocess desde `app/services/scrape/`, no se reescriben.
+- **`main.py` es app factory** (`create_app()`), no `app = FastAPI()` global.
+- **Schemas Pydantic separados** de modelos SQLAlchemy. Cada recurso tiene `XCreate`, `XUpdate`, `XOut`.
+- **Dependencias centralizadas** en `api/deps.py` (`get_db`, `get_current_user`).
+- **Excepciones de negocio** en `exceptions.py` con handlers registrados. No `HTTPException` en servicios.
+- **LLM siempre vía LLMOrchestrator**, nunca SDK directo de proveedor.
+- **Sanitización antes de validación**: truncar arrays, reparar JSON, llenar defaults antes de Pydantic.
+- **Determinista primero**: si se puede resolver sin LLM, se resuelve sin LLM.
+- **Logging estructurado** con formato `{job_id} {provider} {model} {status}` — no stack traces gigantes.
 
-## Constraints
+---
 
-- **Repo fuente `ai-job-search` es SOLO LECTURA** — nunca modificar.
-- **Secrets en `.env`**, nunca hardcodeados ni commiteados.
-- **NO usar Transaction Pooler** de PgBouncer con asyncpg (rompe prepared statements). Usar Session Pooler o Direct Connection.
-- **`DATABASE_URL` debe usar `postgresql+asyncpg://`** cuando se emplea `create_async_engine()` de SQLAlchemy 2.x. El scheme `postgresql://` hace que SQLAlchemy intente cargar `psycopg2` (síncrono) y falla con `InvalidRequestError`.
-- **Los routers deben importar schemas desde `app.schemas.*`**, no desde `app.services.*`, para los `response_model` de FastAPI.
+## Utility Tools
 
-## MiKTeX Portable (para compilar LaTeX sin instalación global)
-
-El endpoint `/apply` compila CV y carta de presentación con `lualatex` (CV) y `xelatex` (carta). Para que funcione en cualquier entorno (local, Docker, Fly.io) sin instalar LaTeX globalmente, el proyecto usa **MiKTeX Portable**.
-
-### Configuración
-
-1. **Descargar** el instalador portable desde: https://miktex.org/howto/portable-edition
-2. **Renombrar** el archivo descargado a `miktex-portable.exe`
-3. **Colocarlo** en: `MikTex/miktex-portable.exe` (en la raíz del proyecto)
-4. **Ejecutarlo** (doble click o terminal) — se extraerá en `app/external/latex/miktex-portable/`
-5. **Configurar variable de entorno** en `.env`:
-   ```dotenv
-   LATEX_BIN_DIR=app/external/latex/miktex-portable/miktex/bin/x64
-   ```
-   Si `LATEX_BIN_DIR` está vacío, la app usa los binarios del PATH del sistema (MiKTeX/TeX Live instalado globalmente).
-
-### Verificación
-
-Ejecutar el script de verificación:
-```bash
-python scripts/check_miktex.py
-```
-
-Debe mostrar `OK: MiKTeX Portable listo para usar`.
-
-### En Docker / Fly.io
-
-El `Dockerfile` copia la carpeta `app/external/latex/miktex-portable/` y setea `LATEX_BIN_DIR` automáticamente. No se requiere instalación adicional en la imagen base.
-
-### .gitignore
-
-Los binarios de MiKTeX Portable **no se commitean** (pesan ~150 MB). Están en `.gitignore`:
-```
-app/external/latex/miktex-portable/
-MikTex/miktex-portable.exe
-```
-
-Cada entorno debe ejecutar el instalador portable una vez.
-
-## Testing
-
-```bash
-pytest tests/unit/                    # tests unitarios (SQLite in-memory + mocks)
-pytest tests/unit/test_rank.py        # un módulo específico
-pytest --tb=short -q --disable-warnings  # salida concisa
-```
-
-Los tests usan SQLite en memoria y mockean las llamadas al LLM, así que no requieren credenciales reales ni conexión a Supabase.
+| Herramienta | Archivo | Propósito |
+|-------------|---------|-----------|
+| **PDF Verifier** | `app/utils/pdf_verifier.py` | Verifica que un PDF sea parseable por ATS |
+| **Skill Linter** | `app/utils/skill_linter.py` | Valida skills contra ~120 términos conocidos, detecta typos y sugiere canónicos |
+| **Content Guard** | `app/middleware/content_guard.py` | Middleware que detecta PII (SSN, tarjetas, placeholders) en outputs generados por LLM |

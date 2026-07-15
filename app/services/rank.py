@@ -253,7 +253,16 @@ async def execute_rank(
             message="No new jobs to rank.",
         )
 
-    # 3. Rank each job
+    # 3. Batch-load existing RankEvaluations for all jobs (avoids N+1)
+    job_ids = [job.id for job in jobs]
+    existing_result = await db.execute(
+        select(RankEvaluation).where(RankEvaluation.job_posting_id.in_(job_ids))
+    )
+    existing_evals = {
+        ev.job_posting_id: ev for ev in existing_result.scalars().all()
+    }
+
+    # 4. Rank each job
     ranked_jobs = []
     failed_jobs = 0
     below_threshold = 0
@@ -262,7 +271,11 @@ async def execute_rank(
     for index, job in enumerate(jobs, start=1):
         logger.info("Evaluating job %d/%d: %s", index, len(jobs), job.id)
         try:
-            evaluation = await _rank_single_job(db=db, candidate=candidate, job=job, provider_config=provider_config, user_id=user_id)
+            evaluation = await _rank_single_job(
+                db=db, candidate=candidate, job=job,
+                provider_config=provider_config, user_id=user_id,
+                existing_evaluation=existing_evals.get(job.id),
+            )
             ranked_jobs.append((job, evaluation))
             logger.info("Finished job %d/%d: %s", index, len(jobs), job.id)
         except LLMError as exc:
@@ -270,7 +283,7 @@ async def execute_rank(
             logger.warning("LLM ranking failed for job %s: %s", job.id, exc)
             continue
 
-    # 4. Sort by overall score (desc), deadline urgency as tiebreaker
+    # 5. Sort by overall score (desc), deadline urgency as tiebreaker
     ranked_jobs.sort(
         key=lambda x: (
             x[1].overall_score,
@@ -279,7 +292,7 @@ async def execute_rank(
         reverse=True,
     )
 
-    # 5. Build shortlist and counts — with salary benchmarks
+    # 6. Build shortlist and counts — with salary benchmarks
     # NOTE: Salary lookup is best-effort.  If the UserSalaryData table
     # doesn't exist yet (e.g. migration not run), we silently skip.
     salary_available = False
@@ -320,7 +333,7 @@ async def execute_rank(
         else:
             expired_or_vetoed += 1
 
-    # 6. Update job statuses
+    # 7. Update job statuses
     for job, eval_ in ranked_jobs:
         job.status = "ranked"
         job.rank_score = eval_.overall_score
@@ -401,9 +414,15 @@ async def _rank_single_job(
     job: JobPosting,
     provider_config: dict[str, Any],
     user_id: str,
+    existing_evaluation: RankEvaluation | None = None,
 ) -> RankEvaluation:
     """Rank a single job posting against the candidate profile.
-    Merges deterministic quant scores with LLM qualitative reasoning."""
+    Merges deterministic quant scores with LLM qualitative reasoning.
+
+    Args:
+        existing_evaluation: Pre-loaded evaluation to avoid N+1 queries.
+            Callers should batch-load all evaluations before the loop.
+    """
     # Step 1: Deterministic analysis (no LLM needed)
     candidate_dict = {
         "skills": candidate.skills,
@@ -464,11 +483,8 @@ async def _rank_single_job(
     )
     verdict = score_to_verdict(overall)
 
-    # Step 5: Upsert evaluation record
-    existing_result = await db.execute(
-        select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
-    )
-    evaluation = existing_result.scalar_one_or_none()
+    # Step 5: Upsert evaluation record (use pre-loaded if available to avoid N+1)
+    evaluation = existing_evaluation
     if evaluation is None:
         evaluation = RankEvaluation(
             job_posting_id=job.id,
