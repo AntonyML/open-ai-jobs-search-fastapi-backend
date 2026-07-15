@@ -35,7 +35,7 @@ from app.core.settings import get_settings
 from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation, User
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
-from app.services import ats_check
+from app.services import ats_check, cv_cutter
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
@@ -774,27 +774,21 @@ def _insert_cover_letter_bullets(template: str, bullet_tex: str) -> str:
 # ── LaTeX compilation ───────────────────────────────────────────────
 
 
-async def compile_latex(
+async def _compile_latex_raw(
     tex_content: str,
     output_dir: Path,
     job_name: str,
     engine: str = "lualatex",
-    expected_pages: int = 2,
 ) -> tuple[Path, int]:
-    """Compile LaTeX to PDF and verify page count.
+    """Low-level LaTeX compilation — shared by ``compile_latex`` and
+    ``compile_latex_get_pages``.
 
-    Args:
-        tex_content: The .tex file content
-        output_dir: Directory to write output
-        job_name: Base name for output files (without extension)
-        engine: 'lualatex' or 'xelatex'
-        expected_pages: Expected page count (2 for CV, 1 for cover letter)
-
-    Returns:
-        Tuple of (pdf_path, actual_page_count)
+    Writes the .tex file, runs the compiler twice, and returns the
+    PDF path plus actual page count. Does NOT check expected page
+    count — the caller decides whether to enforce a limit.
 
     Raises:
-        LatexCompileError: If compilation fails or page count is wrong
+        LatexCompileError: If compilation itself fails.
     """
     tex_file = output_dir / f"{job_name}.tex"
     pdf_file = output_dir / f"{job_name}.pdf"
@@ -824,6 +818,66 @@ async def compile_latex(
         raise LatexCompileError(f"PDF not generated: {pdf_file}")
 
     actual_pages = await _get_pdf_page_count(pdf_file)
+    return pdf_file, actual_pages
+
+
+async def compile_latex_get_pages(
+    tex_content: str,
+    output_dir: Path,
+    job_name: str,
+    engine: str = "lualatex",
+) -> tuple[Path, int]:
+    """Compile LaTeX to PDF and return page count WITHOUT checking it.
+
+    Unlike ``compile_latex()``, this function does NOT raise on wrong
+    page count. It always returns the actual page count, which is
+    useful for the CV cutter's iterative trim loop where we need to
+    check how many pages the current version produces.
+
+    Args:
+        tex_content: The .tex file content
+        output_dir: Directory to write output
+        job_name: Base name for output files (without extension)
+        engine: 'lualatex' or 'xelatex'
+
+    Returns:
+        Tuple of (pdf_path, actual_page_count)
+
+    Raises:
+        LatexCompileError: If compilation itself fails (not page count)
+    """
+    return await _compile_latex_raw(tex_content, output_dir, job_name, engine)
+
+
+async def compile_latex(
+    tex_content: str,
+    output_dir: Path,
+    job_name: str,
+    engine: str = "lualatex",
+    expected_pages: int = 2,
+) -> tuple[Path, int]:
+    """Compile LaTeX to PDF and verify page count.
+
+    Delegates compilation to ``_compile_latex_raw``, then checks the
+    returned page count against ``expected_pages``. Raises on mismatch.
+
+    Args:
+        tex_content: The .tex file content
+        output_dir: Directory to write output
+        job_name: Base name for output files (without extension)
+        engine: 'lualatex' or 'xelatex'
+        expected_pages: Expected page count (2 for CV, 1 for cover letter).
+            Pass a very high number to skip the check (discouraged — use
+            ``compile_latex_get_pages`` instead).
+
+    Returns:
+        Tuple of (pdf_path, actual_page_count)
+
+    Raises:
+        LatexCompileError: If compilation fails or page count is wrong.
+    """
+    pdf_file, actual_pages = await _compile_latex_raw(tex_content, output_dir, job_name, engine)
+
     if actual_pages != expected_pages:
         raise LatexCompileError(
             f"Wrong page count for {job_name}: expected {expected_pages}, got {actual_pages}"
@@ -1166,12 +1220,91 @@ async def execute_apply(
         if COVER_CLS.exists():
             shutil.copy2(COVER_CLS, tmpdir_path / "cover.cls")
 
-        cv_pdf, cv_pages = await compile_latex(
-            final_cv_tex, tmpdir_path, f"cv_{job.company}_{job.title}", "lualatex", 2
-        )
+        # ═══════════════════════════════════════════════════════════
+        # STAGE 6a: COMPILE CV — with auto-trim if over page limit
+        # ═══════════════════════════════════════════════════════════
+        # First, try to compile with expected page count. If the CV
+        # exceeds 2 pages, the CV cutter will remove the lowest-scoring
+        # bullets iteratively until the CV fits (or all bullets are
+        # protected at minimum 1 per entry).
 
+        cv_trim_result = None
+        cv_trimmed_experience = revised_experience
+        cv_compile_success = False
+
+        try:
+            cv_pdf, cv_pages = await compile_latex(
+                final_cv_tex, tmpdir_path,
+                f"cv_{job.company}_{job.title}", "lualatex", 2,
+            )
+            cv_compile_success = True
+        except LatexCompileError as e:
+            # Check if the error is due to wrong page count (CV > 2)
+            if "Wrong page count" in str(e) and "expected 2" in str(e):
+                logger.info(
+                    f"CV for {job.company}/{job.title} exceeds 2 pages — "
+                    f"running relevance-weighted trim..."
+                )
+                try:
+                    # Define a render wrapper that uses the still-available
+                    # final_cover_tex for cover letter reference scoring
+                    def _make_render_fn(candidate, job):
+                        def _render(exp):
+                            return render_cv_latex(candidate, exp, job)
+                        return _render
+
+                    # Define a compile wrapper that returns page count
+                    # WITHOUT raising on wrong count.
+                    # Uses compile_latex_get_pages() which always returns
+                    # actual page count without checking expected_pages.
+                    async def _compile_no_raise(tex, out_dir, name):
+                        """Compile and return (path, pages) without raising on wrong count."""
+                        return await compile_latex_get_pages(
+                            tex, out_dir, name, "lualatex",
+                        )
+
+                    # Run the CV cutter
+                    cv_trimmed_experience, cv_trim_result = await cv_cutter.trim_cv_to_page_limit(
+                        experience=revised_experience,
+                        job_posting=job,
+                        cover_letter_latex=final_cover_tex,
+                        render_fn=_make_render_fn(candidate, job),
+                        compile_fn=_compile_no_raise,
+                        output_dir=tmpdir_path,
+                        job_name=f"cv_{job.company}_{job.title}",
+                        max_pages=2,
+                    )
+
+                    # Re-render final LaTeX with trimmed experience
+                    final_cv_tex = render_cv_latex(candidate, cv_trimmed_experience, job)
+
+                    # Final compile
+                    cv_pdf, cv_pages = await compile_latex(
+                        final_cv_tex, tmpdir_path,
+                        f"cv_{job.company}_{job.title}", "lualatex", 2,
+                    )
+                    cv_compile_success = True
+                    logger.info(
+                        f"CV trim successful: {cv_trim_result.bullets_removed} "
+                        f"bullet(s) removed, final {cv_pages} page(s)."
+                    )
+                except LatexCompileError as trim_error:
+                    # CV cutter couldn't get it to fit — re-raise the original
+                    raise e from trim_error
+            else:
+                # Real compilation error — re-raise
+                raise
+
+        # Update revised_experience if trimming occurred
+        if cv_trim_result and cv_trim_result.was_trimmed:
+            revised_experience = cv_trimmed_experience
+
+        # ═══════════════════════════════════════════════════════════
+        # STAGE 6b: COMPILE COVER LETTER
+        # ═══════════════════════════════════════════════════════════
         cover_pdf, cover_pages = await compile_latex(
-            final_cover_tex, tmpdir_path, f"cover_{job.company}_{job.title}", "xelatex", 1
+            final_cover_tex, tmpdir_path,
+            f"cover_{job.company}_{job.title}", "xelatex", 1,
         )
 
         generated_dir = Path("generated") / user_id / job_posting_id
