@@ -118,3 +118,66 @@ class CoverLetterLLMOutput(BaseModel):
     company_connection_paragraph: str
     personal_fit_paragraph: str
     closing_paragraph: str
+
+
+# ── Drafter-Reviewer schemas ────────────────────────────────────────
+
+
+class ReviewIssue(BaseModel):
+    """A single issue identified by the reviewer agent."""
+
+    type: str = Field(
+        ...,
+        description="One of: missing_keyword, generic_bullet, fabricated_claim, weak_framing, inconsistency, factual_error, formatting",
+    )
+    description: str = Field(..., description="Clear description of the issue")
+    severity: str = Field(..., description="high, medium, or low")
+    location: str = Field(..., description="cv, cover_letter, or both")
+    suggestion: str | None = Field(None, description="How to fix this issue")
+
+
+class ReviewFeedback(BaseModel):
+    """Structured feedback from the reviewer agent.
+
+    The reviewer examines the full rendered LaTeX of both documents
+    and provides actionable feedback. Temperature 0 for reproducibility.
+    """
+
+    overall_assessment: str = Field(..., description="2-3 sentence summary of document quality")
+    passes: list[str] = Field(default_factory=list, description="Things done well")
+    issues: list[ReviewIssue] = Field(default_factory=list, description="Issues to fix")
+    missed_keywords: list[str] = Field(
+        default_factory=list,
+        description="Keywords from job posting still absent after addressing rank evaluation",
+    )
+    strong_recommendations: list[str] = Field(
+        default_factory=list,
+        description="Top 3 changes that would most improve the application (ordered by impact)",
+    )
+
+
+class ReviseAction(BaseModel):
+    """A single revision action taken based on review feedback."""
+
+    issue_type: str = Field(..., description="The type of issue addressed")
+    description: str = Field(..., description="What was changed and why")
+
+
+class ReviseResult(BaseModel):
+    """Result of applying review feedback to improve the drafts.
+
+    The revised content replaces the original draft for final compilation.
+    """
+
+    changes_made: list[ReviseAction] = Field(
+        default_factory=list,
+        description="List of changes made in response to reviewer feedback",
+    )
+    remaining_concerns: list[str] = Field(
+        default_factory=list,
+        description="Issues that could not be fully addressed (honest limitations)",
+    )
+    overall_quality_improvement: str = Field(
+        ...,
+        description="Brief statement of how the documents improved after revision",
+    )

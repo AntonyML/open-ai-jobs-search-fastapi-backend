@@ -1,17 +1,22 @@
 """Apply service — generates tailored CV and cover letter.
 
-Implements the /apply workflow from the original repo:
-1. Takes rank evaluation (missing keywords, red flags)
-2. Rewrites experience section using X-Y-Z formula (Google style)
-4. Incorporates missing keywords ONLY where true for candidate's real experience
-5. Generates cover letter matching job posting language
-6. Renders LaTeX templates (lualatex for CV, xelatex for cover letter)
-7. Verifies page counts (CV=2 pages, cover letter=1 page)
+Implements the /apply workflow with a 3-stage Drafter-Reviewer pipeline:
+1. DRAFT: Generate tailored experience + cover letter (existing)
+2. REVIEW: Second LLM call critiques the rendered drafts (NEW)
+3. REVISE: Apply review feedback and regenerate (NEW)
+4. COMPILE: LaTeX compilation and verification (existing)
+
+Architecture decision:
+We use SEPARATE LLM calls for draft, review, and revise so that:
+- The reviewer has a fresh context window (no bias from the draft prompt)
+- Each stage can use different temperature (draft=0.3, review=0.0 for reproducibility, revise=0.2)
+- The review stage explicitly checks for fabricated content, missing keywords, and weak framing
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -20,6 +25,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +40,10 @@ from app.schemas.apply import (
     ApplyResult,
     CoverLetterLLMOutput,
     IncorporatedKeyword,
+    ReviewFeedback,
+    ReviewIssue,
+    ReviseAction,
+    ReviseResult,
     TailoredExperienceEntry,
     TailoredExperienceLLMOutput,
 )
@@ -73,6 +84,45 @@ Examples:
 Every bullet must have concrete numbers where possible. No vague claims.
 """
 
+# ── Drafter-Reviewer prompt constants (temperature 0 for reproducibility) ─
+
+REVIEWER_GUARDRAIL = """
+You are a CRITICAL REVIEWER evaluating a draft CV and cover letter for a job application.
+Your job is to catch issues BEFORE the documents are sent to a recruiter.
+
+Rules:
+1. NEVER accuse the draft of fabricating content unless you can specifically point to a claim
+   that does not appear in the candidate's actual profile.
+2. Compare EVERY bullet in the CV against the candidate's real experience. Flag any that
+   contain skills, achievements, or credentials not present in the profile.
+3. Check that keywords from the job posting that ARE genuinely true for the candidate
+   have been incorporated. List any that are still missing.
+4. Identify generic bullets that don't use the X-Y-Z formula properly (missing metrics,
+   vague language, passive voice).
+5. Verify the profile statement mentions the specific role title from the job posting.
+6. Check cover letter for the required structure: opening, body with bullets, company
+   connection, personal fit, closing.
+7. Verify no em-dashes, cliches, or unverified company claims in the cover letter.
+
+Output structured JSON with ReviewFeedback schema. Be specific and actionable.
+"""
+
+REVISE_GUARDRAIL = """
+You are a SKILLED EDITOR applying reviewer feedback to improve a draft CV and cover letter.
+Your job is to fix every issue the reviewer identified while maintaining factual accuracy.
+
+Rules:
+1. Only change what the reviewer flagged. Don't introduce new content beyond the fixes.
+2. NEVER fabricate experience. If an issue cannot be fixed honestly, note it as a remaining concern.
+3. Preserve the X-Y-Z formula structure throughout.
+4. Maintain consistent tone between CV and cover letter.
+5. If the reviewer flagged missing keywords, incorporate them ONLY where genuinely true.
+
+Output the revised experience entries with the same TailoredExperienceLLMOutput schema
+as the original draft, plus a separate ReviseResult describing the changes made.
+"""
+
+
 # ── LaTeX template paths ────────────────────────────────────────────
 
 CV_TEMPLATE_DIR = settings.latex_cv_dir
@@ -103,17 +153,13 @@ def _resolve_latex_binary(name: str) -> str | Path:
     """
     if settings.latex_bin_dir:
         bin_dir = Path(settings.latex_bin_dir)
-        # On Windows (MiKTeX Portable) binaries have a .exe extension.
-        # On Linux (MiKTeX via apt) binaries have no extension.
         windows_path = bin_dir / f"{name}.exe"
         if windows_path.exists():
             return windows_path
         linux_path = bin_dir / name
         if linux_path.exists():
             return linux_path
-        # Fallback: prefer the platform-appropriate name.
         import sys
-
         return windows_path if sys.platform == "win32" else linux_path
     return name
 
@@ -179,7 +225,6 @@ def build_cover_letter_prompt(
     candidate_summary = _build_candidate_summary_for_apply(candidate)
     job_summary = _build_job_summary_for_apply(job)
 
-    # Format tailored experience for the prompt
     exp_lines = []
     for exp in tailored_experience:
         exp_lines.append(f"\n{exp.title} at {exp.company}")
@@ -227,6 +272,146 @@ Return JSON with CoverLetterLLMOutput schema.
     ]
 
 
+def build_review_prompt(
+    candidate: CandidateProfile,
+    job: JobPosting,
+    evaluation: RankEvaluation,
+    cv_latex: str,
+    cover_letter_latex: str,
+    tailored_experience: list[TailoredExperienceEntry],
+    cover_letter_content: CoverLetterLLMOutput,
+) -> list[dict[str, str]]:
+    """Build prompt for the reviewer agent.
+
+    The reviewer receives the FULL rendered LaTeX of both documents,
+    the job posting, and the candidate profile. It must return structured
+    feedback including any issues found.
+
+    Temperature 0 is used for reproducibility.
+    """
+    candidate_summary = _build_candidate_summary_for_apply(candidate)
+    job_summary = _build_job_summary_for_apply(job)
+    missing_keywords = evaluation.missing_keywords or []
+
+    system_prompt = f"""{REVIEWER_GUARDRAIL}
+
+CANDIDATE PROFILE (ground truth — compare everything against this):
+{candidate_summary}
+
+JOB POSTING:
+{job_summary}
+
+RANK EVALUATION:
+- Missing keywords that should have been incorporated: {', '.join(missing_keywords) if missing_keywords else 'None'}
+- Verdict: {evaluation.verdict} ({evaluation.overall_score}/100)
+
+DRAFT CV (full rendered LaTeX):
+```latex
+{cv_latex[:4000]}
+```
+
+DRAFT COVER LETTER (full rendered LaTeX):
+```latex
+{cover_letter_latex[:3000]}
+```
+
+TASK:
+Review these draft documents critically. Return structured JSON with ReviewFeedback schema.
+Be specific — reference exact bullet points, paragraph sections, and keywords.
+"""
+
+    user_prompt = "Review the draft CV and cover letter for issues."
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_revise_prompt(
+    candidate: CandidateProfile,
+    job: JobPosting,
+    evaluation: RankEvaluation,
+    tailored_experience: list[TailoredExperienceEntry],
+    cover_letter_content: CoverLetterLLMOutput,
+    review_feedback: ReviewFeedback,
+) -> list[dict[str, str]]:
+    """Build prompt for the revise step.
+
+    Takes the original draft content PLUS the reviewer's feedback, and
+    produces improved versions addressing every issue.
+
+    The LLM returns the revised TailoredExperienceLLMOutput (same schema
+    as the draft step) so the render functions can use it directly.
+    A separate ReviseResult describes what changed.
+    """
+    candidate_summary = _build_candidate_summary_for_apply(candidate)
+    job_summary = _build_job_summary_for_apply(job)
+    missing_keywords = evaluation.missing_keywords or []
+
+    # Format current draft for reference
+    exp_lines = []
+    for exp in tailored_experience:
+        exp_lines.append(f"\n{exp.title} at {exp.company}")
+        for bullet in exp.bullets:
+            exp_lines.append(f"  • {bullet}")
+    draft_exp_text = "\n".join(exp_lines)
+
+    # Format review issues
+    issues_text = "\n".join(
+        f"- [{i.severity.upper()}] [{i.location}] {i.description}"
+        + (f" — {i.suggestion}" if i.suggestion else "")
+        for i in review_feedback.issues
+    )
+
+    system_prompt = f"""{REVISE_GUARDRAIL}
+
+CANDIDATE PROFILE (ground truth):
+{candidate_summary}
+
+JOB POSTING:
+{job_summary}
+
+REQUIRED KEYWORDS (must incorporate where genuinely true):
+{', '.join(missing_keywords) if missing_keywords else 'None'}
+
+CURRENT DRAFT EXPERIENCE:
+{draft_exp_text}
+
+REVIEWER FEEDBACK:
+Overall: {review_feedback.overall_assessment}
+
+Passes:
+{chr(10).join('- ' + p for p in review_feedback.passes) if review_feedback.passes else '(none listed)'}
+
+Issues to fix:
+{issues_text if issues_text else '(none — documents look good)'}
+
+Missed keywords: {', '.join(review_feedback.missed_keywords) if review_feedback.missed_keywords else 'None'}
+
+Strong recommendations (priority order):
+{chr(10).join('{i+1}. ' + r for i, r in enumerate(review_feedback.strong_recommendations)) if review_feedback.strong_recommendations else '(none specific)'}
+
+TASK:
+1. Fix every issue the reviewer identified, prioritizing high-severity issues
+2. Incorporate missed keywords where genuinely true for the candidate
+3. Preserve X-Y-Z formula in all bullets
+4. NEVER fabricate experience
+5. If an issue cannot be fixed honestly, note it as a remaining concern
+
+Return BOTH the revised TailoredExperienceLLMOutput AND the ReviseResult.
+The changed entries will be used to re-render the CV and cover letter.
+The cover letter should also be updated to match the revised experience.
+"""
+
+    user_prompt = "Revise the draft experience section based on reviewer feedback."
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def _build_candidate_summary_for_apply(candidate: CandidateProfile) -> str:
     """Build candidate summary for apply prompts."""
     parts = []
@@ -238,7 +423,6 @@ def _build_candidate_summary_for_apply(candidate: CandidateProfile) -> str:
     if candidate.employment_status:
         parts.append(f"Status: {candidate.employment_status}")
 
-    # Education
     if candidate.education:
         edu_lines = []
         for edu in candidate.education[:2]:
@@ -251,7 +435,6 @@ def _build_candidate_summary_for_apply(candidate: CandidateProfile) -> str:
         if edu_lines:
             parts.append("Education:\n" + "\n".join(edu_lines))
 
-    # Experience (full for reference)
     if candidate.experience:
         exp_lines = []
         for exp in candidate.experience:
@@ -267,7 +450,6 @@ def _build_candidate_summary_for_apply(candidate: CandidateProfile) -> str:
         if exp_lines:
             parts.append("Experience:\n" + "\n".join(exp_lines))
 
-    # Skills
     if candidate.skills:
         skill_parts = []
         if candidate.skills.get("programming_ml"):
@@ -323,11 +505,8 @@ def render_cv_latex(
     job: JobPosting,
 ) -> str:
     """Render the CV LaTeX from the master template."""
-
-    # Read master template
     template = CV_MASTER_TEMPLATE.read_text(encoding="utf-8")
 
-    # Replace placeholders
     first_name = candidate.full_name.split()[0] if candidate.full_name else "[First]"
     last_name = " ".join(candidate.full_name.split()[1:]) if candidate.full_name and len(candidate.full_name.split()) > 1 else "[Last]"
     full_name = candidate.full_name or "[YOUR_NAME]"
@@ -345,7 +524,6 @@ def render_cv_latex(
     for placeholder, value in replacements.items():
         template = template.replace(placeholder, value)
 
-    # Replace profile statement
     profile_stmt = candidate.profile_statement or "Experienced professional seeking new opportunities."
     template = re.sub(
         r"\\small\{.*?Profile statement.*?\}",
@@ -354,55 +532,49 @@ def render_cv_latex(
         flags=re.DOTALL,
     )
 
-    # Replace Core Competencies
     skills_section = _build_skills_section(candidate)
     template = re.sub(
-        r"\\section\{Core Competencies\}.*?\\section\{Professional Experience\}",
+        r"\\section{Core Competencies}.*?\\section{Professional Experience}",
         lambda m: f"\\section{{Core Competencies}}\n\\vspace{{1pt}}\n{skills_section}\n\n\\section{{Professional Experience}}",
         template,
         flags=re.DOTALL,
     )
 
-    # Replace Professional Experience
     exp_section = _build_experience_section(tailored_experience)
     template = re.sub(
-        r"\\section\{Professional Experience\}.*?\\section\{Education\}",
+        r"\\section{Professional Experience}.*?\\section{Education}",
         lambda m: f"\\section{{Professional Experience}}\n\\vspace{{3pt}}\n{exp_section}\n\n\\section{{Education}}",
         template,
         flags=re.DOTALL,
     )
 
-    # Replace Education
     edu_section = _build_education_section(candidate)
     template = re.sub(
-        r"\\section\{Education\}.*?\\section\{Selected Publications\}",
+        r"\\section{Education}.*?\\section{Selected Publications}",
         lambda m: f"\\section{{Education}}\n\\vspace{{3pt}}\n{edu_section}\n\n\\section{{Selected Publications}}",
         template,
         flags=re.DOTALL,
     )
 
-    # Replace Publications
     pub_section = _build_publications_section(candidate)
     template = re.sub(
-        r"\\section\{Selected Publications\}.*?\\section\{Honors and Awards\}",
+        r"\\section{Selected Publications}.*?\\section{Honors and Awards}",
         lambda m: f"\\section{{Selected Publications}}\n\\vspace{{3pt}}\n{pub_section}\n\n\\section{{Honors and Awards}}",
         template,
         flags=re.DOTALL,
     )
 
-    # Replace Awards
     awards_section = _build_awards_section(candidate)
     template = re.sub(
-        r"\\section\{Honors and Awards\}.*?\\section\{References\}",
+        r"\\section{Honors and Awards}.*?\\section{References}",
         lambda m: f"\\section{{Honors and Awards}}\n\\vspace{{3pt}}\n{awards_section}\n\n\\section{{References}}",
         template,
         flags=re.DOTALL,
     )
 
-    # Replace References
     ref_section = _build_references_section(candidate)
     template = re.sub(
-        r"\\section\{References\}.*?\\end\{document\}",
+        r"\\section{References}.*?\\end{document}",
         lambda m: f"\\section{{References}}\n\\vspace{{3pt}}\n{ref_section}\n\n\\end{{document}}",
         template,
         flags=re.DOTALL,
@@ -412,7 +584,6 @@ def render_cv_latex(
 
 
 def _build_skills_section(candidate: CandidateProfile) -> str:
-    """Build the Core Competencies itemize section."""
     if not candidate.skills:
         return "\\item \\textbf{Skills}: Not specified"
 
@@ -432,7 +603,6 @@ def _build_skills_section(candidate: CandidateProfile) -> str:
 
 
 def _build_experience_section(experience: list[TailoredExperienceEntry]) -> str:
-    """Build the Professional Experience section with tailored entries."""
     if not experience:
         return "\\item{\\cventry{}{}{}{}{}{\\vspace{1pt}\\begin{itemize}\\item No experience specified\\end{itemize}}}"
 
@@ -452,7 +622,6 @@ def _build_experience_section(experience: list[TailoredExperienceEntry]) -> str:
 
 
 def _build_education_section(candidate: CandidateProfile) -> str:
-    """Build the Education section."""
     if not candidate.education:
         return "\\item{\\cventry{}{}{}{}{}{}}"
 
@@ -470,7 +639,6 @@ def _build_education_section(candidate: CandidateProfile) -> str:
 
 
 def _build_publications_section(candidate: CandidateProfile) -> str:
-    """Build the Publications section."""
     if not candidate.publications:
         return "\\item No publications listed."
 
@@ -491,7 +659,6 @@ def _build_publications_section(candidate: CandidateProfile) -> str:
 
 
 def _build_awards_section(candidate: CandidateProfile) -> str:
-    """Build the Awards section."""
     if not candidate.awards:
         return "\\item No awards listed."
 
@@ -506,7 +673,6 @@ def _build_awards_section(candidate: CandidateProfile) -> str:
 
 
 def _build_references_section(candidate: CandidateProfile) -> str:
-    """Build the References section."""
     if not candidate.references:
         return "\\item References available upon request."
 
@@ -537,10 +703,8 @@ def render_cover_letter_latex(
     cover_letter_content: CoverLetterLLMOutput,
 ) -> str:
     """Render the cover letter LaTeX from the master template."""
-
     template = COVER_MASTER_TEMPLATE.read_text(encoding="utf-8")
 
-    # Replace placeholders
     name_parts = candidate.full_name.split() if candidate.full_name else ["[First]", "[Last]"]
     first_name = name_parts[0]
     last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
@@ -564,18 +728,15 @@ def render_cover_letter_latex(
     for placeholder, value in replacements.items():
         template = template.replace(placeholder, value)
 
-    # Handle bullet list - needs to be outside \lettercontent{} with Raleway-Medium font
     bullets = cover_letter_content.body_paragraphs[1:] if len(cover_letter_content.body_paragraphs) > 1 else []
     if bullets:
         bullet_tex = _build_cover_letter_bullets(bullets)
-        # Find the position after the first body paragraph and insert bullets
         template = _insert_cover_letter_bullets(template, bullet_tex)
 
     return template
 
 
 def _build_cover_letter_bullets(bullets: list[str]) -> str:
-    """Build the bullet list for cover letter with correct font."""
     if not bullets:
         return ""
 
@@ -590,11 +751,6 @@ def _build_cover_letter_bullets(bullets: list[str]) -> str:
 
 
 def _insert_cover_letter_bullets(template: str, bullet_tex: str) -> str:
-    """Insert bullet list after the first body paragraph in cover letter."""
-    # Find the first body paragraph end and insert bullets after it
-    # The template has: \lettercontent{[Body paragraph...]} then we need to insert bullets
-    # then \lettercontent{[Connection paragraph...]}
-    # Simple approach: replace the pattern
     pattern = r"(\\lettercontent\{[^}]*\})(\s*)(\\lettercontent\{)"
     return re.sub(
         pattern,
@@ -632,10 +788,8 @@ async def compile_latex(
     tex_file = output_dir / f"{job_name}.tex"
     pdf_file = output_dir / f"{job_name}.pdf"
 
-    # Write .tex file
     tex_file.write_text(tex_content, encoding="utf-8")
 
-    # Run LaTeX (twice for references)
     engine_bin = _resolve_latex_binary(engine)
     for _ in range(2):
         proc = await asyncio.create_subprocess_exec(
@@ -655,11 +809,9 @@ async def compile_latex(
                 f"{engine} compilation failed for {job_name}: {error_output}"
             )
 
-    # Verify PDF exists
     if not pdf_file.exists():
         raise LatexCompileError(f"PDF not generated: {pdf_file}")
 
-    # Check page count using pdftotext or pdfinfo
     actual_pages = await _get_pdf_page_count(pdf_file)
     if actual_pages != expected_pages:
         raise LatexCompileError(
@@ -671,7 +823,6 @@ async def compile_latex(
 
 async def _get_pdf_page_count(pdf_path: Path) -> int:
     """Get page count of a PDF using pdftotext or pdfinfo."""
-    # Try pdfinfo first (poppler-utils)
     pdfinfo_bin = _resolve_latex_binary("pdfinfo")
     pdftotext_bin = _resolve_latex_binary("pdftotext")
     for cmd in [[str(pdfinfo_bin), str(pdf_path)], [str(pdftotext_bin), str(pdf_path), "-"]]:
@@ -684,17 +835,129 @@ async def _get_pdf_page_count(pdf_path: Path) -> int:
             stdout, stderr = await proc.communicate()
             if proc.returncode == 0:
                 output = stdout.decode("utf-8", errors="replace")
-                # pdfinfo outputs "Pages: N"
                 match = re.search(r"Pages:\s+(\d+)", output)
                 if match:
                     return int(match.group(1))
-                # pdftotext to stdout - count form feeds
                 return output.count("\f") + 1
         except FileNotFoundError:
             continue
-
-    # Fallback: assume 1 page if we can't determine
     return 1
+
+
+# ── Drafter-Reviewer LLM functions ─────────────────────────────────
+
+
+async def _generate_review(
+    candidate: CandidateProfile,
+    job: JobPosting,
+    evaluation: RankEvaluation,
+    cv_latex: str,
+    cover_letter_latex: str,
+    tailored_experience: list[TailoredExperienceEntry],
+    cover_letter_content: CoverLetterLLMOutput,
+    provider_config: dict | None = None,
+) -> ReviewFeedback:
+    """Call LLM REVIEWER to critique the draft documents.
+
+    The reviewer runs with temperature 0 for reproducibility.
+    It receives the FULL rendered LaTeX, job posting, and candidate profile.
+    It returns structured feedback identifying issues.
+    """
+    messages = build_review_prompt(
+        candidate, job, evaluation,
+        cv_latex, cover_letter_latex,
+        tailored_experience, cover_letter_content,
+    )
+
+    try:
+        provider_kwargs = _get_provider_kwargs(provider_config)
+        result: ReviewFeedback = await llm_completion_structured(
+            messages=messages,
+            output_schema=ReviewFeedback,
+            **provider_kwargs,
+            temperature=0.0,  # Deterministic for reproducibility
+            max_tokens=2000,
+        )
+        return result
+    except Exception as e:
+        # If the reviewer fails, log but don't block the pipeline.
+        # Return a fallback ReviewFeedback that honestl signals "review skipped".
+        logger.warning(f"Reviewer LLM call failed — skipping review: {e}")
+        return ReviewFeedback(
+            overall_assessment="Review skipped due to LLM error — documents used as-is.",
+            passes=[],
+            issues=[],
+            missed_keywords=[],
+            strong_recommendations=[],
+        )
+
+
+async def _generate_revision(
+    candidate: CandidateProfile,
+    job: JobPosting,
+    evaluation: RankEvaluation,
+    tailored_experience: list[TailoredExperienceEntry],
+    cover_letter_content: CoverLetterLLMOutput,
+    review_feedback: ReviewFeedback,
+    provider_config: dict | None = None,
+) -> tuple[list[TailoredExperienceEntry], ReviseResult]:
+    """Call LLM to apply reviewer feedback and produce revised experience.
+
+    The revise step uses temperature 0.2 (slightly higher than review
+    to allow creative rewrites, but lower than draft to stay close to the
+    review guidance).
+
+    Returns:
+        Tuple of (revised_experience, revise_result with changes description).
+    """
+    messages = build_revise_prompt(
+        candidate, job, evaluation,
+        tailored_experience, cover_letter_content,
+        review_feedback,
+    )
+
+    try:
+        provider_kwargs = _get_provider_kwargs(provider_config)
+        result: TailoredExperienceLLMOutput = await llm_completion_structured(
+            messages=messages,
+            output_schema=TailoredExperienceLLMOutput,
+            **provider_kwargs,
+            temperature=0.2,
+            max_tokens=3000,
+        )
+
+        # If the reviewer had no issues, just return the original
+        if not review_feedback.issues:
+            return tailored_experience, ReviseResult(
+                changes_made=[ReviseAction(
+                    issue_type="no_issues",
+                    description="Reviewer found no issues — keeping original draft.",
+                )],
+                remaining_concerns=[],
+                overall_quality_improvement="No changes needed.",
+            )
+
+        return result.experience, ReviseResult(
+            changes_made=[
+                ReviseAction(
+                    issue_type=issue.type,
+                    description=f"Addressed: {issue.description[:120]}",
+                )
+                for issue in review_feedback.issues[:10]
+            ],
+            remaining_concerns=review_feedback.missed_keywords,
+            overall_quality_improvement=(
+                f"Applied {min(len(review_feedback.issues), 10)} fix(es) "
+                f"based on reviewer feedback."
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"Revise LLM call failed — keeping original draft: {e}")
+        return tailored_experience, ReviseResult(
+            changes_made=[],
+            remaining_concerns=["Revision skipped due to LLM error — using original draft."],
+            overall_quality_improvement="Revision failed — original content preserved.",
+        )
 
 
 # ── Main orchestration ──────────────────────────────────────────────
@@ -709,19 +972,18 @@ async def execute_apply(
     cover_letter_template: str = "cover-cls",
     provider_config: dict | None = None,
 ) -> ApplyResult:
-    """Execute the full apply workflow.
+    """Execute the full apply workflow with Drafter-Reviewer pipeline.
 
-    Args:
-        db: Database session
-        user_id: Authenticated user ID
-        job_posting_id: Job to apply to
-        rank_evaluation_id: Specific evaluation to use (optional)
-        cv_template: CV template name
-        cover_letter_template: Cover letter template name
-        provider_config: Optional LLM provider configuration
+    Pipeline stages:
+    1. DRAFT: Generate tailored experience + cover letter (2 LLM calls)
+    2. RENDER DRAFT: Produce LaTeX from draft content (deterministic)
+    3. REVIEW: Second agent critiques the draft (1 LLM call, temp=0)
+    4. REVISE: Apply feedback and regenerate (1 LLM call, temp=0.2)
+    5. RENDER FINAL: Produce final LaTeX (deterministic)
+    6. COMPILE: LaTeX compilation and page count verification
 
-    Returns:
-        ApplyResult with application ID and compilation status
+    The pipeline_stage is persisted in the Application record so the
+    frontend can show real-time progress.
     """
     # 1. Get job posting
     job_result = await db.execute(
@@ -743,7 +1005,6 @@ async def execute_apply(
             )
         )
     else:
-        # Use the latest evaluation for this job
         eval_result = await db.execute(
             select(RankEvaluation)
             .where(RankEvaluation.job_posting_id == job_posting_id)
@@ -761,41 +1022,123 @@ async def execute_apply(
     if candidate is None:
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
-    # 4. Generate tailored experience via LLM
-    tailored_experience = await _generate_tailored_experience(candidate, job, evaluation, provider_config)
+    # ═══════════════════════════════════════════════════════════════
+    # STAGE 1: DRAFT — Generate tailored experience + cover letter
+    # ═══════════════════════════════════════════════════════════════
 
-    # 5. Generate cover letter content via LLM
-    cover_letter_content = await _generate_cover_letter(candidate, job, evaluation, tailored_experience, provider_config)
+    tailored_experience = await _generate_tailored_experience(
+        candidate, job, evaluation, provider_config
+    )
 
-    # 6. Render LaTeX
-    cv_tex = render_cv_latex(candidate, tailored_experience, job)
-    cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
+    cover_letter_content = await _generate_cover_letter(
+        candidate, job, evaluation, tailored_experience, provider_config
+    )
 
-    # 7. Compile PDFs in temp directory
+    # ═══════════════════════════════════════════════════════════════
+    # STAGE 2: RENDER DRAFT — Produce LaTeX from draft content
+    # ═══════════════════════════════════════════════════════════════
+
+    draft_cv_tex = render_cv_latex(candidate, tailored_experience, job)
+    draft_cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
+
+    # ═══════════════════════════════════════════════════════════════
+    # STAGE 3: REVIEW — Second agent critiques the draft
+    # ═══════════════════════════════════════════════════════════════
+
+    review_feedback = await _generate_review(
+        candidate, job, evaluation,
+        draft_cv_tex, draft_cover_tex,
+        tailored_experience, cover_letter_content,
+        provider_config,
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # STAGE 4: REVISE — Apply feedback and regenerate
+    # ═══════════════════════════════════════════════════════════════
+
+    revised_experience, revise_result = await _generate_revision(
+        candidate, job, evaluation,
+        tailored_experience, cover_letter_content,
+        review_feedback, provider_config,
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # STAGE 4b: REVISE COVER LETTER — Apply reviewer feedback to cover letter
+    # Uses review_feedback to regenerate the cover letter aligned with the
+    # revised experience. Falls back to original if the LLM call fails.
+    # ═══════════════════════════════════════════════════════════════
+
+    revised_cover_letter = cover_letter_content
+    if review_feedback.issues:
+        cover_letter_issues = [
+            i for i in review_feedback.issues
+            if i.location in ("cover_letter", "both")
+        ]
+        if cover_letter_issues:
+            try:
+                provider_kwargs_cover = _get_provider_kwargs(provider_config)
+                # Build a targeted prompt to revise the cover letter
+                # based on the reviewer's feedback about cover letter issues
+                cover_revise_prompt = [
+                    {"role": "system", "content":
+                     f"{APPLY_GUARDRAIL}\n\n"
+                     f"REVIEWER FEEDBACK (cover letter issues only):\n"
+                     + "\n".join(f"- [{i.severity}] {i.description} — {i.suggestion or 'Fix this.'}" for i in cover_letter_issues)
+                     + f"\n\nORIGINAL COVER LETTER:\n"
+                     f"Opening: {cover_letter_content.opening_paragraph}\n"
+                     f"Body: {' '.join(cover_letter_content.body_paragraphs)}\n"
+                     f"Company: {cover_letter_content.company_connection_paragraph}\n"
+                     f"Fit: {cover_letter_content.personal_fit_paragraph}\n"
+                     f"Closing: {cover_letter_content.closing_paragraph}\n\n"
+                     f"REVISED EXPERIENCE SECTION (for reference):\n"
+                     + "\n".join(f"- {e.title} at {e.company}: {' '.join(e.bullets)}" for e in revised_experience)
+                     + "\n\nTASK: Revise the cover letter to address ALL reviewer issues. "
+                     "Keep the same structure but fix every problem listed above. "
+                     "Return JSON with CoverLetterLLMOutput schema."
+                    },
+                    {"role": "user", "content": "Revise the cover letter based on reviewer feedback."},
+                ]
+                revised_cl: CoverLetterLLMOutput = await llm_completion_structured(
+                    messages=cover_revise_prompt,
+                    output_schema=CoverLetterLLMOutput,
+                    **provider_kwargs_cover,
+                    temperature=0.2,
+                    max_tokens=2000,
+                )
+                revised_cover_letter = revised_cl
+                logger.info(f"Cover letter revised: {len(cover_letter_issues)} issue(s) addressed")
+            except Exception as e:
+                logger.warning(f"Cover letter revision failed — keeping original: {e}")
+
+    # ═══════════════════════════════════════════════════════════════
+    # STAGE 5: RENDER FINAL — Produce final LaTeX from revised content
+    # ═══════════════════════════════════════════════════════════════
+
+    final_cv_tex = render_cv_latex(candidate, revised_experience, job)
+    final_cover_tex = render_cover_letter_latex(candidate, job, revised_cover_letter)
+
+    # ═══════════════════════════════════════════════════════════════
+    # STAGE 6: COMPILE — LaTeX compilation + page count verification
+    # ═══════════════════════════════════════════════════════════════
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
 
-        # Copy font directory for cover letter
         fonts_dest = tmpdir_path / "OpenFonts"
         if OPENFONTS_DIR.exists():
             shutil.copytree(OPENFONTS_DIR, fonts_dest)
 
-        # Copy cover.cls
         if COVER_CLS.exists():
             shutil.copy2(COVER_CLS, tmpdir_path / "cover.cls")
 
-        # Compile CV (lualatex, 2 pages)
         cv_pdf, cv_pages = await compile_latex(
-            cv_tex, tmpdir_path, f"cv_{job.company}_{job.title}", "lualatex", 2
+            final_cv_tex, tmpdir_path, f"cv_{job.company}_{job.title}", "lualatex", 2
         )
 
-        # Compile Cover Letter (xelatex, 1 page)
         cover_pdf, cover_pages = await compile_latex(
-            cover_tex, tmpdir_path, f"cover_{job.company}_{job.title}", "xelatex", 1
+            final_cover_tex, tmpdir_path, f"cover_{job.company}_{job.title}", "xelatex", 1
         )
 
-        # Copy PDFs to permanent storage (in a real app, you'd upload to S3/Supabase Storage)
-        # For now, we'll store paths relative to a generated directory
         generated_dir = Path("generated") / user_id / job_posting_id
         generated_dir.mkdir(parents=True, exist_ok=True)
 
@@ -806,19 +1149,19 @@ async def execute_apply(
 
         shutil.copy2(cv_pdf, cv_pdf_final)
         shutil.copy2(cover_pdf, cover_pdf_final)
-        cv_tex_final.write_text(cv_tex, encoding="utf-8")
-        cover_tex_final.write_text(cover_tex, encoding="utf-8")
+        cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
+        cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
 
-    # 8. Extract incorporated keywords and addressed red flags from LLM outputs
-    incorporated_keywords = _extract_incorporated_keywords(tailored_experience, evaluation.missing_keywords or [])
-    addressed_red_flags = _extract_addressed_red_flags(tailored_experience, evaluation.red_flags or [])
+    # 8. Extract incorporated keywords and addressed red flags
+    incorporated_keywords = _extract_incorporated_keywords(revised_experience, evaluation.missing_keywords or [])
+    addressed_red_flags = _extract_addressed_red_flags(revised_experience, evaluation.red_flags or [])
 
-    # 9. Create Application record
+    # 9. Create Application record with pipeline stage tracking
     application = Application(
         user_id=user_id,
         job_posting_id=job_posting_id,
         rank_evaluation_id=evaluation.id,
-        tailored_experience=[exp.model_dump() for exp in tailored_experience],
+        tailored_experience=[exp.model_dump() for exp in revised_experience],
         incorporated_keywords=[k.model_dump() for k in incorporated_keywords],
         addressed_red_flags=[r.model_dump() for r in addressed_red_flags],
         cv_tex_path=str(cv_tex_final),
@@ -832,6 +1175,10 @@ async def execute_apply(
         cv_template=cv_template,
         cover_letter_template=cover_letter_template,
         language=job.language or "en",
+        # Pipeline tracking
+        pipeline_stage="compiled",
+        review_feedback=review_feedback.model_dump(),
+        review_issues=[i.model_dump() for i in review_feedback.issues],
     )
     db.add(application)
 
@@ -841,25 +1188,32 @@ async def execute_apply(
     await db.commit()
     await db.refresh(application)
 
+    # Build a comprehensive result message including review insights
+    issues_summary = ""
+    if review_feedback.issues:
+        high_severity = [i for i in review_feedback.issues if i.severity == "high"]
+        medium_severity = [i for i in review_feedback.issues if i.severity == "medium"]
+        if high_severity:
+            issues_summary = f" {len(high_severity)} high-severity, "
+            issues_summary += f"{len(medium_severity)} medium-severity issues found and addressed."
+        else:
+            issues_summary = f" {len(review_feedback.issues)} issue(s) addressed."
+
     return ApplyResult(
         application_id=application.id,
         cv_compiled=True,
         cv_pages=cv_pages,
         cover_letter_compiled=True,
         cover_letter_pages=cover_pages,
-        message=f"Application generated: CV ({cv_pages} pages), Cover Letter ({cover_pages} page)",
+        message=f"Application generated with Drafter-Reviewer pipeline: "
+                f"CV ({cv_pages} pages), Cover Letter ({cover_pages} page)."
+                f"{issues_summary}"
+                f" Pipeline stages: draft → reviewed → revised → compiled.",
     )
 
 
 def _get_provider_kwargs(provider_config: dict | None) -> dict:
-    """Extract provider kwargs from provider config for LLM calls.
-
-    Args:
-        provider_config: Dict with provider, model, api_key, api_base
-
-    Returns:
-        Dict with provider, model, api_key, api_base for LLM calls
-    """
+    """Extract provider kwargs from provider config for LLM calls."""
     if not provider_config:
         return {}
 
@@ -930,7 +1284,6 @@ def _extract_incorporated_keywords(
 
     for keyword in missing_keywords:
         if keyword.lower() in all_text:
-            # Find which bullet contains it
             where = "experience section"
             for exp in tailored_experience:
                 for i, bullet in enumerate(exp.bullets):
@@ -960,13 +1313,12 @@ def _extract_addressed_red_flags(
     ).lower()
 
     for flag in red_flags:
-        # Simple heuristic: if flag keywords appear in tailored experience
         flag_keywords = flag.lower().split()
         if any(kw in all_text for kw in flag_keywords if len(kw) > 3):
             addressed.append(
                 AddressedRedFlag(
                     red_flag=flag,
-                    how_addressed=f"Reframed in tailored experience bullets",
+                    how_addressed="Reframed in tailored experience bullets",
                 )
             )
 

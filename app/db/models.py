@@ -443,6 +443,15 @@ class Application(Base, TimestampMixin):
     cover_letter_compiled: Mapped[bool] = mapped_column(default=False)
     cover_letter_pages: Mapped[int | None] = mapped_column
 
+    # ── Pipeline stage tracking ────────────────────────────────
+    pipeline_stage: Mapped[str] = mapped_column(
+        String(20), default="draft",
+        comment="draft → reviewed → revised → compiled → verified",
+    )
+    # Reviewer feedback (JSON)
+    review_feedback: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    review_issues: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
+
     # ── Metadata ──────────────────────────────────────────────
     cv_template: Mapped[str] = mapped_column(String(100), default="moderncv-banking")
     cover_letter_template: Mapped[str] = mapped_column(String(100), default="cover-cls")
