@@ -4,9 +4,10 @@ Every router imports Depends from here instead of repeating
 get_db / get_current_user / get_llm_provider inline.
 """
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.i18n.locale import get_locale_from_request
 from app.core.security import decode_access_token
 from app.db.session import get_db as _get_db
 from app.services.provider_credentials import get_user_active_provider_config
@@ -54,3 +55,24 @@ async def get_llm_provider(
     Falls back to settings if no credential is stored.
     """
     return await get_user_active_provider_config(db, user["sub"])
+
+
+# ── Locale dependency ───────────────────────────────────────────────
+async def get_locale(request: Request) -> str:
+    """Extract the user's preferred locale from the request.
+
+    Checks:
+    1. The ``locale`` cookie (set by the frontend next-intl middleware)
+    2. The ``Accept-Language`` header
+    3. Falls back to the default (``en``)
+
+    Usage::
+
+        from app.api.deps import get_locale
+        from app.core.i18n.locale import t
+
+        @router.get("/example")
+        async def example(locale: str = Depends(get_locale)):
+            return {"message": t("common.saved", locale)}
+    """
+    return get_locale_from_request(request)

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # ── APScheduler ───────────────────────────────────────────
     scrape_interval_hours: int = 6
 
+    # ── i18n ──────────────────────────────────────────────────
+    default_language: str = "en"
+
     # ── App ───────────────────────────────────────────────────
     app_env: str = "development"
     log_level: str = "INFO"

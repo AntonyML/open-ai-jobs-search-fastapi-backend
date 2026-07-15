@@ -62,6 +62,9 @@ class User(Base, TimestampMixin):
     # Active LLM provider (default from settings, overridable per user)
     active_provider: Mapped[str] = mapped_column(String(50), default="anthropic")
 
+    # Preferred UI language (default: "en")
+    preferred_language: Mapped[str] = mapped_column(String(10), default="en")
+
     # Relationships
     provider_credentials: Mapped[list["ProviderCredential"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
