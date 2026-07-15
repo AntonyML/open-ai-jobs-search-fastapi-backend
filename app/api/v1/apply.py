@@ -1,14 +1,15 @@
 """Apply router — endpoints for generating tailored CV and cover letter."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_llm_provider, get_locale
 from app.core.i18n.locale import t
-from app.db.models import Application
+from app.db.models import Application, JobPosting
 from app.db.session import get_db as _get_db
 from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
+from app.schemas.scrape import JobPostingSummary
 from app.services import apply
 
 router = APIRouter(prefix="/apply", tags=["apply"])
@@ -37,6 +38,32 @@ async def trigger_apply(
         provider_config=provider_config,
     )
     return result
+
+
+@router.get("/available-jobs", response_model=list[JobPostingSummary])
+async def list_available_jobs(
+    limit: int = 200,
+    offset: int = 0,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """List ranked jobs that do not have a generated application yet."""
+    application_exists = exists().where(
+        Application.user_id == user["sub"],
+        Application.job_posting_id == JobPosting.id,
+    )
+    result = await db.execute(
+        select(JobPosting)
+        .where(
+            JobPosting.user_id == user["sub"],
+            JobPosting.status == "ranked",
+            ~application_exists,
+        )
+        .order_by(JobPosting.rank_score.desc().nullslast())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(result.scalars().all())
 
 
 @router.get("/{application_id}", response_model=ApplicationOut)
