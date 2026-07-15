@@ -106,10 +106,11 @@ flowchart LR
     E --> F[5. Interview<br/>Prep entrevista]
     F --> G[6. Outcome<br/>Registro resultados]
     E --> J[9. Verify<br/>Checklist ATS + calidad]
+    G --> K[10. Calibrate<br/>Calibración de fit]
 ```
 
 ### Fase 0 — Provider Setup
-Cada usuario configura su propio proveedor LLM (API key + modelo). Las credenciales se cifran con Fernet y se almacenan por usuario.
+Cada usuario configura su propio proveedor LLM (API key + modelo). Las credenciales se cifran con Fernet y se almacenan por usuario. El usuario puede seleccionar el modelo específico dentro de cada proveedor.
 
 ### Fase 1 — Setup (perfil candidato)
 Perfil completo: datos personales, experiencia, educación, skills, **perfil conductual** (DISC, fortalezas, áreas de crecimiento), y **ejemplos STAR** para entrevistas.
@@ -138,7 +139,7 @@ Luego de la revisión:
 - **Verification Checklist**: 10+ checks deterministas + LLM para consistencia y claims fabricados
 
 ### Fase 5 — Interview (preparación)
-Prep pack completo: research de empresa, preguntas probables mapeadas a ejemplos STAR del candidato, bridge answers para gaps de experiencia, **mock interview** (chat interactivo donde el LLM juega el rol del entrevistador).
+Prep pack completo: research de empresa, preguntas probables mapeadas a ejemplos STAR del candidato, bridge answers para gaps de experiencia, **mock interview** (chat interactivo donde el LLM juega el rol del entrevistador, con historial de conversación persistente).
 
 ### Fase 6 — Outcome (tracking)
 Registro de resultados: entrevista, oferta, rechazo, silencio. Calibración del fit framework basada en qué realmente consiguió entrevistas.
@@ -148,6 +149,12 @@ Registro de resultados: entrevista, oferta, rechazo, silencio. Calibración del 
 
 ### Fase 8 — Expand (enriquecimiento de perfil)
 Escanea fuentes públicas (GitHub, portfolio, LinkedIn) para descubrir competencias no explícitas en el CV.
+
+### Fase 9 — Verify (verificación de documentos)
+Checklist de 10+ verificaciones deterministas + 1 verificación con LLM ejecutada como servicio independiente. Verifica nombre, email, rol, empresa, fechas, LaTeX balanceado, placeholders, markers CID, keywords, y consistencia cualitativa.
+
+### Fase 10 — Calibrate (calibración de fit)
+Análisis 100% determinista que correlaciona outcomes reales (entrevistas, ofertas, rechazos) con keywords, skills y patrones para refinar el framework de ranking. Genera métricas de funnel (aplicación → entrevista → oferta → hired) y recomendaciones accionables.
 
 ---
 
