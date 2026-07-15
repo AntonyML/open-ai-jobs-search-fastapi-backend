@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.db.session import get_db as _get_db
-from app.schemas.outcome import OutcomeCreate, OutcomeOut, OutcomeSummaryOut, OutcomeUpdate, TrackerRowOut
-from app.services import outcome
+from app.schemas.outcome import CalibrationReport, OutcomeCreate, OutcomeOut, OutcomeSummaryOut, OutcomeUpdate, TrackerRowOut
+from app.services import fit_calibration, outcome
 
 router = APIRouter(prefix="/outcome", tags=["outcome"])
 
@@ -72,3 +72,16 @@ async def list_tracker_rows(
 ):
     """List all rows from job_search_tracker.csv."""
     return await outcome.list_tracker_rows(db, user["sub"])
+
+
+@router.get("/calibration", response_model=CalibrationReport)
+async def get_calibration_report(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Generate a calibration report based on all recorded outcomes.
+
+    Analyzes conversion funnel, keyword correlations, and generates
+    actionable insights. Requires at least one outcome to be recorded.
+    """
+    return await fit_calibration.generate_calibration_report(db, user["sub"])

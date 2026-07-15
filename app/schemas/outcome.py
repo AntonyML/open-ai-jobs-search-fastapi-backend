@@ -3,7 +3,7 @@
 Request/response shapes for recording job application outcomes.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, Field
@@ -140,3 +140,58 @@ class OutcomeLLMOutput(BaseModel):
     notes: str | None = None
     lessons_learned: str | None = None
     valued_signals: list[str] = []
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CALIBRATION SCHEMAS  (FASE 7 — fit calibration)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class FunnelMetrics(BaseModel):
+    """Conversion funnel metrics for a user's job search."""
+
+    total_applications: int = 0
+    interviews: int = 0
+    offers: int = 0
+    hired: int = 0
+    rejected: int = 0
+    no_response: int = 0
+    withdrawn: int = 0
+    in_progress: int = 0
+
+    # Conversion rates
+    application_to_interview_pct: float = 0.0
+    interview_to_offer_pct: float = 0.0
+    offer_to_hired_pct: float = 0.0
+    overall_success_pct: float = 0.0
+
+
+class CalibrationKeyword(BaseModel):
+    """A keyword/skill with its correlation to outcome success."""
+
+    keyword: str
+    present_in_count: int = 0
+    interview_rate: float = 0.0  # % of apps with this keyword that got interviews
+    hire_rate: float = 0.0  # % of apps with this keyword that got hired
+    avg_score: float = 0.0  # average rank score for jobs with this keyword
+    correlation: str = "neutral"  # "positive", "negative", "neutral"
+
+
+class CalibrationInsight(BaseModel):
+    """A single actionable insight from the calibration analysis."""
+
+    category: str  # "keyword", "company", "role_type", "location", "template"
+    insight: str
+    recommendation: str
+    impact: str  # "high", "medium", "low"
+
+
+class CalibrationReport(BaseModel):
+    """Full calibration report generated from outcome data."""
+
+    funnel: FunnelMetrics
+    top_keywords: list[CalibrationKeyword] = []
+    bottom_keywords: list[CalibrationKeyword] = []
+    insights: list[CalibrationInsight] = []
+    data_points: int = 0
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
