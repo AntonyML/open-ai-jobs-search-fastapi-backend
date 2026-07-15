@@ -29,41 +29,56 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 - **FastAPI** (async) + **Pydantic v2** + **SQLAlchemy 2.0** (async, asyncpg)
 - **LiteLLM** — capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, Groq, OpenRouter, LM Studio, Ollama)
-- **LLMOrchestrator** — sistema de colas, failover automático, rate limiting, health monitoring
+- **LLMOrchestrator** — sistema de colas, failover automático, rate limiting, health monitoring, WebSocket real-time
 - **Supabase** (PostgreSQL) — Session Pooler o Direct Connection
 - **APScheduler** — scraping periódico
 - **Bun/TypeScript** scrapers (linkedin, jobindex, jobnet, jobdanmark, freehire, jobbank)
 - **LaTeX** (lualatex + xelatex) — generación de CV y cover letters tailored
+- **i18n** — soporte multi-idioma (en, es) con detección automática vía Accept-Language/cookie
+- **WebSocket** — notificaciones real-time del estado de la cola de ejecución
+- **Fernet** (cryptography) — cifrado de API keys por usuario en DB
 
 ---
 
 ## Arquitectura
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     LLMOrchestrator                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐  │
-│  │ Provider │  │  Model   │  │  Queue   │  │  Checkpoint │  │
-│  │ Registry │  │ Registry │  │ Manager  │  │  Manager    │  │
-│  └──────────┘  └──────────┘  └──────────┘  └────────────┘  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
-│  │ Failover │  │ Cooldown │  │ Metrics  │                   │
-│  └──────────┘  └──────────┘  └──────────┘                   │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                     LLMOrchestrator                               │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐  │
+│  │ Provider     │  │ Model        │  │ ExecutionQueue        │  │
+│  │ Manager      │  │ Manager      │  │ (concurrency,         │  │
+│  │ (health,     │  │ (states,     │  │  checkpointing,       │  │
+│  │  priorities, │  │  selection,  │  │  persistence)         │  │
+│  │  cooldowns)  │  │  costs)      │  │                       │  │
+│  └──────────────┘  └──────────────┘  └───────────────────────┘  │
+│  ┌──────────────┐  ┌──────────────────────────────────────────┐ │
+│  │ QueueNotifier│  │ LLMResponseSanitizer                     │ │
+│  │ (WebSocket   │  │ (repair JSON, truncate arrays,           │ │
+│  │  real-time)  │  │  fill defaults before Pydantic)          │ │
+│  └──────────────┘  └──────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
          │
          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Services Layer                          │
-│  Scrape → Rank → Apply → Interview → Outcome → Upskill      │
-│  Expand → Verification → ATS Check → CV Cutter              │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      Services Layer                               │
+│  Scrape → Rank → Apply → Interview → Outcome → Upskill           │
+│  Expand → Verification → ATS Check → CV Cutter → PDF Compiler    │
+│  Fit Calibration → Salary Benchmarking → Pipeline Reset          │
+└──────────────────────────────────────────────────────────────────┘
          │
          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Deterministic Analyzers                    │
-│  RankAnalyzer │ SkillLinter │ ContentGuard │ PDFVerifier     │
-│  SalaryLookup │ KeywordExtractor │ AtsChecker               │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    Deterministic Analyzers                        │
+│  RankAnalyzer │ SkillLinter │ ContentGuard │ PDFVerifier         │
+│  SalaryLookup │ KeywordExtractor │ AtsChecker                   │
+└──────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    Cross-Cutting                                  │
+│  i18n (en/es) │ Middleware (PII guard) │ Dashboard & Analytics   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Principios arquitectónicos
