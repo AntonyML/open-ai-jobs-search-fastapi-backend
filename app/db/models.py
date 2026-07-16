@@ -318,6 +318,9 @@ class JobPosting(Base, TimestampMixin):
     # ── Raw scraper output (for debugging / re-parsing) ──────
     raw_data: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
+    __table_args__ = (
+        UniqueConstraint("portal", "external_id", name="uq_job_postings_portal_external_id"),
+    )
 
 class ScrapeRun(Base, TimestampMixin):
     """History of scraper executions (manual or scheduled).

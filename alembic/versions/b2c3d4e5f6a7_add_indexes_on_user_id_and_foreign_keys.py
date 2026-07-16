@@ -7,7 +7,7 @@ The biggest gain comes from job_postings.user_id, applications.user_id,
 and rank_evaluations.user_id — these are scanned on every user request.
 
 Revision ID: b2c3d4e5f6a7
-Revises: f1a2b3c4d5e6
+Revises: d8e9f0a1b2c3
 Create Date: 2026-07-16 12:00:00.000000
 
 """
@@ -17,7 +17,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b2c3d4e5f6a7"
-down_revision: Union[str, None] = "f1a2b3c4d5e6"
+down_revision: Union[str, None] = "d8e9f0a1b2c3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
