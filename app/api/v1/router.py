@@ -21,6 +21,7 @@ from app.api.v1.salary import router as salary_router
 from app.api.v1.verification import router as verification_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.dashboard import analytics_router
+from app.api.v1.users import router as users_router
 
 router = APIRouter()
 
@@ -63,3 +64,6 @@ router.include_router(admin_router)
 # ── Dashboard + Analytics ───────────────────────────────────────────
 router.include_router(dashboard_router)
 router.include_router(analytics_router)
+
+# ── Users ────────────────────────────────────────────────────────────
+router.include_router(users_router)
