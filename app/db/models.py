@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -826,7 +826,7 @@ class ExecutionJob(Base, TimestampMixin):
     output_schema: Mapped[str | None] = mapped_column(String(100))
 
     # ── Status (state machine) ────────────────────────────────
-    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
 
     # ── Provider / model assignment ───────────────────────────
     provider: Mapped[str | None] = mapped_column(String(50))
@@ -850,6 +850,12 @@ class ExecutionJob(Base, TimestampMixin):
 
     # ── Worker info ───────────────────────────────────────────
     worker_id: Mapped[str | None] = mapped_column(String(50))
+
+    __table_args__ = (
+        # Composite index for the orchestrator's hot path: "find next X job for pipeline Y"
+        # Individual pipeline index is kept for queries filtering by pipeline alone.
+        Index("ix_execution_jobs_status_pipeline", "status", "pipeline"),
+    )
 
 
 class ProviderHealth(Base, TimestampMixin):

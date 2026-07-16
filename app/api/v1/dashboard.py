@@ -8,6 +8,7 @@ Provides endpoints for:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -30,6 +31,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
+async def _count(db: AsyncSession, model, user_id: str, *extra_filters):
+    stmt = select(func.count(model.id)).where(model.user_id == user_id)
+    if extra_filters:
+        stmt = stmt.where(*extra_filters)
+    result = await db.execute(stmt)
+    return result.scalar() or 0
+
+
+async def _avg(db: AsyncSession, model, column, user_id: str, *extra_filters):
+    stmt = select(func.avg(column)).where(model.user_id == user_id)
+    if extra_filters:
+        stmt = stmt.where(*extra_filters)
+    result = await db.execute(stmt)
+    return result.scalar()
+
+
 @router.get("/stats")
 async def get_dashboard_stats(
     user: dict = Depends(get_current_user),
@@ -38,67 +55,16 @@ async def get_dashboard_stats(
     """Aggregated KPIs for the dashboard overview."""
     user_id = user["sub"]
 
-    # ── Jobs scraped (total in DB for this user) ──────────────
-    scraped_result = await db.execute(
-        select(func.count(JobPosting.id)).where(JobPosting.user_id == user_id)
+    jobs_scraped, jobs_ranked, applications, interviews, scrape_runs, avg_rank_score, hired, rejected = await asyncio.gather(
+        _count(db, JobPosting, user_id),
+        _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None)),
+        _count(db, Application, user_id),
+        _count(db, InterviewPrep, user_id),
+        _count(db, ScrapeRun, user_id, ScrapeRun.status.in_(["completed", "completed_with_errors"])),
+        _avg(db, JobPosting, JobPosting.rank_score, user_id, JobPosting.rank_score.isnot(None)),
+        _count(db, Outcome, user_id, Outcome.status == "hired"),
+        _count(db, Outcome, user_id, Outcome.status == "rejected"),
     )
-    jobs_scraped = scraped_result.scalar() or 0
-
-    # ── Jobs ranked (have a rank_score) ──────────────────────
-    ranked_result = await db.execute(
-        select(func.count(JobPosting.id)).where(
-            JobPosting.user_id == user_id,
-            JobPosting.rank_score.isnot(None),
-        )
-    )
-    jobs_ranked = ranked_result.scalar() or 0
-
-    # ── Applications created ────────────────────────────────
-    apps_result = await db.execute(
-        select(func.count(Application.id)).where(Application.user_id == user_id)
-    )
-    applications = apps_result.scalar() or 0
-
-    # ── Interviews (unique applications with interview prep) ─
-    interviews_result = await db.execute(
-        select(func.count(InterviewPrep.id)).where(
-            InterviewPrep.user_id == user_id
-        )
-    )
-    interviews = interviews_result.scalar() or 0
-
-    # ── Scrape runs (total completed) ────────────────────────
-    scrape_runs_result = await db.execute(
-        select(func.count(ScrapeRun.id)).where(
-            ScrapeRun.user_id == user_id,
-            ScrapeRun.status.in_(["completed", "completed_with_errors"]),
-        )
-    )
-    scrape_runs = scrape_runs_result.scalar() or 0
-
-    # ── Avg rank score (of ranked jobs) ──────────────────────
-    avg_score_result = await db.execute(
-        select(func.avg(JobPosting.rank_score)).where(
-            JobPosting.user_id == user_id,
-            JobPosting.rank_score.isnot(None),
-        )
-    )
-    avg_rank_score = avg_score_result.scalar()
-
-    # ── Outcomes summary ─────────────────────────────────────
-    hired_result = await db.execute(
-        select(func.count(Outcome.id)).where(
-            Outcome.user_id == user_id, Outcome.status == "hired"
-        )
-    )
-    hired = hired_result.scalar() or 0
-
-    rejected_result = await db.execute(
-        select(func.count(Outcome.id)).where(
-            Outcome.user_id == user_id, Outcome.status == "rejected"
-        )
-    )
-    rejected = rejected_result.scalar() or 0
 
     return {
         "jobs_scraped": jobs_scraped,
@@ -120,65 +86,24 @@ async def get_pipeline_progress(
     """Check which pipeline steps have data for this user."""
     user_id = user["sub"]
 
-    # ── Providers configured ──────────────────────────────────
-    prov_result = await db.execute(
-        select(func.count(ProviderCredential.id)).where(
-            ProviderCredential.user_id == user_id
-        )
+    providers, setup, scrape, rank, apply, interview, outcome = await asyncio.gather(
+        _count(db, ProviderCredential, user_id),
+        _count(db, CandidateProfile, user_id),
+        _count(db, JobPosting, user_id),
+        _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None)),
+        _count(db, Application, user_id),
+        _count(db, InterviewPrep, user_id),
+        _count(db, Outcome, user_id),
     )
-    providers = (prov_result.scalar() or 0) > 0
-
-    # ── Setup completed (profile exists) ──────────────────────
-    setup_result = await db.execute(
-        select(func.count(CandidateProfile.id)).where(
-            CandidateProfile.user_id == user_id
-        )
-    )
-    setup = (setup_result.scalar() or 0) > 0
-
-    # ── Scrape (any jobs in DB) ─────────────────────────────
-    scrape_result = await db.execute(
-        select(func.count(JobPosting.id)).where(JobPosting.user_id == user_id)
-    )
-    scrape = (scrape_result.scalar() or 0) > 0
-
-    # ── Rank (any job with rank_score) ───────────────────────
-    rank_result = await db.execute(
-        select(func.count(JobPosting.id)).where(
-            JobPosting.user_id == user_id,
-            JobPosting.rank_score.isnot(None),
-        )
-    )
-    rank = (rank_result.scalar() or 0) > 0
-
-    # ── Apply (any application generated) ────────────────────
-    apply_result = await db.execute(
-        select(func.count(Application.id)).where(Application.user_id == user_id)
-    )
-    apply = (apply_result.scalar() or 0) > 0
-
-    # ── Interview (any prep generated) ────────────────────────
-    interview_result = await db.execute(
-        select(func.count(InterviewPrep.id)).where(
-            InterviewPrep.user_id == user_id
-        )
-    )
-    interview = (interview_result.scalar() or 0) > 0
-
-    # ── Outcome (any outcome recorded) ────────────────────────
-    outcome_result = await db.execute(
-        select(func.count(Outcome.id)).where(Outcome.user_id == user_id)
-    )
-    outcome = (outcome_result.scalar() or 0) > 0
 
     steps = [
-        {"key": "providers", "label": "Providers", "done": providers},
-        {"key": "setup", "label": "Setup", "done": setup},
-        {"key": "scrape", "label": "Scrape", "done": scrape},
-        {"key": "rank", "label": "Rank", "done": rank},
-        {"key": "apply", "label": "Apply", "done": apply},
-        {"key": "interview", "label": "Interview", "done": interview},
-        {"key": "outcome", "label": "Outcome", "done": outcome},
+        {"key": "providers", "label": "Providers", "done": providers > 0},
+        {"key": "setup", "label": "Setup", "done": setup > 0},
+        {"key": "scrape", "label": "Scrape", "done": scrape > 0},
+        {"key": "rank", "label": "Rank", "done": rank > 0},
+        {"key": "apply", "label": "Apply", "done": apply > 0},
+        {"key": "interview", "label": "Interview", "done": interview > 0},
+        {"key": "outcome", "label": "Outcome", "done": outcome > 0},
     ]
 
     completed = sum(1 for s in steps if s["done"])
@@ -199,42 +124,13 @@ async def get_analytics_funnel(
     """Get conversion funnel data for analytics charts."""
     user_id = user["sub"]
 
-    # Count job postings
-    total_jobs_result = await db.execute(
-        select(func.count(JobPosting.id)).where(JobPosting.user_id == user_id)
+    total_jobs, ranked_jobs, applications, interviews, hired = await asyncio.gather(
+        _count(db, JobPosting, user_id),
+        _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None)),
+        _count(db, Application, user_id),
+        _count(db, InterviewPrep, user_id),
+        _count(db, Outcome, user_id, Outcome.status == "hired"),
     )
-    total_jobs = total_jobs_result.scalar() or 0
-
-    # Ranked jobs
-    ranked_jobs_result = await db.execute(
-        select(func.count(JobPosting.id)).where(
-            JobPosting.user_id == user_id,
-            JobPosting.rank_score.isnot(None),
-        )
-    )
-    ranked_jobs = ranked_jobs_result.scalar() or 0
-
-    # Applications
-    apps_result = await db.execute(
-        select(func.count(Application.id)).where(Application.user_id == user_id)
-    )
-    applications = apps_result.scalar() or 0
-
-    # Interviews
-    interviews_result = await db.execute(
-        select(func.count(InterviewPrep.id)).where(
-            InterviewPrep.user_id == user_id
-        )
-    )
-    interviews = interviews_result.scalar() or 0
-
-    # Hired
-    hired_result = await db.execute(
-        select(func.count(Outcome.id)).where(
-            Outcome.user_id == user_id, Outcome.status == "hired"
-        )
-    )
-    hired = hired_result.scalar() or 0
 
     return {
         "funnel": [
