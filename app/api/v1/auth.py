@@ -1,9 +1,9 @@
-"""Authentication router — register and login endpoints. Public endpoints (no auth required)."""
+"""Authentication router — register, login, and account deletion."""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_locale
-from app.schemas.auth import Token, UserLogin, UserOut, UserRegister
+from app.api.deps import get_current_user, get_db, get_locale
+from app.schemas.auth import DeleteAccountRequest, Token, UserLogin, UserOut, UserRegister
 from app.services import auth
 from app.core.i18n.locale import t
 
@@ -56,3 +56,29 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
     return Token(access_token=token)
+
+
+@router.delete("/account", status_code=status.HTTP_200_OK)
+async def delete_account(
+    payload: DeleteAccountRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    locale: str = Depends(get_locale),
+):
+    """Permanently delete the authenticated user's account and all data.
+
+    Requires the current password and a confirmation string.
+    """
+    try:
+        await auth.delete_account(
+            db=db,
+            user_id=user["sub"],
+            password=payload.password,
+            confirmation=payload.confirmation,
+        )
+    except auth.InvalidCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=t("auth.invalid_credentials", locale),
+        ) from exc
+    return {"message": t("auth.account_deleted", locale)}

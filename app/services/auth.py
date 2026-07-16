@@ -1,4 +1,4 @@
-"""Authentication service — user registration and login."""
+"""Authentication service — user registration, login, and account deletion."""
 
 from __future__ import annotations
 
@@ -12,6 +12,11 @@ from app.exceptions import DuplicateError
 
 class InvalidCredentialsError(Exception):
     """Raised when login credentials are invalid."""
+    pass
+
+
+class DeleteAccountError(Exception):
+    """Raised when account deletion fails (wrong password, wrong confirmation)."""
     pass
 
 
@@ -73,3 +78,33 @@ async def login_user(db: AsyncSession, email: str, password: str) -> tuple[User,
 
     token = create_access_token(subject=user.id)
     return user, token
+
+
+async def delete_account(
+    db: AsyncSession,
+    user_id: str,
+    password: str,
+    confirmation: str,
+) -> None:
+    """Permanently delete the user account and all associated data.
+
+    Args:
+        db: Database session.
+        user_id: ID of the user to delete.
+        password: Current password for verification.
+        confirmation: Confirmation string (must equal expected value).
+
+    Raises:
+        InvalidCredentialsError: If the password is wrong.
+        DeleteAccountError: If the confirmation string does not match.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise InvalidCredentialsError("User not found")
+
+    if not verify_password(password, user.hashed_password):
+        raise InvalidCredentialsError("Invalid password")
+
+    await db.delete(user)
+    await db.flush()

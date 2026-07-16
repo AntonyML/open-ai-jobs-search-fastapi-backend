@@ -15,6 +15,13 @@ class UserLogin(BaseModel):
     email: EmailStr = Field(..., description="User email address")
     password: str = Field(..., description="User password")
 
+
+class DeleteAccountRequest(BaseModel):
+    """Request to delete the user's account."""
+    password: str = Field(..., description="Current password for confirmation")
+    confirmation: str = Field(..., min_length=1, description='Type "CONFIRMAR" to proceed')
+
+
 # ── Response schemas ────────────────────────────────────────────────
 class Token(BaseModel):
     """JWT token response."""
