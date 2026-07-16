@@ -9,6 +9,7 @@ Exposes monitoring and control endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
@@ -173,5 +174,7 @@ async def queue_websocket(ws: WebSocket):
 
     except WebSocketDisconnect:
         logger.debug("WebSocket disconnected for user %s", user_id)
+    except asyncio.CancelledError:
+        logger.debug("WebSocket handler cancelled (server shutdown) for user %s", user_id)
     except Exception as exc:
         logger.warning("WebSocket error for user %s: %s", user_id, exc)
