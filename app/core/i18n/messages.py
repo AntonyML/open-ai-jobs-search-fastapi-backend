@@ -27,6 +27,7 @@ CATALOG: dict[str, dict[str, str]] = {
         "auth.email_exists": "An account with this email already exists",
         "auth.token_expired": "Session expired. Please log in again.",
         "auth.account_deleted": "Account permanently deleted. All your data has been removed.",
+        "auth.too_many_attempts": "Too many login attempts. Please try again later.",
         # ── Profile ────────────────────────────────────────────
         "profile.not_found": "Candidate profile not found. Run /setup first.",
         "profile.incomplete": "Profile is incomplete. Please fill in at least name and experience.",
@@ -111,6 +112,7 @@ CATALOG: dict[str, dict[str, str]] = {
         "auth.email_exists": "Ya existe una cuenta con este correo",
         "auth.token_expired": "Sesión expirada. Por favor inicia sesión de nuevo.",
         "auth.account_deleted": "Cuenta eliminada permanentemente. Todos tus datos han sido borrados.",
+        "auth.too_many_attempts": "Demasiados intentos de inicio de sesión. Intenta de nuevo más tarde.",
         # ── Profile ────────────────────────────────────────────
         "profile.not_found": "Perfil de candidato no encontrado. Ejecuta /setup primero.",
         "profile.incomplete": "El perfil está incompleto. Completa al menos nombre y experiencia.",

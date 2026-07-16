@@ -59,6 +59,11 @@ class User(Base, TimestampMixin):
     full_name: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(default=True)
 
+    # Role: "admin" or "client"
+    role: Mapped[str] = mapped_column(String(20), default="client")
+    # Tier: "free" or "premium"
+    tier: Mapped[str] = mapped_column(String(20), default="free")
+
     # Active LLM provider (default from settings, overridable per user)
     active_provider: Mapped[str] = mapped_column(String(50), default="anthropic")
 

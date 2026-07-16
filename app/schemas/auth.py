@@ -41,5 +41,41 @@ class UserOut(BaseModel):
     email: str
     full_name: str | None = None
     is_active: bool = True
+    role: str = "client"
+    tier: str = "free"
     active_provider: str = "anthropic"
     model_config = {"from_attributes": True}
+
+
+# ── Admin schemas ─────────────────────────────────────────────────
+class AdminUserUpdate(BaseModel):
+    """Admin updates a user's tier or role."""
+    tier: str | None = None
+    role: str | None = None
+
+
+class AdminUserOut(BaseModel):
+    """Admin view of a user — includes all info."""
+    id: str
+    email: str
+    full_name: str | None = None
+    is_active: bool = True
+    role: str = "client"
+    tier: str = "free"
+    active_provider: str = "anthropic"
+    created_at: datetime | None = None
+    model_config = {"from_attributes": True}
+
+
+# ── Payment / Upgrade schemas ─────────────────────────────────────
+class UpgradeRequest(BaseModel):
+    """User upgrade / payment request."""
+    method: str = "email"  # "sinpe" or "email"
+    phone: str | None = None  # Costa Rica phone (required for SINPE)
+
+
+class DonationRequest(BaseModel):
+    """Donation notification."""
+    amount: str = ""
+    method: str = "email"  # "sinpe" or "email"
+    phone: str | None = None

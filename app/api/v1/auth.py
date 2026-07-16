@@ -1,9 +1,17 @@
-"""Authentication router — register, login, and account deletion."""
-from fastapi import APIRouter, Depends, HTTPException, status
+"""Authentication router — register, login, account deletion, and upgrade requests."""
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_locale
-from app.schemas.auth import DeleteAccountRequest, Token, UserLogin, UserOut, UserRegister
+from app.schemas.auth import (
+    DeleteAccountRequest,
+    DonationRequest,
+    Token,
+    UpgradeRequest,
+    UserLogin,
+    UserOut,
+    UserRegister,
+)
 from app.services import auth
 from app.core.i18n.locale import t
 
@@ -39,23 +47,50 @@ async def register(
 @router.post("/login", response_model=Token)
 async def login(
     payload: UserLogin,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     locale: str = Depends(get_locale),
 ):
-    """Login with email and password. Returns a JWT access token."""
+    """Login with email and password. Returns a JWT access token.
+
+    Rate-limited: after ``rate_limit_attempts`` failed attempts from
+    the same IP+email pair, subsequent tries return 429 Too Many Requests.
+    """
+    client_ip = request.client.host if request.client else "unknown"
     try:
-        user, token = await auth.login_user(
+        user, token_str = await auth.login_user(
             db=db,
             email=payload.email,
             password=payload.password,
+            ip=client_ip,
         )
+    except auth.RateLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=t("auth.too_many_attempts", locale),
+        ) from exc
     except auth.InvalidCredentialsError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=t("auth.invalid_credentials", locale),
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
-    return Token(access_token=token)
+    return Token(access_token=token_str)
+
+
+@router.get("/me", response_model=UserOut)
+async def get_me(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the authenticated user's profile."""
+    from sqlalchemy import select
+    from app.db.models import User
+    result = await db.execute(select(User).where(User.id == user["sub"]))
+    db_user = result.scalar_one_or_none()
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return db_user
 
 
 @router.delete("/account", status_code=status.HTTP_200_OK)
@@ -65,10 +100,7 @@ async def delete_account(
     db: AsyncSession = Depends(get_db),
     locale: str = Depends(get_locale),
 ):
-    """Permanently delete the authenticated user's account and all data.
-
-    Requires the current password and a confirmation string.
-    """
+    """Permanently delete the authenticated user's account and all data."""
     try:
         await auth.delete_account(
             db=db,
@@ -82,3 +114,76 @@ async def delete_account(
             detail=t("auth.invalid_credentials", locale),
         ) from exc
     return {"message": t("auth.account_deleted", locale)}
+
+
+@router.post("/upgrade", status_code=status.HTTP_200_OK)
+async def request_upgrade(
+    payload: UpgradeRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    locale: str = Depends(get_locale),
+):
+    """Request a plan upgrade. Sends an email notification to the admin."""
+    from app.core.settings import get_settings
+    from app.db.models import User as UserModel
+    from app.services.email import send_upgrade_request
+    from sqlalchemy import select
+
+    settings = get_settings()
+    result = await db.execute(select(UserModel).where(UserModel.id == user["sub"]))
+    db_user = result.scalar_one_or_none()
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    try:
+        await send_upgrade_request(
+            admin_email=settings.admin_email,
+            user_email=db_user.email,
+            user_name=db_user.full_name or db_user.email,
+            method=payload.method,
+            phone=payload.phone,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    return {"message": t("common.saved", locale) if locale == "en" else "Solicitud enviada. Te contactaremos pronto."}
+
+
+@router.post("/donate", status_code=status.HTTP_200_OK)
+async def donate(
+    payload: DonationRequest,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    locale: str = Depends(get_locale),
+):
+    """Send a donation notification to the admin."""
+    from app.core.settings import get_settings
+    from app.db.models import User as UserModel
+    from app.services.email import send_donation_notification
+    from sqlalchemy import select
+
+    settings = get_settings()
+    result = await db.execute(select(UserModel).where(UserModel.id == user["sub"]))
+    db_user = result.scalar_one_or_none()
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    try:
+        await send_donation_notification(
+            admin_email=settings.admin_email,
+            user_email=db_user.email,
+            user_name=db_user.full_name or db_user.email,
+            amount=payload.amount or "No especificado",
+            method=payload.method,
+            phone=payload.phone,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    return {"message": "¡Gracias por tu donación!" if locale == "es" else "Thank you for your donation!"}

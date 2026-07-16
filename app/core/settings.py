@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     # ── APScheduler ───────────────────────────────────────────
     scrape_interval_hours: int = 6
 
+    # ── Resend (Email) ────────────────────────────────────────
+    resend_api_key: str | None = None
+    admin_email: str = "admin@openajobs.com"
+
+    # ── Rate Limiting ─────────────────────────────────────────
+    rate_limit_attempts: int = 5
+    rate_limit_window_seconds: int = 900  # 15 minutes
+
     # ── i18n ──────────────────────────────────────────────────
     default_language: str = "en"
 

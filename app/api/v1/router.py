@@ -56,6 +56,10 @@ router.include_router(add_template_router)
 router.include_router(pipeline_reset_router)
 router.include_router(reset_router)
 
+# ── Admin ────────────────────────────────────────────────────────────
+from app.api.v1.admin import router as admin_router
+router.include_router(admin_router)
+
 # ── Dashboard + Analytics ───────────────────────────────────────────
 router.include_router(dashboard_router)
 router.include_router(analytics_router)
