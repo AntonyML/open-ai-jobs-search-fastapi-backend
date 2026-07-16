@@ -80,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
             environment=settings.app_env,
             traces_sample_rate=0.1,
+            send_default_pii=True,
         )
 
     # ── CORS ───────────────────────────────────────────────────
