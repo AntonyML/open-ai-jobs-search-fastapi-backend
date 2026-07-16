@@ -1,6 +1,6 @@
 """Upskill router — endpoints for skill gap analysis and learning plan generation."""
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from app.schemas.upskill import (
     UpskillSummaryOut,
 )
 from app.services import upskill
+from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/upskill", tags=["upskill"])
 
@@ -39,6 +40,14 @@ async def trigger_upskill(
     - aggregate (default): analyses all ranked jobs for the user
     - targeted: analyses a single job posting (provide target_job_url or target_job_posting_id)
     """
+    # 0. Tier check — Upskill is Premium-only
+    limits = get_tier_limits(user.get("tier", "free"))
+    if limits.get("upskill_locked", True):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Upskill is only available on the Premium plan. Upgrade to unlock.",
+        )
+
     # 1. Get candidate profile
     candidate_result = await db.execute(
         select(CandidateProfile).where(CandidateProfile.user_id == user["sub"])

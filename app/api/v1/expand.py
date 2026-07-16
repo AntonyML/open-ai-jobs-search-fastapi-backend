@@ -1,6 +1,6 @@
 """Expand router — endpoints for competency expansion from documents and online presence."""
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from app.schemas.expand import (
     ExpandRequest,
 )
 from app.services import expand
+from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/expand", tags=["expand"])
 
@@ -39,6 +40,14 @@ async def trigger_expand(
     Runs as a background task. Returns immediately with the expansion record (status=pending).
     Poll GET /expand/{expansion_id} to check completion.
     """
+    # 0. Tier check — Expand is Premium-only
+    limits = get_tier_limits(user.get("tier", "free"))
+    if limits.get("expand_locked", True):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Expand is only available on the Premium plan. Upgrade to unlock.",
+        )
+
     # 1. Get candidate profile
     candidate_result = await db.execute(
         select(CandidateProfile).where(CandidateProfile.user_id == user["sub"])
