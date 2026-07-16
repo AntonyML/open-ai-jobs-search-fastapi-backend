@@ -54,6 +54,7 @@ class ProviderCredentialOut(BaseModel):
     model: str | None
     has_key: bool = True
     is_active: bool
+    usage_limits: dict | None = None
 
     model_config = {"from_attributes": True}
 

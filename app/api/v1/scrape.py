@@ -14,6 +14,7 @@ from app.schemas.scrape import (
     ScrapeRunOut,
 )
 from app.services import scrape
+from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/scrape", tags=["scrape"])
 
@@ -29,15 +30,32 @@ async def trigger_scrape(
     db: AsyncSession = Depends(_get_db),
     locale: str = Depends(get_locale),
 ):
-    """Trigger a scrape run."""
+    """Trigger a scrape run.
+
+    Free-tier users:
+    - Limited to 1 site (``max_scrape_sites=1``).
+    - Limited to 5 jobs per portal (``max_scrape_jobs=5``).
+    """
+    limits = get_tier_limits(user.get("tier", "free"))
+
+    # Free-tier limits
+    is_free = user.get("tier") == "free" or user.get("tier") is None
+    portals = payload.portals
+    if is_free:
+        if portals and len(portals) > limits["max_scrape_sites"]:
+            portals = portals[: limits["max_scrape_sites"]]
+    broad = False if is_free else payload.broad
+
+    limit_per_portal = min(payload.limit_per_portal, limits["max_scrape_jobs"])
+
     run = await scrape.execute_scrape(
         db=db,
         user_id=user["sub"],
         focus_area=payload.focus_area,
-        broad=payload.broad,
-        portals=payload.portals,
+        broad=broad,
+        portals=portals,
         jobage_days=payload.jobage_days,
-        limit_per_portal=payload.limit_per_portal,
+        limit_per_portal=limit_per_portal,
         triggered_by="manual",
     )
 

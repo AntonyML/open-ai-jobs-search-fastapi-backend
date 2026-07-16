@@ -1,6 +1,6 @@
 """Providers router — endpoints for managing user LLM provider credentials."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -28,6 +28,7 @@ from app.services.provider_models import (
     list_provider_models,
     set_user_model_selection,
 )
+from app.services.tiers import get_tier_limits
 from app.llm.adapter import llm_completion
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -90,6 +91,7 @@ async def list_my_providers(
     """Return all providers the user has configured (without API keys)."""
     providers = await list_user_providers(db, user["sub"])
     active_config = await get_user_active_provider_config(db, user["sub"])
+    limits = get_tier_limits(user.get("tier", "free"))
     return [
         ProviderCredentialOut(
             provider=p["provider"],
@@ -97,6 +99,7 @@ async def list_my_providers(
             model=None,
             has_key=True,
             is_active=p["provider"] == active_config.get("provider"),
+            usage_limits=limits,
         )
         for p in providers
     ]
@@ -135,7 +138,31 @@ async def create_or_update_provider(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ProviderCredentialOut:
-    """Store or update an API key for a provider. The key is encrypted at rest."""
+    """Store or update an API key for a provider. The key is encrypted at rest.
+
+    Free-tier users:
+    - Cannot use ``nvidia_nim``.
+    - Can only have ``max_providers=1`` provider configured.
+    """
+    limits = get_tier_limits(user.get("tier", "free"))
+
+    # Block nvidia_nim for free tier
+    if payload.provider == "nvidia_nim" and not limits["allow_nvidia_nim"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="NVIDIA NIM is only available on the Premium plan.",
+        )
+
+    # Check max providers count
+    existing = await list_user_providers(db, user["sub"])
+    existing_for_provider = [p for p in existing if p["provider"] == payload.provider]
+    # Only count toward the limit if this is a NEW provider (not an update)
+    if not existing_for_provider and len(existing) >= limits["max_providers"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You can only have {limits['max_providers']} provider(s) on your current plan. Upgrade to Premium for more.",
+        )
+
     credential = await set_provider_credential(
         db=db,
         user_id=user["sub"],
