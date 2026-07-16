@@ -254,6 +254,62 @@ Servidor en `http://127.0.0.1:8000`. Healthcheck: `GET /api/v1/health`
 
 ---
 
+## Seed de administrador
+
+Para promover un usuario existente a administrador, ejecuta esta query directamente en **Supabase SQL Editor** (o cualquier cliente PostgreSQL):
+
+```sql
+-- 🔥 Cambiar rol a admin para el usuario con email específico
+UPDATE users
+SET role = 'admin',
+    tier = 'premium',
+    updated_at = NOW()
+WHERE email = 'tu-email@ejemplo.com';
+
+-- ✅ Verificar
+SELECT id, email, role, tier, is_active FROM users WHERE email = 'tu-email@ejemplo.com';
+```
+
+> ⚠️ Después de cambiar el rol, el usuario debe **cerrar sesión y volver a iniciarla** para que el JWT se genere con el nuevo rol (`admin`). Una vez logueado como admin, accede a `/admin` en el frontend.
+
+### Insertar un admin desde cero
+
+Si el usuario aún no existe, primero genera un **bcrypt hash** de la contraseña:
+
+```bash
+# Con Node.js
+node -e "require('bcryptjs').hash('tu-contraseña', 10).then(console.log)"
+```
+
+O desde Python:
+
+```python
+import bcrypt
+hash = bcrypt.hashpw(b"tu-contraseña", bcrypt.gensalt()).decode()
+print(hash)
+```
+
+Luego inserta:
+
+```sql
+INSERT INTO users (id, email, hashed_password, full_name, is_active, role, tier, active_provider, preferred_language, created_at, updated_at)
+VALUES (
+  gen_random_uuid()::text,
+  'admin@ejemplo.com',
+  '$2b$12$...',  -- ← reemplaza con el hash bcrypt que generaste
+  'Admin User',
+  TRUE,
+  'admin',
+  'premium',
+  'anthropic',
+  'en',
+  NOW(),
+  NOW()
+);
+```
+
+---
+
 ## Migraciones (Alembic)
 
 ```bash
