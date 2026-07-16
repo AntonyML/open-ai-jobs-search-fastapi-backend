@@ -447,9 +447,9 @@ class Application(Base, TimestampMixin):
 
     # ── Compilation status ────────────────────────────────────
     cv_compiled: Mapped[bool] = mapped_column(default=False)
-    cv_pages: Mapped[int | None] = mapped_column
+    cv_pages: Mapped[int | None] = mapped_column(default=None)
     cover_letter_compiled: Mapped[bool] = mapped_column(default=False)
-    cover_letter_pages: Mapped[int | None] = mapped_column
+    cover_letter_pages: Mapped[int | None] = mapped_column(default=None)
 
     # ── Pipeline stage tracking ────────────────────────────────
     pipeline_stage: Mapped[str] = mapped_column(
