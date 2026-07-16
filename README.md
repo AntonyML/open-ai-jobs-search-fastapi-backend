@@ -1,6 +1,6 @@
 # Open Ai Jobs Search — FastAPI Backend
 
-Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta un pipeline completo: desde el scraping de portales hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas y tracking de resultados.
+Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta un pipeline completo: desde el scraping de portales hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas, tracking de resultados y calibración de fit.
 
 > **Inspirado en:** [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search)
 
@@ -18,10 +18,6 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 - [Endpoints](#endpoints)
 - [LLM Orchestrator](#llm-orchestrator)
 - [Drafter-Reviewer Pipeline](#drafter-reviewer-pipeline)
-- [Calibración](#calibración)
-- [Dashboard & Analytics](#dashboard--analytics)
-- [WebSocket](#websocket)
-- [i18n](#i18n)
 - [Variables de entorno](#variables-de-entorno)
 - [Testing](#testing)
 - [Deployment](#deployment)
@@ -33,14 +29,16 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 - **FastAPI** (async) + **Pydantic v2** + **SQLAlchemy 2.0** (async, asyncpg)
 - **LiteLLM** — capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, Groq, OpenRouter, LM Studio, Ollama)
-- **LLMOrchestrator** — sistema de colas, failover automático, rate limiting, health monitoring, WebSocket real-time
+- **LLMOrchestrator** — sistema de colas persistente, failover automático, rate limiting, health monitoring, WebSocket real-time
 - **Supabase** (PostgreSQL) — Session Pooler o Direct Connection
 - **APScheduler** — scraping periódico
 - **Bun/TypeScript** scrapers (linkedin, jobindex, jobnet, jobdanmark, freehire, jobbank)
 - **LaTeX** (lualatex + xelatex) — generación de CV y cover letters tailored
-- **i18n** — soporte multi-idioma (en, es) con detección automática vía Accept-Language/cookie
+- **i18n** — soporte multi-idioma (en, es) con detección automática vía cookie/Accept-Language
 - **WebSocket** — notificaciones real-time del estado de la cola de ejecución
 - **Fernet** (cryptography) — cifrado de API keys por usuario en DB
+- **Sentry** — monitoreo de errores en producción
+- **Resend** — email transaccional (upgrades, donaciones)
 
 ---
 
@@ -69,6 +67,7 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 │  Scrape → Rank → Apply → Interview → Outcome → Upskill           │
 │  Expand → Verification → ATS Check → CV Cutter → PDF Compiler    │
 │  Fit Calibration → Salary Benchmarking → Pipeline Reset          │
+│  Tiers → Email → Provider Credentials → Provider Models          │
 └──────────────────────────────────────────────────────────────────┘
          │
          ▼
@@ -114,7 +113,7 @@ flowchart LR
 ```
 
 ### Fase 0 — Provider Setup
-Cada usuario configura su propio proveedor LLM (API key + modelo). Las credenciales se cifran con Fernet y se almacenan por usuario. El usuario puede seleccionar el modelo específico dentro de cada proveedor.
+Cada usuario configura su propio proveedor LLM (API key + modelo). Las credenciales se cifran con Fernet y se almacenan por usuario. El usuario puede seleccionar el modelo específico dentro de cada proveedor. Soporta: Anthropic, OpenAI, NVIDIA NIM, Groq, OpenRouter, LM Studio, Ollama.
 
 ### Fase 1 — Setup (perfil candidato)
 Perfil completo: datos personales, experiencia, educación, skills, **perfil conductual** (DISC, fortalezas, áreas de crecimiento), y **ejemplos STAR** para entrevistas.
@@ -168,46 +167,52 @@ Análisis 100% determinista que correlaciona outcomes reales (entrevistas, ofert
 FastAPI-backend/
 ├── app/
 │   ├── main.py                    # app factory: create_app()
-│   ├── core/                      # config, settings, seguridad, scheduler
+│   ├── core/                      # config (settings, security, logging, scheduler, task_manager, i18n)
 │   ├── llm/                       # adaptador LiteLLM
 │   ├── db/
-│   │   ├── models.py              # SQLAlchemy models (~30 tablas)
+│   │   ├── models.py              # SQLAlchemy models (~20 tablas)
 │   │   └── session.py             # async engine + session factory
-│   ├── schemas/                   # Pydantic v2 request/response
-│   ├── services/                  # Lógica de negocio (~20 módulos)
+│   ├── schemas/                   # Pydantic v2 request/response (21 módulos)
+│   ├── services/                  # Lógica de negocio (~28 módulos)
+│   │   ├── auth.py                # Registro, login, upgrade, donaciones
+│   │   ├── setup.py               # Perfil candidato + conductual + STAR
+│   │   ├── scrape.py              # Orquestación scrapers Bun/TS
 │   │   ├── rank.py                # Ranking + RankAnalyzer determinista
 │   │   ├── apply.py               # Drafter-Reviewer-Revise pipeline
 │   │   ├── interview.py           # Prep + mock interview
 │   │   ├── outcome.py             # Tracking + fit calibration
-│   │   ├── upskill.py             # Skill gap analysis
+│   │   ├── upskill.py             # Skill gap analysis (4-pass)
 │   │   ├── expand.py              # Perfil enrichment
-│   │   ├── verification.py        # Verification checklist
+│   │   ├── verification.py        # Verification checklist (10+ checks)
 │   │   ├── ats_check.py           # ATS parseability
 │   │   ├── cv_cutter.py           # Relevance-weighted trimming
 │   │   ├── pdf_compiler.py        # LaTeX compilation loop
 │   │   ├── pipeline_reset.py      # Clean slate reset
 │   │   ├── provider_credentials.py # Fernet-encrypted creds
 │   │   ├── provider_models.py     # Model catalog per provider
+│   │   ├── tiers.py               # Límites free/premium
+│   │   ├── email.py               # Resend email integration
+│   │   ├── reset.py               # Reset de datos de usuario
+│   │   ├── fit_calibration.py     # Correlación outcome → keyword
+│   │   ├── add_portal.py          # Registro de portales
+│   │   ├── add_template.py        # Registro de templates LaTeX
 │   │   ├── salary/                # Salary benchmarking
-│   │   ├── scrape.py              # Web scraping orchestration
-│   │   └── setup.py               # Candidate profile management
-│   ├── utils/                     # Utility tools
-│   │   ├── pdf_verifier.py        # ATS verify wrapper
-│   │   ├── skill_linter.py        # Skill validation (~120 known skills)
-│   │   └── __init__.py
-│   ├── middleware/
-│   │   └── content_guard.py       # PII detection in LLM outputs
-│   ├── external/                  # Scrapers Bun/TS + LaTeX heredados
+│   │   └── orchestrator/          # 9 módulos (LLMOrchestrator, ExecutionQueue, ProviderManager, ModelManager, etc.)
+│   ├── utils/                     # pdf_verifier.py, skill_linter.py
+│   ├── middleware/                # content_guard.py (detección PII)
+│   ├── external/                  # scrapers Bun/TS (6), templates LaTeX
 │   ├── api/
-│   │   ├── deps.py                # get_db, get_current_user
-│   │   └── v1/                    # Routers versionados (~15 routers)
+│   │   ├── deps.py                # get_db, get_current_user, get_llm_provider, get_locale
+│   │   └── v1/                    # ~17 routers (auth, setup, scrape, rank, apply, interview, outcome, expand, upskill, salary, providers, orchestrator, verification, add_portal, add_template, pipeline_reset, reset, dashboard, users, admin)
 │   └── exceptions.py              # Excepciones centralizadas
 ├── tests/
-│   ├── unit/                      # ~367 tests (SQLite in-memory + mocks)
-│   └── integration/               # Tests de integración
-├── alembic/                       # Migraciones DB
+│   ├── unit/                      # ~20 archivos de test (SQLite in-memory + mocks)
+│   └── integration/
+├── alembic/                       # 15 migraciones DB
+├── scripts/                       # check_miktex.py
 ├── pyproject.toml
-└── Dockerfile                     # Multi-stage (builder + runtime con MiKTeX)
+├── Dockerfile                     # Multi-stage (Python + MiKTeX + Bun)
+└── fly.toml                       # Config Fly.io
 ```
 
 ---
@@ -236,7 +241,7 @@ pip install -e ".[dev]"
 
 # 3. Variables de entorno
 cp .env.example .env
-# Editar DATABASE_URL, JWT_SECRET_KEY y API keys
+# Editar DATABASE_URL, JWT_SECRET_KEY
 
 # 4. Migraciones
 alembic upgrade head
@@ -273,6 +278,10 @@ alembic history
 |--------|------|-------------|
 | POST | `/api/v1/auth/register` | Registro de usuario |
 | POST | `/api/v1/auth/login` | Login (devuelve JWT) |
+| GET | `/api/v1/auth/me` | Perfil del usuario actual |
+| DELETE | `/api/v1/auth/account` | Eliminar cuenta (requiere confirmación) |
+| POST | `/api/v1/auth/upgrade` | Solicitar upgrade de plan |
+| POST | `/api/v1/auth/donate` | Notificar donación |
 
 ### Providers — Configuración LLM
 
@@ -285,6 +294,10 @@ alembic history
 | PUT | `/api/v1/providers/active` | Cambiar proveedor activo |
 | PATCH | `/api/v1/providers/{provider}` | Actualizar credencial parcial |
 | DELETE | `/api/v1/providers/{provider}` | Eliminar credencial |
+| POST | `/api/v1/providers/test` | Probar conexión del proveedor activo |
+| GET | `/api/v1/providers/{provider}/models` | Listar modelos disponibles |
+| PUT | `/api/v1/providers/{provider}/models` | Seleccionar modelo activo |
+| POST | `/api/v1/providers/{provider}/models` | Sincronizar modelos disponibles |
 
 ### Setup — Perfil del candidato
 
@@ -336,8 +349,7 @@ alembic history
 | POST | `/api/v1/interview/` | Generar prep pack |
 | GET | `/api/v1/interview/{prep_id}` | Obtener prep por ID |
 | GET | `/api/v1/interview/` | Listar preps |
-| POST | `/api/v1/interview/{prep_id}/mock` | Iniciar mock interview |
-| POST | `/api/v1/interview/{prep_id}/mock` | Enviar respuesta (pasa la conversación) |
+| POST | `/api/v1/interview/{prep_id}/mock` | Iniciar mock interview / enviar respuesta |
 
 ### Outcome — Registro de resultados
 
@@ -373,6 +385,14 @@ alembic history
 | GET | `/api/v1/salary/data` | Obtener datos de salario del usuario |
 | DELETE | `/api/v1/salary/data` | Eliminar datos de salario |
 
+### Dashboard & Analytics
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/dashboard/stats` | KPIs del pipeline (scraped, ranked, applications, hired) |
+| GET | `/api/v1/dashboard/pipeline` | Progreso del pipeline por paso |
+| GET | `/api/v1/analytics/funnel` | Datos de funnel de conversión |
+
 ### Pipeline Reset
 
 | Método | Ruta | Descripción |
@@ -392,6 +412,15 @@ alembic history
 | POST | `/api/v1/orchestrator/cancel/{job_id}` | Cancelar job |
 | POST | `/api/v1/orchestrator/retry/{job_id}` | Reintentar job fallido |
 | POST | `/api/v1/orchestrator/clear` | Limpiar cola |
+| WebSocket | `/api/v1/orchestrator/ws` | Notificaciones real-time de la cola |
+
+### Users — Administración
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/users/` | Listar usuarios (admin) |
+| PATCH | `/api/v1/users/{user_id}` | Actualizar usuario (role, tier) |
+| DELETE | `/api/v1/users/{user_id}` | Eliminar usuario |
 
 ### Configuración
 
@@ -408,7 +437,7 @@ alembic history
 
 ## LLM Orchestrator
 
-El orchestrator es el corazón del sistema de ejecución. Reemplaza las llamadas directas a LiteLLM.
+El orchestrator es el corazón del sistema de ejecución. Reemplaza las llamadas directas a LiteLLM. Se compone de 9 módulos en `app/services/orchestrator/`.
 
 ### Provider Registry
 
@@ -519,15 +548,15 @@ Job Posting + Candidate Profile
 ### Verification Checklist (~10 checks)
 
 **Deterministas:**
-- Nombre del candidato en el CV ✅
-- Email literal en el CV (no solo ícono) ✅
-- Rol del posting en el profile statement ✅
-- Empresa en la cover letter ✅
-- Fechas en formato consistente ✅
-- LaTeX balanceado (mismo número de `{` y `}`) ✅
-- Sin placeholders `[YOUR_NAME]` sin reemplazar ✅
-- Sin `(cid:*)` markers en PDF ✅
-- Keywords del posting ≥70% presentes en CV ✅
+- Nombre del candidato en el CV
+- Email literal en el CV (no solo ícono)
+- Rol del posting en el profile statement
+- Empresa en la cover letter
+- Fechas en formato consistente
+- LaTeX balanceado (mismo número de `{` y `}`)
+- Sin placeholders `[YOUR_NAME]` sin reemplazar
+- Sin `(cid:*)` markers en PDF
+- Keywords del posting ≥70% presentes en CV
 
 **Con LLM (1 llamada al final):**
 - Profile statement específico al rol (no genérico)
@@ -550,6 +579,8 @@ Job Posting + Candidate Profile
 | `LATEX_BIN_DIR` | — | `None` | Directorio de binarios LaTeX |
 | `SCRAPE_INTERVAL_HOURS` | — | `6` | Intervalo del scheduler |
 | `ORCHESTRATOR_MAX_WORKERS` | — | `4` | Workers concurrentes del orquestador |
+| `RESEND_API_KEY` | — | — | API key para email transaccional |
+| `SENTRY_DSN` | — | — | DSN de Sentry para errores en producción |
 
 > Las API keys de proveedores LLM se registran vía API (`POST /api/v1/providers/`) y se almacenan **cifradas con Fernet** en DB por usuario. No van en `.env`.
 
@@ -564,7 +595,7 @@ pytest tests/unit/ -v
 # Tests de integración
 pytest tests/integration/ -v
 
-# Todos los tests (~367)
+# Todos los tests
 pytest -v
 
 # Con coverage
@@ -614,17 +645,11 @@ Los binarios de MiKTeX Portable **no se commitean** (~150 MB, en `.gitignore`).
 
 - **`main.py` es app factory** (`create_app()`), no `app = FastAPI()` global.
 - **Schemas Pydantic separados** de modelos SQLAlchemy. Cada recurso tiene `XCreate`, `XUpdate`, `XOut`.
-- **Dependencias centralizadas** en `api/deps.py` (`get_db`, `get_current_user`).
+- **Dependencias centralizadas** en `api/deps.py` (`get_db`, `get_current_user`, `get_llm_provider`, `get_locale`).
 - **Excepciones de negocio** en `exceptions.py` con handlers registrados. No `HTTPException` en servicios.
 - **LLM siempre vía LLMOrchestrator**, nunca SDK directo de proveedor.
 - **Sanitización antes de validación**: truncar arrays, reparar JSON, llenar defaults antes de Pydantic.
 - **Determinista primero**: si se puede resolver sin LLM, se resuelve sin LLM.
-- **Logging estructurado** con formato `{job_id} {provider} {model} {status}` — no stack traces gigantes.
-
----
-
-## Utility Tools
-
-| Herramienta | Archivo | Propósito |
-|-------------|---------|-----------|
-| **PDF Verifier** | `app/utils/pdf_verifier.py` | Verifica que un PDF generado sea parseable por sistemas ATS: - Detección de marcadores `(cid:*)` que indican caracteres no parseables - Verificación de estructura de PDF (encabezados, objetos, xref) - Validación de que el PDF no esté corrupto o vacío - Wrapper para integrar en el pipeline de generación de documentos ### Skill Linter (`app/utils/skill_linter.py`) Valida skills del perfil del candidato contra un catálogo de ~120 términos conocidos: - Detección de typos y variaciones comunes - Sugerencia de términos canónicos - Normalización de skills para mejorar el matching en ranking - Validación de formato y consistencia ### Content Guard (`app/middleware/content_guard.py`) Middleware de seguridad que detecta PII y contenido sensible en outputs generados por LLM: - Detección de SSN, números de tarjeta, passwords - Detección de placeholders sin reemplazar (`[YOUR_NAME]`, etc.) - Bloqueo de respuestas que contienen información sensible - Integración en el pipeline de generación de documentos
+- **Logging estructurado** con `structlog` (JSON en prod, consola en dev).
+- **Rate limiting** en login (por IP+email).
+- **i18n** con detección vía cookie `NEXT_LOCALE` o `Accept-Language`.
