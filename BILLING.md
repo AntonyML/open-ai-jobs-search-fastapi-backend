@@ -1,7 +1,7 @@
 # 💳 Billing — Configuración para Costa Rica
 
 > **Importante:** Esta guía cubre la configuración **manual de cuentas externas** (no código).  
-> El proyecto Career OS usa 2Checkout (Verifone) como procesador de pagos principal y SINPE Móvil como método local opcional. Los fondos se retiran vía Payoneer.
+> El proyecto Open Ai Jobs Search usa 2Checkout (Verifone) como procesador de pagos principal y SINPE Móvil como método local opcional. Los fondos se retiran vía Payoneer.
 
 ---
 
@@ -167,7 +167,7 @@ Payoneer permite recibir los pagos de 2Checkout y retirarlos a tu banco local en
 
 ## 4. SINPE Móvil — Pago local (Costa Rica)
 
-SINPE Móvil no tiene API pública. La integración en Career OS es **manual**: el usuario ingresa un número de referencia y el administrador verifica.
+SINPE Móvil no tiene API pública. La integración en Open Ai Jobs Search es **manual**: el usuario ingresa un número de referencia y el administrador verifica.
 
 ### 4.1 Requisitos
 

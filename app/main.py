@@ -54,7 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings = get_settings()
 
     app = FastAPI(
-        title="Open AI Jobs Search API",
+        title="Open Ai Jobs Search API",
         version="0.1.0",
         description="Backend multi-proveedor para búsqueda de empleos con IA",
         lifespan=lifespan,

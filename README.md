@@ -1,4 +1,4 @@
-# Career OS — FastAPI Backend
+# Open Ai Jobs Search — FastAPI Backend
 
 Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta un pipeline completo: desde el scraping de portales hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas y tracking de resultados.
 
