@@ -70,13 +70,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.sentry_dsn:
         import sentry_sdk
         from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.structlog import StructlogIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
 
         sentry_sdk.init(
             dsn=settings.sentry_dsn,
             integrations=[
                 FastApiIntegration(),
-                StructlogIntegration(),
+                LoggingIntegration(),
             ],
             environment=settings.app_env,
             traces_sample_rate=0.1,
