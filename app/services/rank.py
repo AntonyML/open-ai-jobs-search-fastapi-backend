@@ -224,6 +224,7 @@ async def execute_rank(
     focus_area: str | None = None,
     re_rank: bool = False,
     top_n: int = 5,
+    max_jobs: int | None = None,
 ) -> RankResult:
     """Execute a rank run for the user's job postings.
 
@@ -233,6 +234,7 @@ async def execute_rank(
         focus_area: Optional filter for job title/description.
         re_rank: If True, re-evaluate already-ranked jobs.
         top_n: Size of the shortlist to return.
+        max_jobs: Max jobs to rank (None = unlimited, used for free-tier limit).
 
     Returns:
         RankResult with shortlist and counts.
@@ -242,7 +244,7 @@ async def execute_rank(
     provider_config = await get_user_active_provider_config(db, user_id)
 
     # 2. Select jobs to rank
-    jobs = await _select_jobs_to_rank(db, user_id, focus_area, re_rank)
+    jobs = await _select_jobs_to_rank(db, user_id, focus_area, re_rank, max_jobs=max_jobs)
 
     if not jobs:
         return RankResult(
@@ -377,6 +379,7 @@ async def _select_jobs_to_rank(
     user_id: str,
     focus_area: str | None,
     re_rank: bool,
+    max_jobs: int | None = None,
 ) -> list[JobPosting]:
     """Select jobs that need ranking."""
     query = select(JobPosting).where(JobPosting.user_id == user_id)
@@ -401,10 +404,12 @@ async def _select_jobs_to_rank(
         logger.info("Focus area passed to ranking guidance: %s", focus_area)
 
     query = query.order_by(JobPosting.created_at.desc())
+    if max_jobs is not None:
+        query = query.limit(max_jobs)
     logger.info("Rank SQL: %s", query)
     result = await db.execute(query)
     jobs = list(result.scalars().all())
-    logger.info("Rank jobs selected: %d", len(jobs))
+    logger.info("Rank jobs selected: %d (max_jobs=%s)", len(jobs), max_jobs)
     return jobs
 
 

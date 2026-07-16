@@ -1,13 +1,16 @@
 """Interview router — endpoints for interview preparation."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_locale
 from app.core.i18n.locale import t
+from app.db.models import InterviewPrep
 from app.db.session import get_db as _get_db
 from app.schemas.interview import InterviewPrepOut, InterviewPrepRequest, InterviewPrepSummaryOut, MockInterviewRequest, MockInterviewResponse
 from app.services import interview
+from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
@@ -24,6 +27,16 @@ async def trigger_interview_prep(
     locale: str = Depends(get_locale),
 ):
     """Generate interview preparation pack for an application."""
+    tier = user.get("tier", "free")
+    max_prepare = get_tier_limits(tier).get("max_prepare_count")
+    if max_prepare is not None and tier != "premium":
+        result = await db.execute(select(func.count()).where(InterviewPrep.user_id == user["sub"]))
+        prep_count = result.scalar()
+        if prep_count >= max_prepare:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="You have reached the maximum number of interview preps on your current plan. Upgrade to Premium for unlimited.",
+            )
     result = await interview.execute_interview_prep(
         db=db,
         user_id=user["sub"],

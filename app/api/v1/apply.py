@@ -1,7 +1,7 @@
 """Apply router — endpoints for generating tailored CV and cover letter."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_llm_provider, get_locale
@@ -11,6 +11,7 @@ from app.db.session import get_db as _get_db
 from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
 from app.schemas.scrape import JobPostingSummary
 from app.services import apply
+from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/apply", tags=["apply"])
 
@@ -28,6 +29,16 @@ async def trigger_apply(
     locale: str = Depends(get_locale),
 ):
     """Generate tailored CV and cover letter for a ranked job."""
+    tier = user.get("tier", "free")
+    max_apply = get_tier_limits(tier).get("max_apply_count")
+    if max_apply is not None and tier != "premium":
+        result = await db.execute(select(func.count()).where(Application.user_id == user["sub"]))
+        app_count = result.scalar()
+        if app_count >= max_apply:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="You have reached the maximum number of applications on your current plan. Upgrade to Premium for unlimited applications.",
+            )
     result = await apply.execute_apply(
         db=db,
         user_id=user["sub"],

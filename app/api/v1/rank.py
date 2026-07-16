@@ -13,6 +13,7 @@ from app.services import rank
 from app.services import rank_jobs
 from app.db.session import async_session_factory
 from app.services.rank import count_jobs_to_rank
+from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/rank", tags=["rank"])
 
@@ -28,7 +29,12 @@ async def trigger_rank(
     locale: str = Depends(get_locale),
 ):
     """Trigger a rank evaluation for unranked jobs."""
-    job_id = await rank_jobs.start(async_session_factory, user["sub"], payload.model_dump())
+    tier = user.get("tier", "free")
+    max_jobs = get_tier_limits(tier).get("max_rank_iterations")
+    pdata = payload.model_dump()
+    if max_jobs is not None and tier != "premium":
+        pdata["max_jobs"] = max_jobs
+    job_id = await rank_jobs.start(async_session_factory, user["sub"], pdata)
     counts = await count_jobs_to_rank(db, user["sub"], payload.model_dump())
     return {"job_id": job_id, "status": "running", "total_jobs": counts["total"]}
 

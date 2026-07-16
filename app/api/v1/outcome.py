@@ -1,12 +1,15 @@
 """Outcome router — endpoints for recording job application outcomes."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.db.models import Outcome
 from app.db.session import get_db as _get_db
 from app.schemas.outcome import CalibrationReport, OutcomeCreate, OutcomeOut, OutcomeSummaryOut, OutcomeUpdate, TrackerRowOut
 from app.services import fit_calibration, outcome
+from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/outcome", tags=["outcome"])
 
@@ -30,6 +33,16 @@ async def create_outcome(
     Resolutions (application closed):
     - hired, offer_declined, rejected, no_response, interview_only, withdrawn
     """
+    tier = user.get("tier", "free")
+    max_track = get_tier_limits(tier).get("max_track_count")
+    if max_track is not None and tier != "premium":
+        result = await db.execute(select(func.count()).where(Outcome.user_id == user["sub"]))
+        track_count = result.scalar()
+        if track_count >= max_track:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="You have reached the maximum number of tracked outcomes on your current plan. Upgrade to Premium for unlimited tracking.",
+            )
     return await outcome.execute_outcome(db, user["sub"], payload)
 
 
