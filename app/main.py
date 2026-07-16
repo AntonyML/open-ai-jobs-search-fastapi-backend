@@ -8,12 +8,14 @@ Usage:
     app = create_app(settings=test_settings)
 """
 
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import structlog
 
 from app.api.v1.router import router as v1_router
 from app.core.logging import configure_logging
@@ -72,6 +74,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ── Request logging middleware ─────────────────────────────
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        start = time.monotonic()
+        response = await call_next(request)
+        duration = (time.monotonic() - start) * 1000
+        structlog.get_logger("api").info(
+            "request",
+            method=request.method,
+            path=request.url.path,
+            status=response.status_code,
+            duration_ms=round(duration, 1),
+        )
+        return response
 
     # ── Exception handlers ─────────────────────────────────────
     app.add_exception_handler(AppError, app_error_handler)
