@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # ── i18n ──────────────────────────────────────────────────
     default_language: str = "en"
 
+    # ── Sentry ────────────────────────────────────────────────
+    sentry_dsn: str | None = None
+
     # ── App ───────────────────────────────────────────────────
     app_env: str = "development"
     log_level: str = "INFO"
