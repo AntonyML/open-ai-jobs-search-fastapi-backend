@@ -32,7 +32,11 @@ async def lifespan(app: FastAPI):
 
     async with scheduler_lifespan():
         yield
-    # Shutdown: dispose the SQLAlchemy engine
+    # Shutdown: wait for background tasks, then dispose engine
+    from app.core.task_manager import background_tasks
+
+    await background_tasks.shutdown()
+
     from app.core.scheduler import shutdown_scheduler
 
     shutdown_scheduler()
@@ -85,6 +89,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "Access-Control-Allow-Credentials": "true",
             },
         )
+
+    # ── Health check ───────────────────────────────────────────
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
 
     # ── Routers ────────────────────────────────────────────────
     app.include_router(v1_router, prefix="/api/v1")

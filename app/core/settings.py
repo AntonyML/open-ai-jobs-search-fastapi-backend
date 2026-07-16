@@ -3,6 +3,7 @@
 Uses pydantic-settings for validation and .env file support.
 """
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -56,7 +57,11 @@ class Settings(BaseSettings):
     # ── App ───────────────────────────────────────────────────
     app_env: str = "development"
     log_level: str = "INFO"
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = [
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+        if o.strip()
+    ]
 
     # ── Paths ─────────────────────────────────────────────────
     documents_dir: str = "documents"

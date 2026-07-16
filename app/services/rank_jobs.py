@@ -19,6 +19,7 @@ from app.services.rank import execute_rank
 from app.services.orchestrator.execution_queue import ExecutionQueue
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.db.models import ExecutionJob
+from app.core.task_manager import background_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,10 @@ async def start(
         await db.commit()
 
     # Start the background execution
-    asyncio.create_task(_execute_rank_job(job_id, db_factory, user_id, payload))
+    background_tasks.create_task(
+        _execute_rank_job(job_id, db_factory, user_id, payload),
+        name=f"rank_{job_id[:8]}",
+    )
 
     return job_id
 
