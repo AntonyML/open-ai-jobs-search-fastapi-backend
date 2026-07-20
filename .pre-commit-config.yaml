@@ -1,0 +1,41 @@
+# Pre-commit configuration
+# Install: pip install pre-commit && pre-commit install
+# Update hooks: pre-commit autoupdate
+
+repos:
+  # ── Hooks básicos ──────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # ── Ruff: linter + formatter ──────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Must match ruff version in pyproject.toml: >=0.9.0,<0.10.0
+    rev: v0.9.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # ── Mypy: type checker ────────────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-passlib
+          - types-bcrypt
+          - pydantic
+          - sqlalchemy
+        args: [--ignore-missing-imports, --follow-imports=silent]
+        # Only check files that already pass; exclude tests and migrations
+        exclude: ^(tests/|alembic/)

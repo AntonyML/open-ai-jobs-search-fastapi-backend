@@ -221,7 +221,7 @@ FastAPI-backend/
 
 | Componente | Propósito | Instalación |
 |------------|-----------|-------------|
-| **Python 3.11+** | Runtime | `python.org` o `pyenv` |
+| **Python 3.12.10 | Runtime | `python.org` o `pyenv` |
 | **Bun** | Ejecutar scrapers TS heredados | `npm install -g bun` |
 | **LaTeX** (lualatex + xelatex) | Compilar CV y cover letters | MiKTeX o TeX Live |
 | **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com |
