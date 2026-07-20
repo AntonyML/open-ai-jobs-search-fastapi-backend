@@ -74,7 +74,7 @@ async def update_user(
     if payload.tier is not None:
         if payload.tier not in ("free", "premium"):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Tier must be 'free' or 'premium'",
             )
         user.tier = payload.tier
@@ -82,7 +82,7 @@ async def update_user(
     if payload.role is not None:
         if payload.role not in ("admin", "client"):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Role must be 'admin' or 'client'",
             )
         user.role = payload.role

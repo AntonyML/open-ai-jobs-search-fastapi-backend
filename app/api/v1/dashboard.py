@@ -8,7 +8,6 @@ Provides endpoints for:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -55,16 +54,14 @@ async def get_dashboard_stats(
     """Aggregated KPIs for the dashboard overview."""
     user_id = user["sub"]
 
-    jobs_scraped, jobs_ranked, applications, interviews, scrape_runs, avg_rank_score, hired, rejected = await asyncio.gather(
-        _count(db, JobPosting, user_id),
-        _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None)),
-        _count(db, Application, user_id),
-        _count(db, InterviewPrep, user_id),
-        _count(db, ScrapeRun, user_id, ScrapeRun.status.in_(["completed", "completed_with_errors"])),
-        _avg(db, JobPosting, JobPosting.rank_score, user_id, JobPosting.rank_score.isnot(None)),
-        _count(db, Outcome, user_id, Outcome.status == "hired"),
-        _count(db, Outcome, user_id, Outcome.status == "rejected"),
-    )
+    jobs_scraped = await _count(db, JobPosting, user_id)
+    jobs_ranked = await _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None))
+    applications = await _count(db, Application, user_id)
+    interviews = await _count(db, InterviewPrep, user_id)
+    scrape_runs = await _count(db, ScrapeRun, user_id, ScrapeRun.status.in_(["completed", "completed_with_errors"]))
+    avg_rank_score = await _avg(db, JobPosting, JobPosting.rank_score, user_id, JobPosting.rank_score.isnot(None))
+    hired = await _count(db, Outcome, user_id, Outcome.status == "hired")
+    rejected = await _count(db, Outcome, user_id, Outcome.status == "rejected")
 
     return {
         "jobs_scraped": jobs_scraped,
@@ -86,15 +83,13 @@ async def get_pipeline_progress(
     """Check which pipeline steps have data for this user."""
     user_id = user["sub"]
 
-    providers, setup, scrape, rank, apply, interview, outcome = await asyncio.gather(
-        _count(db, ProviderCredential, user_id),
-        _count(db, CandidateProfile, user_id),
-        _count(db, JobPosting, user_id),
-        _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None)),
-        _count(db, Application, user_id),
-        _count(db, InterviewPrep, user_id),
-        _count(db, Outcome, user_id),
-    )
+    providers = await _count(db, ProviderCredential, user_id)
+    setup = await _count(db, CandidateProfile, user_id)
+    scrape = await _count(db, JobPosting, user_id)
+    rank = await _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None))
+    apply = await _count(db, Application, user_id)
+    interview = await _count(db, InterviewPrep, user_id)
+    outcome = await _count(db, Outcome, user_id)
 
     steps = [
         {"key": "providers", "label": "Providers", "done": providers > 0},
@@ -124,13 +119,11 @@ async def get_analytics_funnel(
     """Get conversion funnel data for analytics charts."""
     user_id = user["sub"]
 
-    total_jobs, ranked_jobs, applications, interviews, hired = await asyncio.gather(
-        _count(db, JobPosting, user_id),
-        _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None)),
-        _count(db, Application, user_id),
-        _count(db, InterviewPrep, user_id),
-        _count(db, Outcome, user_id, Outcome.status == "hired"),
-    )
+    total_jobs = await _count(db, JobPosting, user_id)
+    ranked_jobs = await _count(db, JobPosting, user_id, JobPosting.rank_score.isnot(None))
+    applications = await _count(db, Application, user_id)
+    interviews = await _count(db, InterviewPrep, user_id)
+    hired = await _count(db, Outcome, user_id, Outcome.status == "hired")
 
     return {
         "funnel": [

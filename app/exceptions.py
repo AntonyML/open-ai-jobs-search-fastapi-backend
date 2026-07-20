@@ -46,7 +46,7 @@ class ProviderAuthError(AppError):
 class ProfileIncompleteError(AppError):
     """The candidate profile is missing required fields for the operation."""
 
-    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
     code = "profile_incomplete"
 
     def __init__(self, message: str | None = None, locale: str = "en"):
@@ -149,7 +149,7 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
         locale = get_locale_from_request(request.headers, request.cookies)
         details = _json_safe(exc.errors())
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "error": "validation_error",
                 "message": t("errors.validation", locale, detail="Request validation failed"),

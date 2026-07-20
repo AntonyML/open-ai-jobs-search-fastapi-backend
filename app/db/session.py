@@ -29,7 +29,12 @@ async_session_factory = async_sessionmaker(
 
 
 async def get_db() -> AsyncSession:
-    """Yield an async database session (FastAPI dependency)."""
+    """Yield an async database session (FastAPI dependency).
+
+    The session is automatically closed and returned to the pool when
+    the request completes — even if an exception occurs — thanks to the
+    ``async with`` context manager.
+    """
     async with async_session_factory() as session:
         try:
             yield session
@@ -37,5 +42,3 @@ async def get_db() -> AsyncSession:
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
