@@ -17,6 +17,7 @@ engine = create_async_engine(
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
+    pool_recycle=3600,  # Recycle connections every hour to prevent stale conns
     # If using Transaction Pooler, uncomment:
     # connect_args={"statement_cache_size": 0},
 )
@@ -31,14 +32,21 @@ async_session_factory = async_sessionmaker(
 async def get_db() -> AsyncSession:
     """Yield an async database session (FastAPI dependency).
 
-    The session is automatically closed and returned to the pool when
-    the request completes — even if an exception occurs — thanks to the
-    ``async with`` context manager.
+    The session is guaranteed to be closed and returned to the pool
+    on every code path — normal completion, endpoint exception,
+    or generator cleanup (``GeneratorExit``).
+
+    We manage the session lifecycle **without** ``async with`` so that
+    ``BaseException`` (which includes ``GeneratorExit`` fired when
+    FastAPI calls ``aclose()`` on this generator) is always caught,
+    ensuring rollback + close happen in all cases.
     """
-    async with async_session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+    session = async_session_factory()
+    try:
+        yield session
+        await session.commit()
+    except (Exception, GeneratorExit):
+        await session.rollback()
+        raise
+    finally:
+        await session.close()

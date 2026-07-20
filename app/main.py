@@ -113,6 +113,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Catch-all for unhandled exceptions.
+
+        Logs the error and reports it to Sentry so we can actually see
+        what caused the HTTP 500 — instead of silently swallowing it
+        and only seeing downstream symptoms like pool warnings.
+        """
+        structlog.get_logger("api").error(
+            "Unhandled exception",
+            path=request.url.path,
+            method=request.method,
+            exc_info=exc,
+        )
+        if settings.sentry_dsn:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+
         origin = request.headers.get("origin", "")
         allow_origin = origin if origin in settings.cors_origins else (settings.cors_origins[0] if settings.cors_origins else "")
         return JSONResponse(
