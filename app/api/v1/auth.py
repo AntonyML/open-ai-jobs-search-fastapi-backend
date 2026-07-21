@@ -89,12 +89,18 @@ async def get_me(
 ):
     """Return the authenticated user's profile."""
     from sqlalchemy import select
-    from app.db.models import User
+    from app.db.models import CandidateProfile, User
     result = await db.execute(select(User).where(User.id == user["sub"]))
     db_user = result.scalar_one_or_none()
     if db_user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return db_user
+    profile_result = await db.execute(
+        select(CandidateProfile).where(CandidateProfile.user_id == user["sub"]).limit(1)
+    )
+    has_profile = profile_result.scalar_one_or_none() is not None
+    out = UserOut.model_validate(db_user)
+    out.has_profile = has_profile
+    return out
 
 
 @router.delete("/account", status_code=status.HTTP_200_OK)

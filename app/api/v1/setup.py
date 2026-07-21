@@ -16,6 +16,7 @@ from app.schemas.profile import (
     StarExampleCreate,
     StarExampleOut,
 )
+from app.exceptions import NotFoundError
 from app.services import setup
 
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -43,14 +44,17 @@ async def create_profile(
     return profile
 
 
-@router.get("/profile", response_model=CandidateProfileOut)
+@router.get("/profile", response_model=CandidateProfileOut | None)
 async def get_profile(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
     """Retrieve the authenticated user's candidate profile."""
-    profile = await setup.get_profile(db, user["sub"])
-    return profile
+    try:
+        profile = await setup.get_profile(db, user["sub"])
+        return profile
+    except NotFoundError:
+        return None
 
 
 @router.patch("/profile", response_model=CandidateProfileOut)

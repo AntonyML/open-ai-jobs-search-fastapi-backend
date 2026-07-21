@@ -44,6 +44,7 @@ class UserOut(BaseModel):
     role: str = "client"
     tier: str = "free"
     active_provider: str = "anthropic"
+    has_profile: bool = False
     model_config = {"from_attributes": True}
 
 
