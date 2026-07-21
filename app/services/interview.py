@@ -250,6 +250,9 @@ def build_likely_questions_prompt(
             parts.append(f"Target industry: {jt['industry']}")
         if jt.get("keywords"):
             parts.append(f"Priority keywords: {', '.join(jt['keywords'])}")
+        if jt.get("seniority"):
+            seniority = jt["seniority"]
+            parts.append(f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy")
         if parts:
             jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
 
@@ -449,6 +452,9 @@ def build_tough_questions_prompt(
             parts.append(f"Primary role candidate is targeting: {jt['target_titles'][0]}")
         if jt.get("industry"):
             parts.append(f"Target industry: {jt['industry']}")
+        if jt.get("seniority"):
+            seniority = jt["seniority"]
+            parts.append(f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy")
         if parts:
             jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
 
@@ -518,6 +524,9 @@ def build_questions_to_ask_prompt(
             parts.append(f"Primary role: {jt['target_titles'][0]}")
         if jt.get("industry"):
             parts.append(f"Industry focus: {jt['industry']}")
+        if jt.get("seniority"):
+            seniority = jt["seniority"]
+            parts.append(f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy")
         if parts:
             jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
 

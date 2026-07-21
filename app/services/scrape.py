@@ -233,6 +233,7 @@ async def execute_scrape(
     enriched_query = focus_area
     location_extra = None
     remote_flag = None
+    search_radius_km = None
     try:
         result = await db.execute(
             select(CandidateProfile).where(CandidateProfile.user_id == user_id)
@@ -255,6 +256,9 @@ async def execute_scrape(
             # Remote flag
             if jt.get("work_mode") and "remote" in jt["work_mode"]:
                 remote_flag = "true"
+            # Search radius
+            if jt.get("search_radius_km"):
+                search_radius_km = jt["search_radius_km"]
     except Exception:
         pass  # Non-critical — fall back to focus_area as-is
     """Execute a full scrape run across one or more portals.
@@ -316,6 +320,8 @@ async def execute_scrape(
             extra_flags["--location"] = location_extra
         if remote_flag and portal == "linkedin":
             extra_flags["--remote"] = remote_flag
+        if search_radius_km:
+            extra_flags["--radius"] = str(search_radius_km)
         task = run_scraper(
             portal=portal,
             query=enriched_query,

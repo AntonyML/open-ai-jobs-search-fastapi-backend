@@ -194,6 +194,19 @@ def build_tailored_experience_prompt(
             if jt.get("min_salary"): sal.append(f"min ${jt['min_salary']:,.0f}")
             if jt.get("max_salary"): sal.append(f"max ${jt['max_salary']:,.0f}")
             parts.append(f"Target salary range: {' – '.join(sal)}")
+        if jt.get("seniority"):
+            seniority = jt["seniority"]
+            depth_map = {
+                "junior": "emphasize fundamentals and learning",
+                "mid": "balance fundamentals with applied experience",
+                "senior": "emphasize architecture, mentoring, system design",
+                "lead": "emphasize architecture, mentoring, system design",
+                "manager": "emphasize team leadership, process, stakeholder management",
+                "director": "emphasize strategic leadership, organizational impact",
+                "executive": "emphasize strategic vision, cross-functional leadership",
+            }
+            depth = depth_map.get(seniority.lower(), "adjust technical depth accordingly")
+            parts.append(f"Target seniority level: {seniority} — {depth}")
         if parts:
             jt_guidance = "\nJOB TARGET PREFERENCES (align experience toward these):\n" + "\n".join(f"- {p}" for p in parts)
 

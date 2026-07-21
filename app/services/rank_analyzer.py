@@ -569,6 +569,31 @@ def determine_deadline(
     return deadline_str, is_urgent
 
 
+def _extract_salary_from_text(text: str) -> tuple[int | None, int | None]:
+    """Extract salary min/max from text using regex patterns.
+
+    Returns:
+        Tuple of (salary_min, salary_max) or (None, None).
+    """
+    if not text:
+        return None, None
+
+    patterns = [
+        r'\$(\d{2,3}(?:,\d{3})?)\s*[-–]\s*\$(\d{2,3}(?:,\d{3})?)',
+        r'\$(\d+)\s*[-–]\s*\$(\d+)',
+        r'\$(\d+)k\s*[-–]\s*\$(\d+)k',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            def _clean(val: str) -> int:
+                return int(val.replace(",", "").replace("k", "000").replace("K", "000"))
+            return _clean(match.group(1)), _clean(match.group(2))
+
+    return None, None
+
+
 def compute_quantitative_scores(
     candidate: dict[str, Any] | None,
     job: dict[str, Any],
@@ -706,6 +731,66 @@ def compute_quantitative_scores(
             desc_lower = description.lower()
             if "remote" in desc_lower:
                 technical = max(0, technical - 5)
+
+        # ── Seniority matching ────────────────────────────────
+        if jt.get("seniority"):
+            target_seniority = jt["seniority"].lower()
+            title_lower = title.lower()
+
+            seniority_levels = {
+                "junior": ["jr", "junior", "entry"],
+                "mid": ["mid", "intermediate"],
+                "senior": ["senior", "sr"],
+                "lead": ["lead", "principal"],
+                "manager": ["manager", "head"],
+                "director": ["director"],
+                "executive": ["vp", "evp", "svp", "cxo", "chief"],
+            }
+            level_order = ["junior", "mid", "senior", "lead", "manager", "director", "executive"]
+
+            found_levels = []
+            for level, keywords in seniority_levels.items():
+                if any(kw in title_lower for kw in keywords):
+                    found_levels.append(level)
+
+            if target_seniority in found_levels:
+                experience = min(100, experience + 10)
+            elif found_levels:
+                target_idx = level_order.index(target_seniority) if target_seniority in level_order else -1
+                for fl in found_levels:
+                    fl_idx = level_order.index(fl) if fl in level_order else -1
+                    if fl_idx > target_idx:
+                        experience = max(0, experience - 5)
+                    elif fl_idx < target_idx:
+                        experience = max(0, experience - 3)
+
+        # ── Salary comparison ──────────────────────────────────
+        salary_min = jt.get("salary_min")
+        salary_max = jt.get("salary_max")
+        if salary_min or salary_max:
+            job_sal_min, job_sal_max = _extract_salary_from_text(description or "")
+            if salary_min and job_sal_max and salary_min > job_sal_max:
+                missing.append(f"⚠️ Salary mismatch: target min ${salary_min:,.0f} > job max ${job_sal_max:,.0f}")
+                technical = max(0, technical - 5)
+
+        # ── Employment types mismatch ──────────────────────────
+        target_emp_types = jt.get("employment_types")
+        if target_emp_types:
+            desc_lower = (description or "").lower()
+            emp_map = {
+                "full-time": "full-time",
+                "part-time": "part-time",
+                "contract": "contract",
+                "freelance": "freelance",
+                "temporary": "temporary",
+            }
+            found_types = [k for k, v in emp_map.items() if v in desc_lower]
+            if "part-time" in found_types and "part-time" not in target_emp_types and "full-time" in target_emp_types:
+                experience = max(0, experience - 3)
+            if "full-time" in found_types and "full-time" not in target_emp_types and "part-time" in target_emp_types:
+                experience = max(0, experience - 3)
+            if "contract" in found_types and "contract" not in target_emp_types and "full-time" in target_emp_types:
+                experience = max(0, experience - 2)
 
     return {
         "technical_score": technical,
