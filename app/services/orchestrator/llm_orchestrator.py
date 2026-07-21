@@ -25,6 +25,7 @@ from litellm import acompletion
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
+from app.db.session import async_session_factory
 from app.exceptions import LLMError, ProviderAuthError
 from app.schemas.orchestrator import (
     ExecutionJobOut,
@@ -136,9 +137,21 @@ class LLMOrchestrator:
             job_id, pipeline, provider_config["provider"], provider_config["model"],
         )
 
-        # Step 3: Attempt execution with failover
+        # Step 3: Build the execution plan immediately (while we have the session)
+        execution_plan = await self._build_execution_plan(
+            db, user_id, provider_config
+        )
+
+        # Commit the enqueued job so other short-lived sessions can see it
+        await db.commit()
+
+        logger.info(
+            "Job %s plan built | %d attempts possible",
+            job_id, len(execution_plan),
+        )
+
+        # Step 4: Execute with failover (uses its own short-lived sessions)
         result = await self._execute_with_failover(
-            db=db,
             job_id=job_id,
             user_id=user_id,
             messages=messages,
@@ -148,13 +161,13 @@ class LLMOrchestrator:
             max_tokens=max_tokens,
             max_retries=max_retries,
             field_constraints=field_constraints,
+            execution_plan=execution_plan,
         )
 
         return result
 
     async def _execute_with_failover(
         self,
-        db: AsyncSession,
         job_id: str,
         user_id: str,
         messages: list[dict[str, str]],
@@ -164,8 +177,13 @@ class LLMOrchestrator:
         max_tokens: int,
         max_retries: int,
         field_constraints: dict | None,
+        execution_plan: list[tuple[str, str]],
     ) -> Any:
         """Execute with automatic failover across providers and models.
+
+        Uses short-lived database sessions so no connection is held idle
+        during LLM API calls (10–60s). Each DB operation acquires its own
+        session and returns it to the pool immediately after commit.
 
         Failover priority:
         1. Same provider, same model (initial attempt)
@@ -174,14 +192,7 @@ class LLMOrchestrator:
         4. Next tier provider
         5. If all fail, raise LLMError
         """
-        # Track which (provider, model) pairs we've tried
         attempted: set[tuple[str, str]] = set()
-
-        # Build ordered list of (provider, model) to try
-        execution_plan = await self._build_execution_plan(
-            db, user_id, provider_config
-        )
-
         last_error: Exception | None = None
 
         for attempt_tier, (prov, mdl) in enumerate(execution_plan, start=1):
@@ -189,17 +200,19 @@ class LLMOrchestrator:
                 continue
             attempted.add((prov, mdl))
 
-            try:
-                # Start the job on this provider/model
+            # ── Phase 1: Start the job (short session) ──────────────
+            async with async_session_factory() as session:
                 job = await self.queue.start_job(
-                    db, job_id, prov, mdl, attempt_tier
+                    session, job_id, prov, mdl, attempt_tier
                 )
                 if job is None:
                     continue
+                await session.commit()
+            # Session returned to pool
 
+            # ── Phase 2: LLM call (NO session held) ─────────────────
+            try:
                 start_time = time.monotonic()
-
-                # Make the actual LLM call (pass user-stored credentials)
                 raw_response = await self._call_llm(
                     provider=prov,
                     model=mdl,
@@ -210,7 +223,6 @@ class LLMOrchestrator:
                     api_key=provider_config.get("api_key"),
                     api_base=provider_config.get("api_base"),
                 )
-
                 latency_ms = int((time.monotonic() - start_time) * 1000)
 
                 # Sanitize the response
@@ -224,126 +236,78 @@ class LLMOrchestrator:
                 else:
                     result = raw_response
 
-                # Record success
-                await pm.record_success(db, user_id, prov, latency_ms)
-                await mm.mark_model_completed(db, user_id, prov, mdl, latency_ms, success=True)
-                await self.queue.complete_job(
-                    db, job_id,
-                    result_data=result.model_dump() if hasattr(result, "model_dump") else None,
-                    execution_time_ms=latency_ms,
-                )
-
-                await db.commit()
+                # ── Phase 3: Record success (short session) ─────────
+                async with async_session_factory() as session:
+                    await pm.record_success(session, user_id, prov, latency_ms)
+                    await mm.mark_model_completed(
+                        session, user_id, prov, mdl, latency_ms, success=True
+                    )
+                    await self.queue.complete_job(
+                        session, job_id,
+                        result_data=result.model_dump() if hasattr(result, "model_dump") else None,
+                        execution_time_ms=latency_ms,
+                    )
+                    await session.commit()
 
                 logger.info(
                     "Job %s success | provider=%s model=%s latency=%dms tier=%d",
                     job_id, prov, mdl, latency_ms, attempt_tier,
                 )
-
                 return result
 
-            except ProviderAuthError as exc:
-                # Auth errors → mark provider disabled, try next
+            except (ProviderAuthError, LLMError, Exception) as exc:
                 last_error = exc
-                await pm.record_failure(
-                    db, user_id, prov, "auth_error", str(exc)
+                error_code = "server_error"
+
+                if isinstance(exc, ProviderAuthError):
+                    error_code = "auth_error"
+                elif isinstance(exc, LLMError):
+                    error_code = self._classify_error(str(exc))
+
+                should_retry = (
+                    error_code in ("auth_error", "rate_limit", "timeout")
+                    or attempt_tier < len(execution_plan)
                 )
-                await mm.mark_model_failed(
-                    db, user_id, prov, mdl, "auth_error", str(exc)
-                )
-                await self.queue.fail_job(
-                    db, job_id, str(exc), "auth_error",
-                    should_retry=True,
-                )
+
+                # ── Phase 4: Record failure (short session) ─────────
+                async with async_session_factory() as session:
+                    await pm.record_failure(
+                        session, user_id, prov, error_code, str(exc)
+                    )
+                    await mm.mark_model_failed(
+                        session, user_id, prov, mdl, error_code, str(exc)
+                    )
+                    if error_code == "rate_limit":
+                        await self.queue.rate_limit_job(
+                            session, job_id, cooldown_seconds=60
+                        )
+                    else:
+                        await self.queue.fail_job(
+                            session, job_id, str(exc), error_code,
+                            should_retry=should_retry,
+                        )
+                    try:
+                        await session.commit()
+                    except Exception:
+                        await session.rollback()
+
                 logger.warning(
-                    "Job %s auth_error | provider=%s model=%s → failover",
-                    job_id, prov, mdl,
+                    "Job %s %s | provider=%s model=%s → failover",
+                    job_id, error_code, prov, mdl,
                 )
-
-            except LLMError as exc:
-                last_error = exc
-                error_code = self._classify_error(str(exc))
-
-                if error_code == "rate_limit":
-                    # 429: mark model cooling down, try next
-                    await pm.record_failure(
-                        db, user_id, prov, "rate_limit", str(exc)
-                    )
-                    await mm.mark_model_failed(
-                        db, user_id, prov, mdl, "rate_limit", str(exc)
-                    )
-                    await self.queue.rate_limit_job(db, job_id, cooldown_seconds=60)
-                    logger.warning(
-                        "Job %s rate_limited | provider=%s model=%s → failover",
-                        job_id, prov, mdl,
-                    )
-                elif error_code == "timeout":
-                    await pm.record_failure(
-                        db, user_id, prov, "timeout", str(exc)
-                    )
-                    await mm.mark_model_failed(
-                        db, user_id, prov, mdl, "timeout", str(exc)
-                    )
-                    await self.queue.fail_job(
-                        db, job_id, str(exc), "timeout",
-                        should_retry=True,
-                    )
-                    logger.warning(
-                        "Job %s timeout | provider=%s model=%s → failover",
-                        job_id, prov, mdl,
-                    )
-                else:
-                    # Server error → mark failure, retry on next
-                    await pm.record_failure(
-                        db, user_id, prov, error_code, str(exc)
-                    )
-                    await mm.mark_model_failed(
-                        db, user_id, prov, mdl, error_code, str(exc)
-                    )
-                    await self.queue.fail_job(
-                        db, job_id, str(exc), error_code,
-                        should_retry=attempt_tier < len(execution_plan),
-                    )
-                    logger.warning(
-                        "Job %s error=%s | provider=%s model=%s → failover",
-                        job_id, error_code, prov, mdl,
-                    )
-
-            except Exception as exc:
-                # Unexpected error
-                last_error = exc
-                await pm.record_failure(
-                    db, user_id, prov, "server_error", str(exc)
-                )
-                await mm.mark_model_failed(
-                    db, user_id, prov, mdl, "server_error", str(exc)
-                )
-                await self.queue.fail_job(
-                    db, job_id, str(exc), "server_error",
-                    should_retry=attempt_tier < len(execution_plan),
-                )
-                logger.exception(
-                    "Job %s unexpected error | provider=%s model=%s",
-                    job_id, prov, mdl,
-                )
-
-            finally:
-                try:
-                    await db.commit()
-                except Exception:
-                    await db.rollback()
 
         # All attempts exhausted
-        await self.queue.fail_job(
-            db, job_id,
-            str(last_error) if last_error else "All providers/models exhausted",
-            "exhausted",
-            should_retry=False,
-        )
-        try:
-            await db.commit()
-        except Exception:
-            await db.rollback()
+        async with async_session_factory() as session:
+            await self.queue.fail_job(
+                session, job_id,
+                str(last_error) if last_error else "All providers/models exhausted",
+                "exhausted",
+                should_retry=False,
+            )
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
 
         raise LLMError(
             f"Job {job_id}: All providers/models failed after {len(attempted)} attempts. "
