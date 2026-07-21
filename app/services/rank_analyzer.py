@@ -682,7 +682,7 @@ def compute_quantitative_scores(
     if job_target:
         target_titles = job_target.get("target_titles", [])
         keywords = job_target.get("keywords", [])
-        exclude_companies_str = job_target.get("exclude_companies", "")
+        exclude_companies_list = job_target.get("exclude_companies", [])
         exclude_keywords = job_target.get("exclude_keywords", [])
         target_work_modes = job_target.get("work_mode", [])
 
@@ -700,8 +700,8 @@ def compute_quantitative_scores(
             technical = min(100, technical + min(found * 3, 15))
 
         # Exclude companies
-        if exclude_companies_str and job.get("company"):
-            excluded = [c.strip().lower() for c in exclude_companies_str.split(",")]
+        if exclude_companies_list and job.get("company"):
+            excluded = [c.lower() for c in exclude_companies_list]
             if job["company"].lower() in excluded:
                 return {
                     "technical_score": 0,
