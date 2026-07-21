@@ -49,7 +49,7 @@ async def send_resend_email(
                 "Content-Type": "application/json",
             },
             json={
-                "from": f"{from_name} <onboarding@resend.dev>",
+                "from": f"{from_name} <{settings.resend_from_email}>",
                 "to": [to],
                 "subject": subject,
                 "html": html_body,
@@ -58,7 +58,7 @@ async def send_resend_email(
         try:
             resp.raise_for_status()
         except Exception:
-            logger.exception("Resend API returned error (status=%s): %s", resp.status_code, resp.text[:500])
+            logger.warning("Resend API returned error (status=%s): %s", resp.status_code, resp.text[:500])
             return {"status": "error", "reason": f"Resend API error: {resp.status_code}"}
         return resp.json()
 

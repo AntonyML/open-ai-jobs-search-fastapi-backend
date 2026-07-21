@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     # ── Resend (Email) ────────────────────────────────────────
     resend_api_key: str | None = None
+    resend_from_email: str = "onboarding@resend.dev"
     admin_email: str = "admin@openajobs.com"
 
     # ── Rate Limiting ─────────────────────────────────────────
