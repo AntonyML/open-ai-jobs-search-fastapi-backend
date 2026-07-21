@@ -1,5 +1,7 @@
 """Authentication router — register, login, account deletion, and upgrade requests."""
 import logging
+import time
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,24 @@ from app.schemas.auth import (
 )
 from app.services import auth
 from app.core.i18n.locale import t
+
+# ── In-memory rate limiting for upgrade / donate ──
+_upgrade_cooldowns: dict[str, float] = {}
+_UPGRADE_COOLDOWN_SECONDS = 30
+
+
+def _check_upgrade_rate_limit(user_id: str) -> None:
+    """Raise HTTPException 429 if the user requested upgrade/donate too recently."""
+    last = _upgrade_cooldowns.get(user_id)
+    if last is not None:
+        elapsed = time.time() - last
+        if elapsed < _UPGRADE_COOLDOWN_SECONDS:
+            retry_after = int(_UPGRADE_COOLDOWN_SECONDS - elapsed) + 1
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Please wait {retry_after}s before sending another request.",
+            )
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -134,6 +154,8 @@ async def request_upgrade(
     locale: str = Depends(get_locale),
 ):
     """Request a plan upgrade. Sends an email notification to the admin."""
+    _check_upgrade_rate_limit(user["sub"])
+
     from app.core.settings import get_settings
     from app.db.models import User as UserModel
     from app.services.email import send_upgrade_request
@@ -156,6 +178,7 @@ async def request_upgrade(
     except Exception:
         logger.exception("Failed to send upgrade notification email")
 
+    _upgrade_cooldowns[user["sub"]] = time.time()
     return {"message": t("upgrade.requestSent")}
 
 
@@ -167,6 +190,8 @@ async def donate(
     locale: str = Depends(get_locale),
 ):
     """Send a donation notification to the admin."""
+    _check_upgrade_rate_limit(user["sub"])
+
     from app.core.settings import get_settings
     from app.db.models import User as UserModel
     from app.services.email import send_donation_notification
@@ -187,10 +212,8 @@ async def donate(
             method=payload.method,
             phone=payload.phone,
         )
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+    except Exception:
+        logger.exception("Failed to send donation notification email")
 
-    return {"message": "¡Gracias por tu donación!" if locale == "es" else "Thank you for your donation!"}
+    _upgrade_cooldowns[user["sub"]] = time.time()
+    return {"message": t("upgrade.thankYou")}

@@ -55,7 +55,11 @@ async def send_resend_email(
                 "html": html_body,
             },
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except Exception:
+            logger.exception("Resend API returned error (status=%s): %s", resp.status_code, resp.text[:500])
+            return {"status": "error", "reason": f"Resend API error: {resp.status_code}"}
         return resp.json()
 
 
