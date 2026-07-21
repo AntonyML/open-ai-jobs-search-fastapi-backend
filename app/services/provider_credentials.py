@@ -104,6 +104,14 @@ async def get_user_active_provider_config(
 
     active_provider = user.active_provider
 
+    if active_provider is None:
+        return {
+            "provider": None,
+            "model": None,
+            "api_key": None,
+            "api_base": None,
+        }
+
     # Get credential for active provider
     credential = await get_provider_credential(db, user_id, active_provider)
 

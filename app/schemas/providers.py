@@ -77,10 +77,10 @@ class ProviderInfo(BaseModel):
 class ActiveProviderOut(BaseModel):
     """Current active provider configuration for the user."""
 
-    provider: str
-    model: str
-    api_base: str | None
-    has_credential: bool
+    provider: str | None = None
+    model: str | None = None
+    api_base: str | None = None
+    has_credential: bool = False
 
 
 # ── Model listing & selection schemas ───────────────────────────────
