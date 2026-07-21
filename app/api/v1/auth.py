@@ -1,6 +1,10 @@
 """Authentication router — register, login, account deletion, and upgrade requests."""
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user, get_db, get_locale
 from app.schemas.auth import (
@@ -143,13 +147,10 @@ async def request_upgrade(
             method=payload.method,
             phone=payload.phone,
         )
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+    except Exception:
+        logger.exception("Failed to send upgrade notification email")
 
-    return {"message": t("common.saved", locale) if locale == "en" else "Solicitud enviada. Te contactaremos pronto."}
+    return {"message": t("upgrade.requestSent")}
 
 
 @router.post("/donate", status_code=status.HTTP_200_OK)

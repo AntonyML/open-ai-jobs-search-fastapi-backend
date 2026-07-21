@@ -5,7 +5,11 @@ Sends transactional emails for payment requests, donations, and admin contact.
 
 from __future__ import annotations
 
+import logging
+
 from app.core.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -32,7 +36,8 @@ async def send_resend_email(
         RuntimeError: If RESEND_API_KEY is not configured.
     """
     if not settings.resend_api_key:
-        raise RuntimeError("RESEND_API_KEY is not configured")
+        logger.warning("RESEND_API_KEY is not configured — email not sent")
+        return {"status": "skipped", "reason": "RESEND_API_KEY not configured"}
 
     import httpx
 
