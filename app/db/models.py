@@ -192,6 +192,23 @@ class CandidateProfile(Base, TimestampMixin):
     # ── Profile statement (generated / tailored) ──────────────
     profile_statement: Mapped[str | None] = mapped_column(Text)
 
+    # ── Job target (structured search criteria) ──────────────
+    # {"target_titles": ["Senior React Native Developer"],
+    #  "seniority": "senior",
+    #  "work_mode": ["remote", "hybrid"],
+    #  "search_locations": ["San José, Costa Rica"],
+    #  "search_radius_km": 80,
+    #  "employment_types": ["full-time", "contract"],
+    #  "industry": "Technology",
+    #  "keywords": ["React Native", "TypeScript"],
+    #  "exclude_keywords": ["WordPress"],
+    #  "exclude_companies": ["Meta"],
+    #  "salary_min": 60000, "salary_max": 120000,
+    #  "availability": "immediate",
+    #  "visa_needed": false,
+    #  "relocation_willing": true}
+    job_target: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+
     # ── Setup method ──────────────────────────────────────────
     setup_method: Mapped[str | None] = mapped_column(String(20))  # "documents", "cv_import", "interview"
     setup_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

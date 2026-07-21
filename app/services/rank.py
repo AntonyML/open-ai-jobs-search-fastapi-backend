@@ -444,7 +444,7 @@ async def _rank_single_job(
         "language": job.language,
     }
 
-    quantitative = compute_quantitative_scores(candidate_dict, job_dict)
+    quantitative = compute_quantitative_scores(candidate_dict, job_dict, candidate.job_target)
 
     # Step 2: Build the LLM prompt with pre-computed quantitative data
     messages = build_rank_prompt(candidate, job, quantitative)
@@ -470,6 +470,31 @@ async def _rank_single_job(
     experience_score = quantitative["experience_score"]
     behavioral_score = llm_output.behavioral_score
     career_score = llm_output.career_score
+
+    # Possible veto from job_target filtering
+    if quantitative.get("_veto"):
+        logger.info("Job %s vetoed: %s", job.id, quantitative.get("_veto_reason"))
+        llm_output = RankLLMOutput(
+            technical_score=0,
+            experience_score=0,
+            behavioral_score=0,
+            career_score=0,
+            overall_score=0,
+            strengths=[],
+            gaps=[],
+            red_flags=[quantitative.get("_veto_reason", "Vetoed")],
+            recommendation="reject",
+        )
+        return _build_rank_evaluation(
+            db=db,
+            candidate=candidate,
+            job=job,
+            user_id=user_id,
+            quantitative=quantitative,
+            llm_output=llm_output,
+            provider_config=provider_config,
+            existing_evaluation=existing_evaluation,
+        )
 
     location_status = quantitative["location_status"]
     deadline = quantitative["deadline"]

@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
-from app.db.models import JobPosting, ScrapeRun
+from app.db.models import CandidateProfile, JobPosting, ScrapeRun
 from app.exceptions import ScraperError
 from app.schemas.scrape import ScraperOutput, ScraperResultItem
 
@@ -229,6 +229,34 @@ async def execute_scrape(
     limit_per_portal: int = 20,
     triggered_by: str = "manual",
 ) -> ScrapeRun:
+    # ── Enrich query from profile's job_target ─────────────────
+    enriched_query = focus_area
+    location_extra = None
+    remote_flag = None
+    try:
+        result = await db.execute(
+            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        )
+        profile = result.scalar_one_or_none()
+        if profile and profile.job_target:
+            jt = profile.job_target
+            # Build query from target_titles + keywords if no explicit focus_area
+            if not enriched_query:
+                parts = []
+                if jt.get("target_titles"):
+                    parts.append(" ".join(jt["target_titles"]))
+                if jt.get("keywords"):
+                    parts.append(" ".join(jt["keywords"]))
+                if parts:
+                    enriched_query = " ".join(parts)
+            # Location for scrapers that support it
+            if jt.get("search_locations"):
+                location_extra = jt["search_locations"][0]
+            # Remote flag
+            if jt.get("work_mode") and "remote" in jt["work_mode"]:
+                remote_flag = "true"
+    except Exception:
+        pass  # Non-critical — fall back to focus_area as-is
     """Execute a full scrape run across one or more portals.
 
     Args:
@@ -283,11 +311,17 @@ async def execute_scrape(
     # Run scrapers concurrently
     tasks = []
     for portal in portals:
+        extra_flags = {}
+        if location_extra and portal in ("linkedin", "freehire"):
+            extra_flags["--location"] = location_extra
+        if remote_flag and portal == "linkedin":
+            extra_flags["--remote"] = remote_flag
         task = run_scraper(
             portal=portal,
-            query=focus_area,
+            query=enriched_query,
             jobage_days=jobage_days,
             limit=limit_per_portal,
+            extra_flags=extra_flags if extra_flags else None,
         )
         tasks.append(task)
 

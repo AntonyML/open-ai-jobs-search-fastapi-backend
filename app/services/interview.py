@@ -240,6 +240,19 @@ def build_likely_questions_prompt(
     job_summary = _build_job_summary(job)
     app_context = _build_application_context(application)
 
+    jt_guidance = ""
+    if candidate.job_target:
+        jt = candidate.job_target
+        parts = []
+        if jt.get("target_titles"):
+            parts.append(f"Primary role candidate is targeting: {jt['target_titles'][0]}")
+        if jt.get("industry"):
+            parts.append(f"Target industry: {jt['industry']}")
+        if jt.get("keywords"):
+            parts.append(f"Priority keywords: {', '.join(jt['keywords'])}")
+        if parts:
+            jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
+
     eval_context = ""
     if evaluation:
         eval_context = f"""
@@ -263,7 +276,7 @@ JOB POSTING:
 
 SUBMITTED APPLICATION:
 {app_context}
-{eval_context}
+{jt_guidance}{eval_context}
 
 INTERVIEW STAGE: {stage}
 
@@ -428,6 +441,17 @@ def build_tough_questions_prompt(
     candidate_summary = _build_candidate_summary(candidate)
     job_summary = _build_job_summary(job)
 
+    jt_guidance = ""
+    if candidate.job_target:
+        jt = candidate.job_target
+        parts = []
+        if jt.get("target_titles"):
+            parts.append(f"Primary role candidate is targeting: {jt['target_titles'][0]}")
+        if jt.get("industry"):
+            parts.append(f"Target industry: {jt['industry']}")
+        if parts:
+            jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
+
     eval_context = ""
     if evaluation:
         eval_context = f"""
@@ -447,7 +471,7 @@ CANDIDATE PROFILE:
 
 JOB POSTING:
 {job_summary}
-{eval_context}
+{jt_guidance}{eval_context}
 
 INTERVIEW STAGE: {stage}
 
@@ -486,6 +510,17 @@ def build_questions_to_ask_prompt(
     candidate_summary = _build_candidate_summary(candidate)
     job_summary = _build_job_summary(job)
 
+    jt_guidance = ""
+    if candidate.job_target:
+        jt = candidate.job_target
+        parts = []
+        if jt.get("target_titles"):
+            parts.append(f"Primary role: {jt['target_titles'][0]}")
+        if jt.get("industry"):
+            parts.append(f"Industry focus: {jt['industry']}")
+        if parts:
+            jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
+
     research_text = ""
     if company_research:
         research_text = f"""
@@ -508,7 +543,7 @@ CANDIDATE PROFILE:
 
 JOB POSTING:
 {job_summary}
-{research_text}
+{jt_guidance}{research_text}
 
 INTERVIEW STAGE: {stage}
 

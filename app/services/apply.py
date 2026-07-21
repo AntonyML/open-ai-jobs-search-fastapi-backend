@@ -180,6 +180,23 @@ def build_tailored_experience_prompt(
     missing_keywords = evaluation.missing_keywords or []
     red_flags = evaluation.red_flags or []
 
+    # ── Job-target guidance ────────────────────────────────────
+    jt_guidance = ""
+    if candidate.job_target:
+        jt = candidate.job_target
+        parts = []
+        if jt.get("target_titles"):
+            parts.append(f"Primary target role: {jt['target_titles'][0]}")
+        if jt.get("keywords"):
+            parts.append(f"Priority keywords to highlight: {', '.join(jt['keywords'])}")
+        if jt.get("min_salary") or jt.get("max_salary"):
+            sal = []
+            if jt.get("min_salary"): sal.append(f"min ${jt['min_salary']:,.0f}")
+            if jt.get("max_salary"): sal.append(f"max ${jt['max_salary']:,.0f}")
+            parts.append(f"Target salary range: {' – '.join(sal)}")
+        if parts:
+            jt_guidance = "\nJOB TARGET PREFERENCES (align experience toward these):\n" + "\n".join(f"- {p}" for p in parts)
+
     system_prompt = f"""{APPLY_GUARDRAIL}
 
 {XYZ_GUIDANCE}
@@ -194,6 +211,7 @@ RANK EVALUATION INSIGHTS:
 - Missing keywords (from job posting, absent in CV): {', '.join(missing_keywords) if missing_keywords else 'None'}
 - Red flags (things recruiter would notice negatively): {', '.join(red_flags) if red_flags else 'None'}
 - Overall fit: {evaluation.verdict} ({evaluation.overall_score}/100)
+{jt_guidance}
 
 TASK:
 Rewrite the candidate's experience section for this specific job application.
@@ -226,6 +244,18 @@ def build_cover_letter_prompt(
     candidate_summary = _build_candidate_summary_for_apply(candidate)
     job_summary = _build_job_summary_for_apply(job)
 
+    # ── Job-target guidance ────────────────────────────────────
+    jt_guidance = ""
+    if candidate.job_target:
+        jt = candidate.job_target
+        parts = []
+        if jt.get("target_titles"):
+            parts.append(f"Primary role candidate is targeting: {jt['target_titles'][0]}")
+        if jt.get("keywords"):
+            parts.append(f"Emphasise these priority keywords when relevant: {', '.join(jt['keywords'])}")
+        if parts:
+            jt_guidance = "\nJOB TARGET PREFERENCES:\n" + "\n".join(f"- {p}" for p in parts)
+
     exp_lines = []
     for exp in tailored_experience:
         exp_lines.append(f"\n{exp.title} at {exp.company}")
@@ -248,6 +278,7 @@ RANK EVALUATION:
 - Overall fit: {evaluation.verdict} ({evaluation.overall_score}/100)
 - Missing keywords: {', '.join(evaluation.missing_keywords or [])}
 - Red flags: {', '.join(evaluation.red_flags or [])}
+{jt_guidance}
 
 TASK:
 Write a cover letter in the SAME LANGUAGE as the job posting ({job.language or 'en'}).

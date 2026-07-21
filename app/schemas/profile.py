@@ -118,6 +118,29 @@ class ReferenceEntry(BaseModel):
         return validate_phone(v)
 
 
+# ── Job Target schema ────────────────────────────────────────────
+
+
+class JobTarget(BaseModel):
+    """Structured job search criteria the candidate wants."""
+
+    target_titles: list[str] = []
+    seniority: str | None = None  # junior | mid | senior | lead | manager | director | executive
+    work_mode: list[str] = []  # remote | hybrid | onsite
+    search_locations: list[str] = []
+    search_radius_km: int | None = None
+    employment_types: list[str] = []  # full-time | part-time | contract | freelance | internship
+    industry: str | None = None
+    keywords: list[str] = []
+    exclude_keywords: list[str] = []
+    exclude_companies: list[str] = []
+    salary_min: int | None = None
+    salary_max: int | None = None
+    availability: str | None = None  # immediate | within_month | exploring
+    visa_needed: bool | None = None
+    relocation_willing: bool | None = None
+
+
 # ── Request schemas ─────────────────────────────────────────────────
 
 
@@ -143,6 +166,7 @@ class CandidateProfileCreate(BaseModel):
     references: list[ReferenceEntry] | None = None
 
     profile_statement: str | None = None
+    job_target: JobTarget | None = None
     setup_method: str | None = None  # "documents", "cv_import", "interview"
 
     @field_validator("phone", mode="before")
@@ -183,6 +207,7 @@ class CandidateProfileUpdate(BaseModel):
     references: list[ReferenceEntry] | None = None
 
     profile_statement: str | None = None
+    job_target: JobTarget | None = None
 
     @field_validator("phone", mode="before")
     @classmethod
@@ -226,6 +251,7 @@ class CandidateProfileOut(BaseModel):
     references: list[ReferenceEntry] | None
 
     profile_statement: str | None
+    job_target: JobTarget | None = None
     setup_method: str | None
     setup_completed_at: datetime | None
 

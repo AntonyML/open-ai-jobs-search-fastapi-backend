@@ -572,6 +572,7 @@ def determine_deadline(
 def compute_quantitative_scores(
     candidate: dict[str, Any] | None,
     job: dict[str, Any],
+    job_target: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute all quantitative scores deterministically.
 
@@ -651,6 +652,60 @@ def compute_quantitative_scores(
 
     # Missing keywords
     missing = compute_missing_keywords(candidate, job)
+
+    # ── Apply job_target refinements ──────────────────────────
+    if job_target:
+        target_titles = job_target.get("target_titles", [])
+        keywords = job_target.get("keywords", [])
+        exclude_companies_str = job_target.get("exclude_companies", "")
+        exclude_keywords = job_target.get("exclude_keywords", [])
+        target_work_modes = job_target.get("work_mode", [])
+
+        # Boost technical score if job title matches target titles
+        title_lower = title.lower()
+        for t in target_titles:
+            if t.lower() in title_lower:
+                technical = min(100, technical + 8)
+                break
+
+        # Boost for priority keywords found in job description
+        if keywords:
+            desc_lower = description.lower()
+            found = sum(1 for kw in keywords if kw.lower() in desc_lower)
+            technical = min(100, technical + min(found * 3, 15))
+
+        # Exclude companies
+        if exclude_companies_str and job.get("company"):
+            excluded = [c.strip().lower() for c in exclude_companies_str.split(",")]
+            if job["company"].lower() in excluded:
+                return {
+                    "technical_score": 0,
+                    "experience_score": 0,
+                    "location_status": "excluded_company",
+                    "deadline": deadline_str,
+                    "deadline_urgent": is_urgent,
+                    "missing_keywords": missing + list(exclude_keywords),
+                    "language": language,
+                    "_candidate_skills": list(candidate_skills_set),
+                    "_job_keywords": list(job_keywords),
+                    "_veto": True,
+                    "_veto_reason": f"Company {job['company']} is excluded",
+                }
+
+        # Add exclude_keywords to missing if present in description
+        if exclude_keywords:
+            ek_lower = [ek.lower() for ek in exclude_keywords]
+            desc_lower = description.lower()
+            found_excludes = [ek for ek in ek_lower if ek in desc_lower]
+            if found_excludes:
+                missing.extend([f"⚠️ Avoid: {ek}" for ek in found_excludes])
+                technical = max(0, technical - 12)
+
+        # Penalize work_mode mismatch
+        if target_work_modes and "remote" not in target_work_modes:
+            desc_lower = description.lower()
+            if "remote" in desc_lower:
+                technical = max(0, technical - 5)
 
     return {
         "technical_score": technical,
