@@ -569,7 +569,6 @@ async def execute_expand(
             messages = build_competency_enrichment_prompt(all_items)
             try:
                 result: EnrichedCompetenciesLLMOutput = await orchestrator.execute(
-                    db=db,
                     user_id=user_id,
                     messages=messages,
                     output_schema=EnrichedCompetenciesLLMOutput,
@@ -594,7 +593,6 @@ async def execute_expand(
             messages = build_proposed_additions_prompt(candidate, enriched)
             try:
                 result: ProposedAdditionsLLMOutput = await orchestrator.execute(
-                    db=db,
                     user_id=user_id,
                     messages=messages,
                     output_schema=ProposedAdditionsLLMOutput,
@@ -711,7 +709,6 @@ async def _execute_expand_background(expansion_id: str) -> None:
                 messages = build_competency_enrichment_prompt(all_items)
                 try:
                     result: EnrichedCompetenciesLLMOutput = await orchestrator.execute(
-                        db=db,
                         user_id=expansion.user_id,
                         messages=messages,
                         output_schema=EnrichedCompetenciesLLMOutput,
@@ -730,7 +727,6 @@ async def _execute_expand_background(expansion_id: str) -> None:
                 messages = build_proposed_additions_prompt(candidate, enriched)
                 try:
                     result: ProposedAdditionsLLMOutput = await orchestrator.execute(
-                        db=db,
                         user_id=expansion.user_id,
                         messages=messages,
                         output_schema=ProposedAdditionsLLMOutput,

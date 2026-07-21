@@ -53,7 +53,6 @@ class LLMOrchestrator:
     Usage:
         orchestrator = LLMOrchestrator()
         result = await orchestrator.execute(
-            db=db,
             user_id="...",
             messages=[...],
             output_schema=RankLLMOutput,
@@ -69,7 +68,6 @@ class LLMOrchestrator:
 
     async def execute(
         self,
-        db: AsyncSession,
         user_id: str,
         messages: list[dict[str, str]],
         output_schema: type | None = None,
@@ -88,9 +86,10 @@ class LLMOrchestrator:
         """Execute an LLM call through the orchestrator.
 
         This is the main entry point for all LLM calls.
+        Manages its own short-lived database sessions so no connection
+        is held idle during LLM API calls (10–60s).
 
         Args:
-            db: Database session.
             user_id: The authenticated user's ID.
             messages: Chat messages for the LLM.
             output_schema: Optional Pydantic model class for structured output.
@@ -113,42 +112,44 @@ class LLMOrchestrator:
             LLMError: If all providers/models fail after exhausting retries.
             ProviderAuthError: If no valid provider configuration exists.
         """
-        # Step 1: Get user's provider configuration
-        provider_config = await self._resolve_provider_config(
-            db, user_id, provider, model
-        )
+        async with async_session_factory() as db:
+            # Step 1: Get user's provider configuration
+            provider_config = await self._resolve_provider_config(
+                db, user_id, provider, model
+            )
 
-        # Step 2: Enqueue the job
-        schema_name = output_schema.__name__ if output_schema else None
-        job_id, job_model = await self.queue.enqueue(
-            db=db,
-            user_id=user_id,
-            pipeline=pipeline,
-            description=description,
-            group_id=group_id,
-            messages=messages,
-            output_schema=schema_name,
-            max_retries=max_retries,
-            checkpoint_data=checkpoint_data,
-        )
+            # Step 2: Enqueue the job
+            schema_name = output_schema.__name__ if output_schema else None
+            job_id, job_model = await self.queue.enqueue(
+                db=db,
+                user_id=user_id,
+                pipeline=pipeline,
+                description=description,
+                group_id=group_id,
+                messages=messages,
+                output_schema=schema_name,
+                max_retries=max_retries,
+                checkpoint_data=checkpoint_data,
+            )
 
-        logger.info(
-            "Executing job %s | pipeline=%s provider=%s model=%s",
-            job_id, pipeline, provider_config["provider"], provider_config["model"],
-        )
+            logger.info(
+                "Executing job %s | pipeline=%s provider=%s model=%s",
+                job_id, pipeline, provider_config["provider"], provider_config["model"],
+            )
 
-        # Step 3: Build the execution plan immediately (while we have the session)
-        execution_plan = await self._build_execution_plan(
-            db, user_id, provider_config
-        )
+            # Step 3: Build the execution plan immediately (while we have the session)
+            execution_plan = await self._build_execution_plan(
+                db, user_id, provider_config
+            )
 
-        # Commit the enqueued job so other short-lived sessions can see it
-        await db.commit()
+            # Commit the enqueued job so other short-lived sessions can see it
+            await db.commit()
 
-        logger.info(
-            "Job %s plan built | %d attempts possible",
-            job_id, len(execution_plan),
-        )
+            logger.info(
+                "Job %s plan built | %d attempts possible",
+                job_id, len(execution_plan),
+            )
+        # Session returned to pool — LLM call phase holds no DB connection
 
         # Step 4: Execute with failover (uses its own short-lived sessions)
         result = await self._execute_with_failover(

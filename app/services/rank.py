@@ -453,7 +453,6 @@ async def _rank_single_job(
     orchestrator = get_orchestrator()
 
     llm_output: RankLLMOutput = await orchestrator.execute(
-        db=db,
         user_id=user_id,
         messages=messages,
         output_schema=RankLLMOutput,
