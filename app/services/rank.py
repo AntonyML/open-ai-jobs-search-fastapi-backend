@@ -558,30 +558,30 @@ async def count_jobs_to_rank(
     """
     re_rank = (payload or {}).get("re_rank", False) if payload else False
 
-    # Total jobs that need ranking
-    total_query = select(func.count()).select_from(JobPosting).where(
+    total_subq = select(func.count()).select_from(JobPosting).where(
         JobPosting.user_id == user_id
     )
     if not re_rank:
-        total_query = total_query.where(
+        total_subq = total_subq.where(
             or_(
                 JobPosting.status == "new",
                 JobPosting.rank_score.is_(None),
             )
         )
 
-    # Already ranked jobs
-    ranked_query = select(func.count()).select_from(JobPosting).where(
+    ranked_subq = select(func.count()).select_from(JobPosting).where(
         JobPosting.user_id == user_id,
         JobPosting.status == "ranked",
         JobPosting.rank_score.isnot(None),
     )
 
-    total_result = await db.execute(total_query)
-    ranked_result = await db.execute(ranked_query)
-
-    total = total_result.scalar() or 0
-    ranked = ranked_result.scalar() or 0
+    stmt = select(
+        func.coalesce(total_subq.scalar_subquery(), 0).label("total"),
+        func.coalesce(ranked_subq.scalar_subquery(), 0).label("ranked"),
+    )
+    row = (await db.execute(stmt)).one()
+    total = row.total
+    ranked = row.ranked
 
     return {
         "total": total,

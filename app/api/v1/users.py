@@ -22,36 +22,24 @@ async def get_user_usage(
     Used by the frontend to proactively disable pipeline buttons
     when the free-tier limit is reached.
     """
-    user_id = user["sub"]
+    uid = user["sub"]
     tier = user.get("tier", "free")
     limits = get_tier_limits(tier)
 
-    # ── Application count ───────────────────────────────────────
-    app_result = await db.execute(
-        select(func.count()).where(Application.user_id == user_id)
+    apps = select(func.count()).where(Application.user_id == uid)
+    preps = select(func.count()).where(InterviewPrep.user_id == uid)
+    ranks = select(func.count(JobPosting.id)).where(
+        JobPosting.user_id == uid, JobPosting.rank_score.isnot(None)
     )
-    app_count = app_result.scalar() or 0
+    outcomes = select(func.count()).where(Outcome.user_id == uid)
 
-    # ── Interview prep count ────────────────────────────────────
-    prep_result = await db.execute(
-        select(func.count()).where(InterviewPrep.user_id == user_id)
+    stmt = select(
+        func.coalesce(apps.scalar_subquery(), 0).label("applications"),
+        func.coalesce(preps.scalar_subquery(), 0).label("interview_preps"),
+        func.coalesce(ranks.scalar_subquery(), 0).label("rank_iterations"),
+        func.coalesce(outcomes.scalar_subquery(), 0).label("outcomes"),
     )
-    prep_count = prep_result.scalar() or 0
-
-    # ── Rank iterations (count distinct rank_score updates) ─────
-    rank_result = await db.execute(
-        select(func.count(JobPosting.id)).where(
-            JobPosting.user_id == user_id,
-            JobPosting.rank_score.isnot(None),
-        )
-    )
-    rank_count = rank_result.scalar() or 0
-
-    # ── Outcome count ───────────────────────────────────────────
-    outcome_result = await db.execute(
-        select(func.count()).where(Outcome.user_id == user_id)
-    )
-    outcome_count = outcome_result.scalar() or 0
+    row = (await db.execute(stmt)).one()
 
     return {
         "tier": tier,
@@ -62,9 +50,9 @@ async def get_user_usage(
             "max_track_count": limits.get("max_track_count", 1000),
         },
         "usage": {
-            "applications": app_count,
-            "interview_preps": prep_count,
-            "rank_iterations": rank_count,
-            "outcomes": outcome_count,
+            "applications": row.applications,
+            "interview_preps": row.interview_preps,
+            "rank_iterations": row.rank_iterations,
+            "outcomes": row.outcomes,
         },
     }
