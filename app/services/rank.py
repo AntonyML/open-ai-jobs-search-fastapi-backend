@@ -622,10 +622,10 @@ async def list_ranked_jobs(
     limit: int = 50,
     offset: int = 0,
 ) -> list[JobPosting]:
-    """List ranked jobs with optional filters."""
+    """List ranked jobs with optional filters. Returns both ranked and unranked (new) jobs."""
     query = (
         select(JobPosting)
-        .where(JobPosting.user_id == user_id, JobPosting.status == "ranked")
+        .where(JobPosting.user_id == user_id, JobPosting.status.in_(["new", "ranked"]))
         .order_by(JobPosting.rank_score.desc().nullslast())
     )
 
