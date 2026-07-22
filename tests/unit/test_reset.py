@@ -26,7 +26,7 @@ async def db_session():
         await session.commit()
         
         # Create profile, behavioral, star examples
-        profile = CandidateProfile(id="p1", user_id="u1", full_name="John Doe")
+        profile = CandidateProfile(id="p1", user_id="u1")
         session.add(profile)
         await session.commit()
         

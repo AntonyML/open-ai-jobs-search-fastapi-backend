@@ -147,11 +147,22 @@ class CandidateProfile(Base, TimestampMixin):
         String(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
     )
 
-    # ── Identity ──────────────────────────────────────────────
-    full_name: Mapped[str | None] = mapped_column(String(255))
+    # ── Identity — single source of truth is User ─────────────
+    # full_name and email are NOT stored here; read via .user relationship.
+    # When updated via setup, they sync to User.full_name / User.email.
+    #
+    # These properties allow Pydantic schemas using from_attributes to
+    # read identity fields transparently from the User relationship.
+    @property
+    def full_name(self) -> str | None:
+        return self.user.full_name if self.user else None
+
+    @property
+    def email(self) -> str | None:
+        return self.user.email if self.user else None
+
     location: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(50))
-    email: Mapped[str | None] = mapped_column(String(255))
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
     github_url: Mapped[str | None] = mapped_column(String(500))
     languages: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)  # [{"language": "...", "proficiency": "..."}]

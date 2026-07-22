@@ -40,7 +40,7 @@ async def create_profile(
     data = payload.model_dump(exclude_none=True)
     profile = await setup.create_profile(db, user["sub"], data)
     await db.commit()
-    await db.refresh(profile)
+    await db.refresh(profile, ["user"])
     return profile
 
 
@@ -68,7 +68,7 @@ async def update_profile(
     data = payload.model_dump(exclude_unset=True)
     profile = await setup.update_profile(db, user["sub"], data)
     await db.commit()
-    await db.refresh(profile)
+    await db.refresh(profile, ["user"])
     return profile
 
 
@@ -95,7 +95,7 @@ async def complete_setup(
         raise AppError(t("errors.validation", locale, detail="Invalid setup_method"))
     profile = await setup.complete_setup(db, user["sub"], setup_method)
     await db.commit()
-    await db.refresh(profile)
+    await db.refresh(profile, ["user"])
     return profile
 
 

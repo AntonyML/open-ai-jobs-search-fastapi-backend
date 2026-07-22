@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.db.models import (
     BehavioralProfile,
@@ -33,7 +34,9 @@ async def get_profile(
 ) -> CandidateProfile:
     """Return the candidate profile for a user, or raise NotFoundError."""
     result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        select(CandidateProfile)
+        .options(joinedload(CandidateProfile.user))
+        .where(CandidateProfile.user_id == user_id)
     )
     profile = result.scalar_one_or_none()
     if profile is None:
@@ -64,9 +67,21 @@ async def create_profile(
     if existing.scalar_one_or_none() is not None:
         raise ProfileIncompleteError("Profile already exists. Use PATCH to update.")
 
-    profile = CandidateProfile(user_id=user_id, **data)
+    # Identity fields (full_name, email) are owned by User — write them there
+    identity_fields = {"full_name", "email"}
+    identity_data = {k: v for k, v in data.items() if k in identity_fields and v is not None}
+    if identity_data:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one()
+        for key, value in identity_data.items():
+            setattr(user, key, value)
+
+    profile_data = {k: v for k, v in data.items() if k not in identity_fields}
+    profile = CandidateProfile(user_id=user_id, **profile_data)
     db.add(profile)
+    # Re-fetch with joined user so .full_name / .email properties work
     await db.flush()
+    await db.refresh(profile, ["user"])
     return profile
 
 
@@ -80,7 +95,17 @@ async def update_profile(
     """
     profile = await get_profile(db, user_id)
 
-    for key, value in data.items():
+    # Identity fields (full_name, email) are owned by User — write them there
+    identity_fields = {"full_name", "email"}
+    identity_data = {k: v for k, v in data.items() if k in identity_fields and v is not None}
+    if identity_data:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one()
+        for key, value in identity_data.items():
+            setattr(user, key, value)
+
+    profile_data = {k: v for k, v in data.items() if k not in identity_fields}
+    for key, value in profile_data.items():
         if value is not None:
             setattr(profile, key, value)
 
