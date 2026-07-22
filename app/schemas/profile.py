@@ -61,9 +61,15 @@ class LanguageEntry(BaseModel):
 
 class EducationEntry(BaseModel):
     degree: str
-    period: str | None = None
     institution: str
+    start_date: str | None = None
+    end_date: str | None = None
     key_topics: str | None = None
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def validate_dates(cls, v):
+        return validate_date_format(v)
 
 
 class ExperienceBullet(BaseModel):
