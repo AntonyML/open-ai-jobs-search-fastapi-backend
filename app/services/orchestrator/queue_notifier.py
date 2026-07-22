@@ -13,24 +13,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class QueueNotifier:
-    """Lightweight event-broadcast helper for queue state changes."""
+    """Lightweight event-broadcast helper for queue state changes.
+
+    Also manages an in-memory cache of ``get_queue_status`` results per user.
+    The cache is invalidated whenever ``notify()`` is called, so the next
+    REST poll after a queue change will re-fetch from the DB.
+    """
 
     def __init__(self):
         self._event = asyncio.Event()
+        self._cache: dict[str, tuple[datetime, Any]] = {}
+        self._cache_ttl = timedelta(seconds=1)
 
     def notify(self) -> None:
-        """Wake up all listeners so they can re-fetch queue status.
-
-        Safe to call multiple times in rapid succession — if the event
-        is already set, the second call is a no-op.  Listeners always
-        re-read the full DB state, so intermediate updates are harmless.
-        """
+        """Wake up all listeners and invalidate the queue status cache."""
         self._event.set()
+        self._cache.clear()
 
     async def wait_for_change(self) -> None:
         """Block until the next notification, then clear the event.
@@ -41,6 +46,27 @@ class QueueNotifier:
         """
         self._event.clear()
         await self._event.wait()
+
+    # ── Cache helpers ──────────────────────────────────────────────
+
+    def get_cached(self, user_id: str) -> Any | None:
+        """Return cached queue status for *user_id* if still fresh."""
+        entry = self._cache.get(user_id)
+        if entry is None:
+            return None
+        cached_at, data = entry
+        if datetime.utcnow() - cached_at > self._cache_ttl:
+            del self._cache[user_id]
+            return None
+        return data
+
+    def set_cached(self, user_id: str, data: Any) -> None:
+        """Store queue status for *user_id* in memory."""
+        self._cache[user_id] = (datetime.utcnow(), data)
+
+    def clear_cache(self) -> None:
+        """Drop all cached entries."""
+        self._cache.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -43,8 +43,17 @@ async def get_queue_status(
     db: AsyncSession = Depends(get_db),
     orchestrator: LLMOrchestrator = Depends(get_orchestrator),
 ):
-    """Get the current execution queue status."""
-    return await orchestrator.get_queue_status(db, user["sub"])
+    """Get the current execution queue status (cached up to 1s)."""
+    user_id = user["sub"]
+    notifier = get_queue_notifier()
+
+    cached = notifier.get_cached(user_id)
+    if cached is not None:
+        return cached
+
+    status = await orchestrator.get_queue_status(db, user_id)
+    notifier.set_cached(user_id, status)
+    return status
 
 
 @router.post("/queue/control", response_model=QueueControlResult)
