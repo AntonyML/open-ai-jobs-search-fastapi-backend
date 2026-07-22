@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -60,19 +62,36 @@ def list_installed_portals() -> list[str]:
     return installed
 
 
+def _resolve_bun_path() -> str | None:
+    """Find the bun executable path (cross-platform).
+
+    On Windows, ``shutil.which`` returns ``bun.cmd`` (a batch wrapper),
+    which ``subprocess.run`` cannot execute directly via ``CreateProcess``.
+    This resolves to the underlying ``bun.exe``.
+    """
+    found = shutil.which("bun")
+    if not found:
+        return None
+    if sys.platform == "win32" and found.lower().endswith(".cmd"):
+        exe = Path(found).resolve().parent / "node_modules" / "bun" / "bin" / "bun.exe"
+        if exe.exists():
+            return str(exe)
+    return found
+
+
+_BUN_PATH: str | None = None
+
+
+def _get_bun_path() -> str | None:
+    global _BUN_PATH
+    if _BUN_PATH is None:
+        _BUN_PATH = _resolve_bun_path()
+    return _BUN_PATH
+
+
 async def check_bun_available() -> bool:
     """Check if bun is installed and on PATH."""
-    def _check() -> bool:
-        try:
-            result = subprocess.run(
-                ["bun", "--version"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            return result.returncode == 0
-        except FileNotFoundError:
-            return False
-    return await asyncio.to_thread(_check)
+    return _get_bun_path() is not None
 
 
 # ── Subprocess invocation ──────────────────────────────────────────
@@ -107,7 +126,12 @@ async def run_scraper(
         raise ScraperError(f"Scraper script not found: {cli_script}")
 
     # Build command
-    cmd = ["bun", "run", str(cli_script), "search", "--format", "json"]
+    bun_path = _get_bun_path()
+    if not bun_path:
+        raise ScraperError(
+            "bun is not installed or not on PATH. Install it from https://bun.sh"
+        )
+    cmd = [bun_path, "run", str(cli_script), "search", "--format", "json"]
 
     # Query flag — different portals use different flag names
     if query:
@@ -303,11 +327,17 @@ async def execute_scrape(
     # Check bun availability
     if not await check_bun_available():
         run.status = "failed"
-        run.error_message = "bun is not installed or not on PATH"
+        run.error_message = (
+            "bun is not installed or not on PATH. "
+            "Install it with: npm install -g bun"
+        )
         run.completed_at = datetime.now(timezone.utc)
         await db.flush()
         await db.commit()
-        raise ScraperError("bun is not installed or not on PATH")
+        raise ScraperError(
+            "bun is not installed or not on PATH. "
+            "Install it with: npm install -g bun"
+        )
 
     # Get existing postings for dedup
     existing_keys = await _get_existing_posting_keys(db, user_id)
