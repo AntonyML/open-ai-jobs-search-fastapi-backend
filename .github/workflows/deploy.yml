@@ -49,6 +49,20 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install scraper dependencies
+        shell: bash
+        run: |
+          for dir in open-ai-jobs-search-fastapi-backend/app/external/scrapers/*/cli; do
+            if [ -f "$dir/package.json" ]; then
+              bun install --cwd "$dir"
+            fi
+          done
+
       - name: Setup Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 

@@ -67,6 +67,13 @@ ENV PATH="/home/appuser/.bun/bin:${PATH}"
 # Copy application code
 COPY --chown=appuser:appuser . .
 
+# Install scraper TypeScript dependencies
+RUN for dir in app/external/scrapers/*/cli; do \
+      if [ -f "$dir/package.json" ]; then \
+        bun install --cwd "$dir"; \
+      fi; \
+    done
+
 # Set MiKTeX binary path (installed via apt)
 ENV LATEX_BIN_DIR=/usr/bin
 

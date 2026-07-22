@@ -246,7 +246,15 @@ cp .env.example .env
 # 4. Migraciones
 alembic upgrade head
 
-# 5. Servidor de desarrollo
+# 5. Instalar dependencias de los scrapers (TypeScript)
+bun install --cwd app/external/scrapers/freehire-search/cli
+bun install --cwd app/external/scrapers/jobbank-search/cli
+bun install --cwd app/external/scrapers/jobdanmark-search/cli
+bun install --cwd app/external/scrapers/jobindex-search/cli
+bun install --cwd app/external/scrapers/jobnet-search/cli
+bun install --cwd app/external/scrapers/linkedin-search/cli
+
+# 6. Servidor de desarrollo
 uvicorn app.main:create_app --factory --reload
 ```
 
