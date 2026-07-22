@@ -21,6 +21,23 @@ class ScrapeRequest(BaseModel):
     focus_area: str | None = Field(
         None, description="Narrow the search to a specific area, e.g. 'data science'"
     )
+    keywords: list[str] | None = Field(
+        None, description="Specific skill/keyword tags to search for"
+    )
+    target_titles: list[str] | None = Field(
+        None, description="Job titles to target (primary search terms)"
+    )
+    seniority: str | None = Field(
+        None,
+        description="Experience level: junior, mid, senior, lead, manager, director, executive",
+    )
+    location: str | None = Field(
+        None, description="Location to search in (e.g. 'San Jose, Costa Rica')"
+    )
+    remote: str | None = Field(
+        None,
+        description="Workplace type filter: 'remote', 'hybrid', 'onsite', or None for all",
+    )
     broad: bool = Field(
         False, description="Run all search categories instead of just the top 3"
     )
@@ -93,6 +110,8 @@ class ScrapeRunOut(BaseModel):
     focus_area: str | None
     broad: bool
     portals_queried: list[str]
+    external_sources: list[str] | None
+    external_results: list[dict] | None
     jobs_found: int
     jobs_new: int
     jobs_expired: int

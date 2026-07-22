@@ -247,44 +247,57 @@ async def execute_scrape(
     db: AsyncSession,
     user_id: str,
     focus_area: str | None = None,
+    keywords: list[str] | None = None,
+    target_titles: list[str] | None = None,
+    seniority: str | None = None,
+    location: str | None = None,
+    remote: str | None = None,
     broad: bool = False,
     portals: list[str] | None = None,
     jobage_days: int = 14,
     limit_per_portal: int = 20,
     triggered_by: str = "manual",
 ) -> ScrapeRun:
-    # ── Enrich query from profile's job_target ─────────────────
-    enriched_query = focus_area
-    location_extra = None
+    # ── Build query ───────────────────────────────────────────
+    # Priority: target_titles + seniority > keywords > focus_area
+    query_parts: list[str] = []
+    if target_titles:
+        # Prepend seniority to first title if available
+        titles = list(target_titles)
+        if seniority and titles:
+            titles[0] = f"{seniority} {titles[0]}"
+        query_parts.extend(titles)
+    if keywords:
+        query_parts.extend(keywords)
+    if query_parts:
+        query = " ".join(query_parts)
+    else:
+        query = focus_area or ""
+    location_extra = location
     remote_flag = None
     search_radius_km = None
-    try:
-        result = await db.execute(
-            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-        )
-        profile = result.scalar_one_or_none()
-        if profile and profile.job_target:
-            jt = profile.job_target
-            # Build query from target_titles + keywords if no explicit focus_area
-            if not enriched_query:
-                parts = []
-                if jt.get("target_titles"):
-                    parts.append(" ".join(jt["target_titles"]))
-                if jt.get("keywords"):
-                    parts.append(" ".join(jt["keywords"]))
-                if parts:
-                    enriched_query = " ".join(parts)
-            # Location for scrapers that support it
-            if jt.get("search_locations"):
-                location_extra = jt["search_locations"][0]
-            # Remote flag
-            if jt.get("work_mode") and "remote" in jt["work_mode"]:
-                remote_flag = "true"
-            # Search radius
-            if jt.get("search_radius_km"):
-                search_radius_km = jt["search_radius_km"]
-    except Exception:
-        pass  # Non-critical — fall back to focus_area as-is
+    # Fall back to profile's job_target for location / remote
+    if not location_extra or not remote_flag:
+        try:
+            result = await db.execute(
+                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+            )
+            profile = result.scalar_one_or_none()
+            if profile and profile.job_target:
+                jt = profile.job_target
+                if not location_extra and jt.get("search_locations"):
+                    location_extra = jt["search_locations"][0]
+                if not remote and jt.get("work_mode") and "remote" in jt["work_mode"]:
+                    remote_flag = "true"
+                if not search_radius_km and jt.get("search_radius_km"):
+                    search_radius_km = jt["search_radius_km"]
+        except Exception:
+            pass
+    # Build query honouring remote param
+    if remote:
+        remote_flag = remote
+    elif remote_flag is None:
+        remote_flag = None
     """Execute a full scrape run across one or more portals.
 
     Args:
@@ -342,7 +355,33 @@ async def execute_scrape(
     # Get existing postings for dedup
     existing_keys = await _get_existing_posting_keys(db, user_id)
 
-    # Run scrapers concurrently
+    # Build sub-queries: each title gets its own search with keyword groups
+    sub_queries: list[str] = []
+    if target_titles:
+        # One sub-query per title + keywords
+        kw_groups = []
+        if keywords:
+            kw_groups = [keywords[i : i + 3] for i in range(0, len(keywords), 3)]
+        for i, title in enumerate(target_titles):
+            prefixed = f"{seniority} {title}" if seniority and i == 0 else title
+            if kw_groups and i < len(kw_groups):
+                sub_queries.append(f"{prefixed} {' '.join(kw_groups[i])}")
+            else:
+                sub_queries.append(prefixed)
+        # Remaining keyword groups without a title
+        for i in range(len(target_titles), len(kw_groups)):
+            sub_queries.append(" ".join(kw_groups[i]))
+    elif query:
+        query_words = query.split()
+        if len(query_words) > 5:
+            sub_queries.append(" ".join(query_words[:3]))
+            for i in range(3, len(query_words), 3):
+                sub_queries.append(" ".join(query_words[i : i + 3]))
+        else:
+            sub_queries.append(query)
+    else:
+        sub_queries.append("")
+
     tasks = []
     for portal in portals:
         extra_flags = {}
@@ -352,24 +391,31 @@ async def execute_scrape(
             extra_flags["--remote"] = remote_flag
         if search_radius_km:
             extra_flags["--radius"] = str(search_radius_km)
-        task = run_scraper(
-            portal=portal,
-            query=enriched_query,
-            jobage_days=jobage_days,
-            limit=limit_per_portal,
-            extra_flags=extra_flags if extra_flags else None,
-        )
-        tasks.append(task)
+        # Create one task per sub-query per portal
+        for sq in sub_queries:
+            task = run_scraper(
+                portal=portal,
+                query=sq,
+                jobage_days=jobage_days,
+                limit=limit_per_portal,
+                extra_flags=extra_flags if extra_flags else None,
+            )
+            tasks.append((portal, task))
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Map results back to portals
+    portal_tasks = tasks
+    raw_results = await asyncio.gather(
+        *[t for _, t in portal_tasks], return_exceptions=True
+    )
 
-    # Process results
+    # Process results — deduplicate across sub-queries per portal
     total_found = 0
     total_new = 0
     total_errors = 0
     error_messages = []
+    seen_keys: set[tuple[str, str]] = set()
 
-    for portal, result in zip(portals, results):
+    for (portal, _), result in zip(portal_tasks, raw_results):
         if isinstance(result, Exception):
             total_errors += 1
             error_messages.append(f"{portal}: {result}")
@@ -379,8 +425,9 @@ async def execute_scrape(
 
         for item in result.results:
             key = (portal, item.id or item.url or item.title)
-            if key in existing_keys:
+            if key in existing_keys or key in seen_keys:
                 continue
+            seen_keys.add(key)
 
             # Create new job posting
             posting = JobPosting(
@@ -399,10 +446,56 @@ async def execute_scrape(
             existing_keys.add(key)
             total_new += 1
 
+    # ── External collectors (ephemeral, not persisted to job_postings) ──
+    # Always runs as a backend strategy to distribute search load.
+    from app.services.collectors import get_collector
+
+    collector_names = ["telegram_stem", "google_sheets_stem", "rss_generic"]
+    external_results: list[dict[str, Any]] = []
+    collector_tasks = []
+    for src_name in collector_names:
+        collector = get_collector(src_name)
+        if collector is None:
+            continue
+        collector_tasks.append(
+            (src_name, collector.collect(
+                query=query or "",
+                location=location_extra,
+                remote=remote or remote_flag,
+                limit=limit_per_portal,
+            ))
+        )
+
+    if collector_tasks:
+        coll_raw = await asyncio.gather(
+            *[t for _, t in collector_tasks], return_exceptions=True
+        )
+        for (src_name, _), items in zip(collector_tasks, coll_raw):
+            if isinstance(items, Exception):
+                error_messages.append(f"collector '{src_name}': {items}")
+                total_errors += 1
+                continue
+            for item in items:
+                key = (f"ext_{src_name}", item.id or item.url or item.title)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                external_results.append({
+                    "source": src_name,
+                    "title": item.title,
+                    "company": item.company,
+                    "location": item.location,
+                    "url": item.url,
+                    "date": item.date,
+                })
+                total_found += 1
+
     # Update the run record
     run.jobs_found = total_found
     run.jobs_new = total_new
     run.jobs_expired = 0
+    run.external_sources = collector_names
+    run.external_results = external_results if external_results else None
     run.status = "completed" if total_errors == 0 else "completed_with_errors"
     if error_messages:
         run.error_message = "; ".join(error_messages)

@@ -375,6 +375,13 @@ class ScrapeRun(Base, TimestampMixin):
     jobs_new: Mapped[int] = mapped_column(default=0)  # after dedup
     jobs_expired: Mapped[int] = mapped_column(default=0)
 
+    # ── External sources (collectors) ──────────────────────────
+    # Names of external collectors that were queried (e.g. ["telegram_stem", "google_sheets_stem"])
+    external_sources: Mapped[list[str] | None] = mapped_column(FlexJSON)
+    # Ephemeral results from external collectors — not stored in job_postings
+    # List of ScraperResultItem dicts with an added "source" field
+    external_results: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
+
     # ── Status ────────────────────────────────────────────────
     status: Mapped[str] = mapped_column(String(30), default="running")  # running, completed, completed_with_errors, failed
     error_message: Mapped[str | None] = mapped_column(Text)
