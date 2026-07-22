@@ -1,4 +1,4 @@
-"""Multi-source scraping orchestrator.
+"""Multi-source scraping router.
 
 Decides which sources to query based on the user's profile and query type,
 then executes them in parallel, deduplicates, and consolidates results.
@@ -20,12 +20,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import JobPosting, ScrapeRun
+from app.db.models import ScrapeRun
 from app.exceptions import ScraperError
-from app.schemas.scrape import ScraperResultItem
 from app.services.cache import scrape_cache
 from app.services.collectors import get_collector
 
@@ -47,7 +46,6 @@ class SourceDef:
 
 
 SOURCE_REGISTRY: dict[str, SourceDef] = {
-    # ── Portals (persisted to DB) ───────────────────────────────
     "linkedin": SourceDef(
         name="linkedin", type="portal", strength="specific",
         cooldown_hours=6, priority=1,
@@ -72,7 +70,6 @@ SOURCE_REGISTRY: dict[str, SourceDef] = {
         name="jobnet", type="portal", strength="broad",
         cooldown_hours=4, priority=3,
     ),
-    # ── Collectors (ephemeral, cached) ──────────────────────────
     "telegram_stem": SourceDef(
         name="telegram_stem", type="collector", strength="broad",
         cooldown_hours=2, priority=4, cache_ttl_hours=2,
@@ -89,21 +86,14 @@ SOURCE_REGISTRY: dict[str, SourceDef] = {
 
 
 def get_installed_portal_names() -> list[str]:
-    """Return names of portal sources that are installed."""
     from app.services.scrape import list_installed_portals
-
     return list_installed_portals()
-
-
-# ── Decision logic ────────────────────────────────────────────────
 
 
 @dataclass
 class SourcePlan:
-    """A source to be queried with its assignation."""
-
     source: SourceDef
-    queries: list[str]  # one or more sub-queries for this source
+    queries: list[str]
     extra_flags: dict[str, str] = field(default_factory=dict)
 
 
@@ -114,19 +104,9 @@ def decide_sources(
     broad: bool = False,
     portals: list[str] | None = None,
 ) -> list[SourcePlan]:
-    """Decide which sources to query and what each should search for.
-
-    Strategy:
-      - **Specific** (``target_titles`` present):
-          LinkedIn + specialist portals get title-anchored sub-queries.
-      - **Broad** (only ``keywords`` / ``focus_area``):
-          General portals + all collectors get keyword-based queries.
-      - **Collectors** always run (cached) for broad coverage.
-    """
     installed = get_installed_portal_names()
     plans: list[SourcePlan] = []
 
-    # ── Build sub-queries ───────────────────────────────────────
     specific_queries: list[str] = []
     broad_queries: list[str] = []
 
@@ -156,8 +136,6 @@ def decide_sources(
     if not specific_queries and not broad_queries:
         broad_queries.append("")
 
-    # ── Select sources ──────────────────────────────────────────
-    # If user specified explicit portals, honour that
     if portals is not None:
         for p in portals:
             if p not in installed:
@@ -167,7 +145,6 @@ def decide_sources(
             plans.append(SourcePlan(source=sd, queries=qs or [""]))
         return plans
 
-    # Autonomous decision
     has_specific = bool(specific_queries)
     has_broad_only = bool(broad_queries) and not has_specific
 
@@ -185,7 +162,6 @@ def decide_sources(
             elif sd.type == "collector":
                 plans.append(SourcePlan(source=sd, queries=broad_queries or [""]))
         else:
-            # Broad-only or mixed
             if sd.type == "portal":
                 if sd.strength == "specific" and has_broad_only and broad:
                     plans.append(SourcePlan(source=sd, queries=broad_queries))
@@ -199,7 +175,6 @@ def decide_sources(
             else:
                 plans.append(SourcePlan(source=sd, queries=broad_queries or [""]))
 
-    # Deduplicate — if a source appears twice, keep the first
     seen: set[str] = set()
     deduped: list[SourcePlan] = []
     for p in plans:
@@ -209,13 +184,9 @@ def decide_sources(
     return deduped
 
 
-# ── Cooldown check ─────────────────────────────────────────────────
-
-
 async def _get_recent_run_times(
     db: AsyncSession, user_id: str, hours: int
 ) -> dict[str, datetime]:
-    """Return the most recent completed run time per source."""
     cutoff = datetime.now(timezone.utc)
     result = await db.execute(
         select(ScrapeRun.portals_queried, ScrapeRun.completed_at)
@@ -249,9 +220,6 @@ def _is_on_cooldown(
     return elapsed < sd.cooldown_hours
 
 
-# ── Execution ──────────────────────────────────────────────────────
-
-
 async def execute_plan(
     db: AsyncSession,
     user_id: str,
@@ -263,34 +231,33 @@ async def execute_plan(
     limit_per_source: int = 20,
     existing_keys: set[tuple[str, str]] | None = None,
 ) -> tuple[
-    list[dict[str, Any]],  # portal results (persisted)
-    list[dict[str, Any]],  # collector results (ephemeral)
-    list[str],  # error messages
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[str],
 ]:
-    """Execute a source plan — run all sources, deduplicate, return results."""
     from app.services.scrape import run_scraper, get_scraper_dir
 
     portal_results: list[dict[str, Any]] = []
     collector_results: list[dict[str, Any]] = []
     error_messages: list[str] = []
     seen_keys: set[tuple[str, str]] = set(existing_keys or ())
-
-    tasks: list[tuple[str, asyncio.Task | str, str]] = []
-    # (source_name, query, task or "cached"/"cooldown")
+    tasks: list[tuple[str, str, asyncio.Task]] = []
 
     now = datetime.now(timezone.utc)
-    last_run = await _get_recent_run_times(db, user_id, max(s.cooldown_hours for s in [p.source for p in plan] if s.type == "portal") if plan else 4)
+    max_cooldown = max(
+        (p.source.cooldown_hours for p in plan if p.source.type == "portal"),
+        default=4,
+    )
+    last_run = await _get_recent_run_times(db, user_id, max_cooldown)
 
     for sp in plan:
         sd = sp.source
 
-        # Cooldown check
         if _is_on_cooldown(sd, last_run, now):
             error_messages.append(f"{sd.name}: skipped (cooldown {sd.cooldown_hours}h)")
             continue
 
         if sd.type == "portal":
-            # Check scraper directory exists
             try:
                 get_scraper_dir(sd.name)
             except ScraperError:
@@ -324,7 +291,6 @@ async def execute_plan(
                 continue
 
             for sq in sp.queries:
-                # Check cache
                 if sd.cache_ttl_hours > 0:
                     cached = scrape_cache.get(sd.name, sq)
                     if cached is not None:
@@ -345,23 +311,15 @@ async def execute_plan(
                 )
                 tasks.append((sd.name, sq, task))
 
-    # ── Wait for all tasks ──────────────────────────────────────
     if not tasks:
         return portal_results, collector_results, error_messages
 
     raw_results = await asyncio.gather(
-        *[t for _, _, t in tasks if isinstance(t, asyncio.Task)],
+        *[t for _, _, t in tasks],
         return_exceptions=True,
     )
 
-    # ── Process results ─────────────────────────────────────────
-    task_idx = 0
-    for src_name, sq, t in tasks:
-        if not isinstance(t, asyncio.Task):
-            continue
-        result = raw_results[task_idx]
-        task_idx += 1
-
+    for (src_name, sq, _), result in zip(tasks, raw_results):
         if isinstance(result, Exception):
             error_messages.append(f"{src_name} ({sq}): {result}")
             continue
@@ -402,7 +360,6 @@ async def execute_plan(
                 }
                 collector_results.append(entry)
                 cache_list.append(entry)
-            # Cache collector results
             if cache_list and sd.cache_ttl_hours > 0:
                 scrape_cache.set(src_name, sq, cache_list, sd.cache_ttl_hours)
 

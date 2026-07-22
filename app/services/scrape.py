@@ -290,7 +290,7 @@ async def execute_scrape(
         pass
 
     # ── Decide sources via orchestrator ────────────────────────
-    from app.services.orchestrator import decide_sources, execute_plan
+    from app.services.source_router import decide_sources, execute_plan
 
     plan = decide_sources(
         target_titles=target_titles,
