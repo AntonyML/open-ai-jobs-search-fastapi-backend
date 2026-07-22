@@ -84,6 +84,21 @@ async def list_scrape_runs(
     return await scrape.list_scrape_runs(db, user["sub"], limit=limit)
 
 
+@router.get("/runs/{run_id}", response_model=ScrapeRunOut)
+async def get_scrape_run(
+    run_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Get a single scrape run by ID (for polling live status)."""
+    from app.exceptions import NotFoundError
+
+    run = await scrape.get_scrape_run(db, run_id, user["sub"])
+    if run is None:
+        raise NotFoundError("Scrape run not found.")
+    return run
+
+
 @router.get("/jobs", response_model=list[JobPostingSummary])
 async def list_jobs(
     status_filter: str | None = Query(None, alias="status"),

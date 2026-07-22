@@ -258,87 +258,74 @@ async def execute_scrape(
     limit_per_portal: int = 20,
     triggered_by: str = "manual",
 ) -> ScrapeRun:
-    # ── Build query ───────────────────────────────────────────
-    # Priority: target_titles + seniority > keywords > focus_area
-    query_parts: list[str] = []
-    if target_titles:
-        # Prepend seniority to first title if available
-        titles = list(target_titles)
-        if seniority and titles:
-            titles[0] = f"{seniority} {titles[0]}"
-        query_parts.extend(titles)
-    if keywords:
-        query_parts.extend(keywords)
-    if query_parts:
-        query = " ".join(query_parts)
-    else:
-        query = focus_area or ""
-    location_extra = location
-    remote_flag = None
-    search_radius_km = None
-    # Fall back to profile's job_target for location / remote
-    if not location_extra or not remote_flag:
-        try:
-            result = await db.execute(
-                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-            )
-            profile = result.scalar_one_or_none()
-            if profile and profile.job_target:
-                jt = profile.job_target
-                if not location_extra and jt.get("search_locations"):
-                    location_extra = jt["search_locations"][0]
-                if not remote and jt.get("work_mode") and "remote" in jt["work_mode"]:
-                    remote_flag = "true"
-                if not search_radius_km and jt.get("search_radius_km"):
-                    search_radius_km = jt["search_radius_km"]
-        except Exception:
-            pass
-    # Build query honouring remote param
-    if remote:
-        remote_flag = remote
-    elif remote_flag is None:
-        remote_flag = None
-    """Execute a full scrape run across one or more portals.
+    """Execute a full scrape run using the multi-source orchestrator.
 
-    Args:
-        db: Database session.
-        user_id: The authenticated user's ID.
-        focus_area: Optional focus area to narrow the search.
-        broad: If True, run all portals; otherwise just the top 3.
-        portals: Specific portals to query. If None, uses all installed.
-        jobage_days: Max posting age in days.
-        limit_per_portal: Max results per portal.
-        triggered_by: "manual" or "scheduler".
+    Delegates source selection and execution to the orchestrator, which
+    decides which portals and collectors to query based on the user's
+    profile and query type (specific vs broad).
 
-    Returns:
-        The ScrapeRun record with results.
+    Portal results are persisted to ``job_postings``; collector results
+    are stored ephemerally on the ``ScrapeRun`` record.
     """
-    # Determine which portals to query
-    if portals is None:
-        portals = list_installed_portals()
-        if not broad:
-            # Default: top 3 portals (linkedin, freehire, jobindex)
-            priority = ["linkedin", "freehire", "jobindex"]
-            portals = [p for p in priority if p in portals][:3]
+    # ── Enrich with profile data ───────────────────────────────
+    location_extra = location
+    remote_flag = remote
+    search_radius_km = None
+    try:
+        result = await db.execute(
+            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        )
+        profile = result.scalar_one_or_none()
+        if profile and profile.job_target:
+            jt = profile.job_target
+            if not location_extra and jt.get("search_locations"):
+                location_extra = jt["search_locations"][0]
+            if not remote and jt.get("work_mode"):
+                modes = jt["work_mode"]
+                if isinstance(modes, list) and "remote" in modes:
+                    remote_flag = "remote"
+            if not search_radius_km and jt.get("search_radius_km"):
+                search_radius_km = jt["search_radius_km"]
+    except Exception:
+        pass
 
-    if not portals:
-        raise ScraperError("No scrapers installed. Run /add-portal first.")
+    # ── Decide sources via orchestrator ────────────────────────
+    from app.services.orchestrator import decide_sources, execute_plan
 
-    # Create the scrape run record
+    plan = decide_sources(
+        target_titles=target_titles,
+        keywords=keywords,
+        focus_area=focus_area,
+        broad=broad,
+        portals=portals,
+    )
+
+    if not plan:
+        raise ScraperError("No sources selected. Install a scraper with /add-portal.")
+
+    # ── Create scrape run record ───────────────────────────────
+    portal_names = sorted(
+        {p.source.name for p in plan if p.source.type == "portal"}
+    )
+    collector_names = sorted(
+        {p.source.name for p in plan if p.source.type == "collector"}
+    )
+    all_sources = portal_names + collector_names
+
     run = ScrapeRun(
         user_id=user_id,
         triggered_by=triggered_by,
         focus_area=focus_area,
         broad=broad,
-        portals_queried=portals,
+        portals_queried=portal_names or all_sources,
         status="running",
         started_at=datetime.now(timezone.utc),
     )
     db.add(run)
     await db.flush()
 
-    # Check bun availability
-    if not await check_bun_available():
+    # ── Check bun availability (if any portal in plan) ─────────
+    if portal_names and not await check_bun_available():
         run.status = "failed"
         run.error_message = (
             "bun is not installed or not on PATH. "
@@ -352,150 +339,48 @@ async def execute_scrape(
             "Install it with: npm install -g bun"
         )
 
-    # Get existing postings for dedup
+    # ── Execute the plan ───────────────────────────────────────
     existing_keys = await _get_existing_posting_keys(db, user_id)
 
-    # Build sub-queries: each title gets its own search with keyword groups
-    sub_queries: list[str] = []
-    if target_titles:
-        # One sub-query per title + keywords
-        kw_groups = []
-        if keywords:
-            kw_groups = [keywords[i : i + 3] for i in range(0, len(keywords), 3)]
-        for i, title in enumerate(target_titles):
-            prefixed = f"{seniority} {title}" if seniority and i == 0 else title
-            if kw_groups and i < len(kw_groups):
-                sub_queries.append(f"{prefixed} {' '.join(kw_groups[i])}")
-            else:
-                sub_queries.append(prefixed)
-        # Remaining keyword groups without a title
-        for i in range(len(target_titles), len(kw_groups)):
-            sub_queries.append(" ".join(kw_groups[i]))
-    elif query:
-        query_words = query.split()
-        if len(query_words) > 5:
-            sub_queries.append(" ".join(query_words[:3]))
-            for i in range(3, len(query_words), 3):
-                sub_queries.append(" ".join(query_words[i : i + 3]))
-        else:
-            sub_queries.append(query)
-    else:
-        sub_queries.append("")
-
-    tasks = []
-    for portal in portals:
-        extra_flags = {}
-        if location_extra and portal in ("linkedin", "freehire"):
-            extra_flags["--location"] = location_extra
-        if remote_flag and portal == "linkedin":
-            extra_flags["--remote"] = remote_flag
-        if search_radius_km:
-            extra_flags["--radius"] = str(search_radius_km)
-        # Create one task per sub-query per portal
-        for sq in sub_queries:
-            task = run_scraper(
-                portal=portal,
-                query=sq,
-                jobage_days=jobage_days,
-                limit=limit_per_portal,
-                extra_flags=extra_flags if extra_flags else None,
-            )
-            tasks.append((portal, task))
-
-    # Map results back to portals
-    portal_tasks = tasks
-    raw_results = await asyncio.gather(
-        *[t for _, t in portal_tasks], return_exceptions=True
+    portal_results, collector_results, error_messages = await execute_plan(
+        db=db,
+        user_id=user_id,
+        plan=plan,
+        location_extra=location_extra,
+        remote_flag=remote_flag,
+        search_radius_km=search_radius_km,
+        jobage_days=jobage_days,
+        limit_per_source=limit_per_portal,
+        existing_keys=existing_keys,
     )
 
-    # Process results — deduplicate across sub-queries per portal
-    total_found = 0
+    # ── Persist portal results ─────────────────────────────────
+    total_found = len(portal_results) + len(collector_results)
     total_new = 0
-    total_errors = 0
-    error_messages = []
-    seen_keys: set[tuple[str, str]] = set()
+    total_errors = len(error_messages)
 
-    for (portal, _), result in zip(portal_tasks, raw_results):
-        if isinstance(result, Exception):
-            total_errors += 1
-            error_messages.append(f"{portal}: {result}")
-            continue
-
-        total_found += len(result.results)
-
-        for item in result.results:
-            key = (portal, item.id or item.url or item.title)
-            if key in existing_keys or key in seen_keys:
-                continue
-            seen_keys.add(key)
-
-            # Create new job posting
-            posting = JobPosting(
-                user_id=user_id,
-                portal=portal,
-                external_id=item.id or item.url or item.title,
-                title=item.title,
-                company=item.company,
-                location=item.location,
-                url=item.url,
-                posting_date=item.date,
-                status="new",
-                raw_data=item.model_dump(),
-            )
-            db.add(posting)
-            existing_keys.add(key)
-            total_new += 1
-
-    # ── External collectors (ephemeral, not persisted to job_postings) ──
-    # Always runs as a backend strategy to distribute search load.
-    from app.services.collectors import get_collector
-
-    collector_names = ["telegram_stem", "google_sheets_stem", "rss_generic"]
-    external_results: list[dict[str, Any]] = []
-    collector_tasks = []
-    for src_name in collector_names:
-        collector = get_collector(src_name)
-        if collector is None:
-            continue
-        collector_tasks.append(
-            (src_name, collector.collect(
-                query=query or "",
-                location=location_extra,
-                remote=remote or remote_flag,
-                limit=limit_per_portal,
-            ))
+    for item in portal_results:
+        posting = JobPosting(
+            user_id=user_id,
+            portal=item["source"],
+            external_id=item.get("id") or item.get("url") or item["title"],
+            title=item["title"],
+            company=item.get("company"),
+            location=item.get("location"),
+            url=item.get("url"),
+            posting_date=item.get("date"),
+            status="new",
+            raw_data=item,
         )
+        db.add(posting)
+        total_new += 1
 
-    if collector_tasks:
-        coll_raw = await asyncio.gather(
-            *[t for _, t in collector_tasks], return_exceptions=True
-        )
-        for (src_name, _), items in zip(collector_tasks, coll_raw):
-            if isinstance(items, Exception):
-                error_messages.append(f"collector '{src_name}': {items}")
-                total_errors += 1
-                continue
-            for item in items:
-                key = (f"ext_{src_name}", item.id or item.url or item.title)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                external_results.append({
-                    "source": src_name,
-                    "title": item.title,
-                    "company": item.company,
-                    "location": item.location,
-                    "url": item.url,
-                    "date": item.date,
-                })
-                total_found += 1
-
-    # Update the run record
+    # ── Update run record ──────────────────────────────────────
     run.jobs_found = total_found
     run.jobs_new = total_new
     run.jobs_expired = 0
-    run.external_sources = collector_names
-    run.external_results = external_results if external_results else None
+    run.external_sources = collector_names or None
+    run.external_results = collector_results if collector_results else None
     run.status = "completed" if total_errors == 0 else "completed_with_errors"
     if error_messages:
         run.error_message = "; ".join(error_messages)
@@ -548,6 +433,19 @@ async def get_job_posting(
     if posting is None:
         raise NotFoundError("Job posting not found.")
     return posting
+
+
+async def get_scrape_run(
+    db: AsyncSession, run_id: str, user_id: str
+) -> ScrapeRun | None:
+    """Get a single scrape run by ID, verifying ownership."""
+    result = await db.execute(
+        select(ScrapeRun).where(
+            ScrapeRun.id == run_id,
+            ScrapeRun.user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def list_scrape_runs(
