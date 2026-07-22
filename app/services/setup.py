@@ -60,21 +60,21 @@ async def create_profile(
     Raises:
         ProfileIncompleteError: If required fields are missing.
     """
-    # Check if profile already exists
-    existing = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+    # Single query: load User + check if profile already exists
+    user_result = await db.execute(
+        select(User)
+        .options(joinedload(User.candidate_profile))
+        .where(User.id == user_id)
     )
-    if existing.scalar_one_or_none() is not None:
+    user = user_result.unique().scalar_one()
+    if user.candidate_profile is not None:
         raise ProfileIncompleteError("Profile already exists. Use PATCH to update.")
 
     # Identity fields (full_name, email) are owned by User — write them there
     identity_fields = {"full_name", "email"}
     identity_data = {k: v for k, v in data.items() if k in identity_fields and v is not None}
-    if identity_data:
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one()
-        for key, value in identity_data.items():
-            setattr(user, key, value)
+    for key, value in identity_data.items():
+        setattr(user, key, value)
 
     profile_data = {k: v for k, v in data.items() if k not in identity_fields}
     profile = CandidateProfile(user_id=user_id, **profile_data)
