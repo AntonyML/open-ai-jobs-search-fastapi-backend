@@ -45,20 +45,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install scraper dependencies
-        shell: bash
-        run: |
-          for dir in app/external/scrapers/*/cli; do
-            if [ -f "$dir/package.json" ]; then
-              bun install --cwd "$dir"
-            fi
-          done
-
       - name: Setup Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
@@ -73,6 +59,15 @@ jobs:
         run: |
           DATE_TAG=$(date +'v%Y.%m.%d')
           echo "VERSION=${DATE_TAG}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Clean up existing tag (if any)
+        shell: bash
+        run: |
+          TAG="backend-${{ steps.version.outputs.VERSION }}"
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Deleting existing tag: $TAG"
+            git push origin ":refs/tags/$TAG" || true
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

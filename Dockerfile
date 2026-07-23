@@ -24,7 +24,7 @@ ENV PATH="/root/.bun/bin:${PATH}"
 COPY pyproject.toml .
 COPY app/ ./app/
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e .
+    && pip install --no-cache-dir .
 
 # =====================================================================
 # Stage 2: Runtime image with MiKTeX installed via apt
@@ -60,12 +60,15 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy Bun from builder
-COPY --from=builder /root/.bun /home/appuser/.bun
+# Copy Bun from builder (chown to appuser so cache is writable)
+COPY --chown=appuser:appuser --from=builder /root/.bun /home/appuser/.bun
 ENV PATH="/home/appuser/.bun/bin:${PATH}"
 
-# Copy application code
-COPY --chown=appuser:appuser . .
+# Copy application code (only what's needed)
+COPY --chown=appuser:appuser app/ ./app/
+
+# Switch to non-root user for bun install (so node_modules is owned by appuser)
+USER appuser
 
 # Install scraper TypeScript dependencies
 RUN for dir in app/external/scrapers/*/cli; do \
@@ -77,15 +80,18 @@ RUN for dir in app/external/scrapers/*/cli; do \
 # Set MiKTeX binary path (installed via apt)
 ENV LATEX_BIN_DIR=/usr/bin
 
-# Switch to non-root user
-USER appuser
-
-# Expose port
-EXPOSE 8000
+# Switch back to root to install entrypoint
+USER root
 
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# Switch back to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8000
 
 # Health check (only for API process)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
