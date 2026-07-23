@@ -733,8 +733,8 @@ def compute_quantitative_scores(
                 technical = max(0, technical - 5)
 
         # ── Seniority matching ────────────────────────────────
-        if jt.get("seniority"):
-            target_seniority = jt["seniority"].lower()
+        if job_target.get("seniority"):
+            target_seniority = job_target["seniority"].lower()
             title_lower = title.lower()
 
             seniority_levels = {
@@ -765,8 +765,8 @@ def compute_quantitative_scores(
                         experience = max(0, experience - 3)
 
         # ── Salary comparison ──────────────────────────────────
-        salary_min = jt.get("salary_min")
-        salary_max = jt.get("salary_max")
+        salary_min = job_target.get("salary_min")
+        salary_max = job_target.get("salary_max")
         if salary_min or salary_max:
             job_sal_min, job_sal_max = _extract_salary_from_text(description or "")
             if salary_min and job_sal_max and salary_min > job_sal_max:
@@ -774,7 +774,7 @@ def compute_quantitative_scores(
                 technical = max(0, technical - 5)
 
         # ── Employment types mismatch ──────────────────────────
-        target_emp_types = jt.get("employment_types")
+        target_emp_types = job_target.get("employment_types")
         if target_emp_types:
             desc_lower = (description or "").lower()
             emp_map = {

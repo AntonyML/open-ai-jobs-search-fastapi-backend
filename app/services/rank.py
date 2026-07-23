@@ -14,6 +14,7 @@ from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.settings import get_settings
 from app.db.models import CandidateProfile, JobPosting, RankEvaluation, User
@@ -313,6 +314,7 @@ async def execute_rank(
             try:
                 salary_benchmark = await salary_service.benchmark_job(
                     db=db, user_id=user_id,
+                    salary_data=salary_data,
                     company_name=job.company,
                     job_title=job.title,
                     job_location=job.location,
@@ -359,7 +361,9 @@ async def execute_rank(
 async def _get_candidate_profile(db: AsyncSession, user_id: str) -> CandidateProfile:
     """Get the candidate profile, raising if incomplete."""
     result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        select(CandidateProfile)
+        .where(CandidateProfile.user_id == user_id)
+        .options(selectinload(CandidateProfile.user))
     )
     profile = result.scalar_one_or_none()
     if profile is None:

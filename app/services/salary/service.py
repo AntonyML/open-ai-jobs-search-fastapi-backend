@@ -109,6 +109,7 @@ async def lookup_company_for_user(
     user_id: str,
     company_name: str,
     city: str | None = None,
+    salary_data: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Look up a company in the user's salary data.
 
@@ -119,12 +120,16 @@ async def lookup_company_for_user(
         user_id: The authenticated user's ID.
         company_name: Company to search for (fuzzy match).
         city: Optional city filter.
+        salary_data: Pre-loaded salary data to avoid extra DB query.
 
     Returns:
         Best matching company entry with _match_score, or None if not found.
     """
     # 1. Try user's DB data
-    user_data = await get_user_salary_data(db, user_id)
+    if salary_data is None:
+        user_data = await get_user_salary_data(db, user_id)
+    else:
+        user_data = salary_data
     if user_data is not None:
         matches = search_company(user_data, company_name, city=city)
         matches = [m for m in matches if m.get("_match_score", 0) >= 70.0]
@@ -147,6 +152,7 @@ async def benchmark_job(
     company_name: str,
     job_title: str | None = None,
     job_location: str | None = None,
+    salary_data: dict[str, Any] | None = None,
 ) -> SalaryBenchmark | None:
     """Create a salary benchmark for a job posting.
 
@@ -175,7 +181,7 @@ async def benchmark_job(
 
     # Try user data first, then global file
     match = await lookup_company_for_user(
-        db, user_id, company_name, city=job_location
+        db, user_id, company_name, city=job_location, salary_data=salary_data
     )
     if match is None:
         return None
