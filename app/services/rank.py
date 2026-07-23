@@ -281,6 +281,12 @@ async def execute_rank(
             )
             ranked_jobs.append((job, evaluation))
             logger.info("Finished job %d/%d: %s", index, len(jobs), job.id)
+
+            # Commit every 5 jobs to prevent long-running transaction timeouts
+            if index % 5 == 0:
+                await db.commit()
+                logger.debug("Intermediate commit at job %d/%d", index, len(jobs))
+
         except LLMError as exc:
             failed_jobs += 1
             logger.warning("LLM ranking failed for job %s: %s", job.id, exc)
@@ -517,6 +523,57 @@ async def _rank_single_job(
     verdict = score_to_verdict(overall)
 
     # Step 5: Upsert evaluation record (use pre-loaded if available to avoid N+1)
+    return await _build_rank_evaluation(
+        db=db,
+        candidate=candidate,
+        job=job,
+        user_id=user_id,
+        quantitative=quantitative,
+        llm_output=llm_output,
+        provider_config=provider_config,
+        existing_evaluation=existing_evaluation,
+        technical_score=technical_score,
+        experience_score=experience_score,
+        behavioral_score=behavioral_score,
+        career_score=career_score,
+        overall=overall,
+        verdict=verdict,
+        location_status=location_status,
+        deadline=deadline,
+        deadline_urgent=deadline_urgent,
+        strengths=strengths,
+        gaps=gaps,
+        missing_keywords=missing_keywords,
+        red_flags=red_flags,
+        language=language or job.language,
+    )
+
+
+async def _build_rank_evaluation(
+    db: AsyncSession,
+    candidate: CandidateProfile,
+    job: JobPosting,
+    user_id: str,
+    quantitative: dict[str, Any],
+    llm_output: RankLLMOutput,
+    provider_config: dict[str, Any],
+    existing_evaluation: RankEvaluation | None = None,
+    technical_score: int = 0,
+    experience_score: int = 0,
+    behavioral_score: int = 0,
+    career_score: int = 0,
+    overall: int = 0,
+    verdict: str = "Poor Fit",
+    location_status: str = "FLAG",
+    deadline: str | None = None,
+    deadline_urgent: bool = False,
+    strengths: list[str] | None = None,
+    gaps: list[str] | None = None,
+    missing_keywords: list[str] | None = None,
+    red_flags: list[str] | None = None,
+    language: str | None = None,
+) -> RankEvaluation:
+    """Persist (upsert) a rank evaluation record."""
     evaluation = existing_evaluation
     if evaluation is None:
         evaluation = RankEvaluation(
@@ -534,14 +591,14 @@ async def _rank_single_job(
     evaluation.location_status = location_status
     evaluation.deadline = deadline
     evaluation.deadline_urgent = deadline_urgent
-    evaluation.strengths = strengths
-    evaluation.gaps = gaps
-    evaluation.missing_keywords = missing_keywords
-    evaluation.red_flags = red_flags
-    evaluation.language = language or job.language
+    evaluation.strengths = strengths or []
+    evaluation.gaps = gaps or []
+    evaluation.missing_keywords = missing_keywords or []
+    evaluation.red_flags = red_flags or []
+    evaluation.language = language or ""
     evaluation.raw_response = {
         "quantitative": quantitative,
-        "llm_qualitative": llm_output.model_dump(),
+        "llm_qualitative": llm_output.model_dump() if hasattr(llm_output, "model_dump") else {},
     }
     await db.flush()
     await db.refresh(evaluation)

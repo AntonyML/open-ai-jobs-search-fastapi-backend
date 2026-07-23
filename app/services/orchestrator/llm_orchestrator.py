@@ -618,10 +618,12 @@ class LLMOrchestrator:
         )
 
     async def get_job(
-        self, db: AsyncSession, job_id: str
+        self, db: AsyncSession, job_id: str, user_id: str | None = None
     ) -> ExecutionJobOut | None:
-        """Get an execution job by ID."""
+        """Get an execution job by ID, optionally scoped to a user."""
         job = await self.queue.get_job(db, job_id)
         if job is None:
+            return None
+        if user_id is not None and job.user_id != user_id:
             return None
         return ExecutionJobOut.model_validate(job)

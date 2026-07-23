@@ -88,8 +88,8 @@ async def get_execution_job(
     db: AsyncSession = Depends(get_db),
     orchestrator: LLMOrchestrator = Depends(get_orchestrator),
 ):
-    """Get the status of a specific execution job."""
-    return await orchestrator.get_job(db, job_id=job_id)
+    """Get the status of a specific execution job. Only returns jobs owned by the user."""
+    return await orchestrator.get_job(db, job_id=job_id, user_id=user["sub"])
 
 
 # ── Provider health ─────────────────────────────────────────────────

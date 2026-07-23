@@ -126,20 +126,23 @@ async def _execute_rank_job(
             logger.exception("Rank job %s failed: %s", job_id, exc)
 
 
-async def get(job_id: str) -> dict[str, Any] | None:
+async def get(job_id: str, user_id: str | None = None) -> dict[str, Any] | None:
     """Get the status of a ranking job from the execution queue.
 
     Args:
         job_id: The execution job ID.
+        user_id: If provided, verifies the job belongs to this user.
 
     Returns:
-        Dict with status info, or None if not found.
+        Dict with status info, or None if not found / not owned by user.
     """
     from app.db.session import async_session_factory
 
     async with async_session_factory() as db:
         job = await _get_queue().get_job(db, job_id)
         if job is None:
+            return None
+        if user_id is not None and job.user_id != user_id:
             return None
 
         return {
@@ -158,18 +161,25 @@ async def get(job_id: str) -> dict[str, Any] | None:
         }
 
 
-async def cancel(job_id: str) -> bool:
+async def cancel(job_id: str, user_id: str | None = None) -> bool:
     """Cancel a ranking job.
 
     Args:
         job_id: The execution job ID.
+        user_id: If provided, only cancels if the job belongs to this user.
 
     Returns:
-        True if cancelled, False if not found or already completed.
+        True if cancelled, False if not found, already completed, or not owned.
     """
     from app.db.session import async_session_factory
 
     async with async_session_factory() as db:
+        job = await _get_queue().get_job(db, job_id)
+        if job is None:
+            return False
+        if user_id is not None and job.user_id != user_id:
+            return False
+
         return await _get_queue().cancel_job(db, job_id)
 
 

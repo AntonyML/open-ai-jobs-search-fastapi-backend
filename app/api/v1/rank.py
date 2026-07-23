@@ -1,10 +1,15 @@
 """Rank router — endpoints for ranking job postings."""
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy import select, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_locale
 from app.core.i18n.locale import t
+from app.core.settings import get_settings
+from app.db.models import ExecutionJob
 from app.db.session import get_db as _get_db
 from app.schemas.rank import RankRequest, RankResult
 from app.schemas.rank import RankEvaluationOut as RankEvaluationOutSchema
@@ -13,7 +18,7 @@ from app.services import rank
 from app.services import rank_jobs
 from app.db.session import async_session_factory
 from app.services.rank import count_jobs_to_rank
-from app.services.tiers import get_tier_limits
+from app.services.tiers import get_tier_limits, get_user_tier_limits
 
 router = APIRouter(prefix="/rank", tags=["rank"])
 
@@ -29,26 +34,55 @@ async def trigger_rank(
     locale: str = Depends(get_locale),
 ):
     """Trigger a rank evaluation for unranked jobs."""
-    tier = user.get("tier", "free")
-    max_jobs = get_tier_limits(tier).get("max_rank_iterations")
+    settings = get_settings()
+    window = datetime.now(timezone.utc) - timedelta(seconds=settings.rate_limit_window_seconds)
+    count_result = await db.execute(
+        select(sa_func.count(ExecutionJob.id)).where(
+            ExecutionJob.user_id == user["sub"],
+            ExecutionJob.pipeline == "rank",
+            ExecutionJob.created_at >= window,
+        )
+    )
+    recent_count = count_result.scalar() or 0
+    if recent_count >= settings.rate_limit_attempts:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded. Max {settings.rate_limit_attempts} rank runs per {settings.rate_limit_window_seconds // 60} minutes.",
+        )
+
+    # Validate tier limits from DB (not just JWT)
+    tier_limits = await get_user_tier_limits(db, user["sub"])
+    max_jobs = tier_limits.get("max_rank_iterations")
     pdata = payload.model_dump()
-    if max_jobs is not None and tier != "premium":
+    if max_jobs is not None:
         pdata["max_jobs"] = max_jobs
     job_id = await rank_jobs.start(async_session_factory, user["sub"], pdata)
     counts = await count_jobs_to_rank(db, user["sub"], payload.model_dump())
-    return {"job_id": job_id, "status": "running", "total_jobs": counts["total"]}
+    accepted = min(counts["total"], max_jobs or counts["total"])
+    return {"job_id": job_id, "status": "queued", "total_jobs": counts["total"], "accepted_jobs": accepted}
 
 @router.get("/status/{job_id}")
 async def rank_status(
     job_id: str,
+    user: dict = Depends(get_current_user),
     locale: str = Depends(get_locale),
 ):
-    result = await rank_jobs.get(job_id)
-    return result or {"detail": t("errors.not_found", locale)}
+    """Get the status of a ranking job. Only returns jobs owned by the authenticated user."""
+    result = await rank_jobs.get(job_id, user_id=user["sub"])
+    if result is None:
+        raise HTTPException(status_code=404, detail=t("errors.not_found", locale))
+    return result
 
 @router.post("/cancel/{job_id}")
-async def cancel_rank(job_id: str):
-    cancelled = await rank_jobs.cancel(job_id)
+async def cancel_rank(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+    locale: str = Depends(get_locale),
+):
+    """Cancel a ranking job. Only cancels if owned by the authenticated user."""
+    cancelled = await rank_jobs.cancel(job_id, user_id=user["sub"])
+    if not cancelled:
+        raise HTTPException(status_code=404, detail=t("errors.not_found", locale))
     return {"cancelled": cancelled}
 
 
