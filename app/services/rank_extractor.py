@@ -602,10 +602,10 @@ def match_skills_controlled(
     coverage_ratio = covered / total if total > 0 else 1.0
 
     return {
-        "exact_matches": exact_matches,
+        "exact_matches": list(exact_matches),
         "category_matches": category_matches,
         "semantic_signals": semantic_signals,
-        "unmatched_job_skills": remaining_job,
+        "unmatched_job_skills": list(remaining_job),
         "coverage_ratio": coverage_ratio,
     }
 

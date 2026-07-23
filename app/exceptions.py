@@ -146,7 +146,7 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
     from fastapi.exceptions import RequestValidationError
 
     if isinstance(exc, RequestValidationError):
-        locale = get_locale_from_request(request.headers, request.cookies)
+        locale = get_locale_from_request(request)
         details = _json_safe(exc.errors())
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -158,7 +158,7 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
         )
     # Fallback — should not happen if registered correctly
     from app.core.i18n.locale import get_locale_from_request, t
-    locale = get_locale_from_request(request.headers, request.cookies)
+    locale = get_locale_from_request(request)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"error": "internal_error", "message": t("errors.internal", locale)},
