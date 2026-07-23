@@ -24,6 +24,7 @@ dependencies = [
     "structlog>=24.1.0,<25.0.0",
     "sentry-sdk>=2.20.0,<3.0.0",
     "aiosqlite>=0.20.0,<0.21.0",
+    "aiocache[redis]>=0.12.0,<1.0.0",
 ]
 
 [project.optional-dependencies]

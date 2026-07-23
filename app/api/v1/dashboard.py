@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from aiocache import Cache, cached
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("/stats")
+@cached(ttl=30, cache=Cache.MEMORY, key_builder=lambda f, *a, **kw: f"dash_stats_{kw['user']['sub']}")
 async def get_dashboard_stats(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -86,6 +88,7 @@ async def get_dashboard_stats(
 
 
 @router.get("/pipeline")
+@cached(ttl=30, cache=Cache.MEMORY, key_builder=lambda f, *a, **kw: f"dash_pipeline_{kw['user']['sub']}")
 async def get_pipeline_progress(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -134,6 +137,7 @@ analytics_router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
 @analytics_router.get("/funnel")
+@cached(ttl=60, cache=Cache.MEMORY, key_builder=lambda f, *a, **kw: f"analytics_funnel_{kw['user']['sub']}")
 async def get_analytics_funnel(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

@@ -24,11 +24,12 @@ from app.services.provider_credentials import (
     set_user_active_provider,
 )
 from app.services.provider_models import (
-    get_user_model_selection,
     list_provider_models,
     set_user_model_selection,
 )
 from app.services.tiers import get_tier_limits
+from app.db.models import UserModelSelection
+from sqlalchemy import select
 from app.llm.adapter import llm_completion
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -92,17 +93,27 @@ async def list_my_providers(
     providers = await list_user_providers(db, user["sub"])
     active_config = await get_user_active_provider_config(db, user["sub"])
     limits = get_tier_limits(user.get("tier", "free"))
-    return [
-        ProviderCredentialOut(
-            provider=p["provider"],
-            api_base=p["api_base"],
-            model=None,
-            has_key=True,
-            is_active=p["provider"] == active_config.get("provider"),
-            usage_limits=limits,
+
+    model_rows = await db.execute(
+        select(UserModelSelection.provider, UserModelSelection.model)
+        .where(UserModelSelection.user_id == user["sub"])
+    )
+    model_map: dict[str, str | None] = {row.provider: row.model for row in model_rows.all()}
+
+    result: list[ProviderCredentialOut] = []
+    for p in providers:
+        model = model_map.get(p["provider"])
+        result.append(
+            ProviderCredentialOut(
+                provider=p["provider"],
+                api_base=p["api_base"],
+                model=model,
+                has_key=True,
+                is_active=p["provider"] == active_config.get("provider"),
+                usage_limits=limits,
+            )
         )
-        for p in providers
-    ]
+    return result
 
 
 @router.get(
@@ -193,26 +204,28 @@ async def update_provider(
     db: AsyncSession = Depends(get_db),
 ) -> ProviderCredentialOut:
     """Update API key, base URL, or model for an existing provider."""
-    # Get existing to preserve unchanged fields
     existing = await get_provider_credential(db, user["sub"], provider)
     if not existing:
         from app.exceptions import NotFoundError
 
         raise NotFoundError(f"Provider '{provider}' not configured")
 
+    # Only update fields that are provided; api_key=None keeps existing
     credential = await set_provider_credential(
         db=db,
         user_id=user["sub"],
         provider=provider,
-        api_key=payload.api_key or existing.api_key_encrypted,  # Will be decrypted in service
-        api_base=str(payload.api_base) if payload.api_base else existing.api_base,
+        api_key=payload.api_key,
+        api_base=str(payload.api_base) if payload.api_base else None,
     )
     if payload.model:
         await set_user_model_selection(db, user["sub"], provider, payload.model)
+    # Fetch current model to return
+    current_model = payload.model or await get_user_model_selection(db, user["sub"], provider)
     return ProviderCredentialOut(
         provider=credential.provider,
         api_base=credential.api_base,
-        model=payload.model,
+        model=current_model,
         has_key=True,
         is_active=False,
     )

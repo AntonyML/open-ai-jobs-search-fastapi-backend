@@ -16,7 +16,7 @@ async def set_provider_credential(
     db: AsyncSession,
     user_id: str,
     provider: str,
-    api_key: str,
+    api_key: str | None = None,
     api_base: str | None = None,
 ) -> ProviderCredential:
     """Store or update a provider credential for a user.
@@ -25,13 +25,12 @@ async def set_provider_credential(
         db: Database session
         user_id: User ID
         provider: Provider name (anthropic, openai, nvidia_nim, lm_studio)
-        api_key: Plaintext API key (will be encrypted)
-        api_base: Optional base URL for self-hosted providers
+        api_key: Plaintext API key (will be encrypted). Pass None to keep existing.
+        api_base: Base URL for self-hosted providers. Pass None to keep existing.
 
     Returns:
         The created/updated ProviderCredential
     """
-    # Check if credential already exists
     result = await db.execute(
         select(ProviderCredential).where(
             ProviderCredential.user_id == user_id,
@@ -40,13 +39,15 @@ async def set_provider_credential(
     )
     credential = result.scalar_one_or_none()
 
-    encrypted_key = encrypt_api_key(api_key)
-
     if credential:
-        credential.api_key_encrypted = encrypted_key
+        if api_key is not None:
+            credential.api_key_encrypted = encrypt_api_key(api_key)
         if api_base is not None:
             credential.api_base = api_base
     else:
+        if not api_key:
+            raise ValueError("API key is required to create a new provider credential")
+        encrypted_key = encrypt_api_key(api_key)
         credential = ProviderCredential(
             user_id=user_id,
             provider=provider,

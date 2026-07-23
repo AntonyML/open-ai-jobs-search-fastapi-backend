@@ -18,9 +18,10 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.settings import get_settings
-from app.db.models import Application, JobPosting, Outcome, User
+from app.db.models import Application, Outcome, User
 from app.exceptions import NotFoundError, ProfileIncompleteError
 from app.schemas.outcome import OutcomeCreate, OutcomeLLMOutput, OutcomeUpdate, TrackerRowOut
 
@@ -114,23 +115,16 @@ async def execute_outcome(
     # 1. Validate status
     _validate_status(payload.status)
 
-    # 2. Load application and verify ownership
+    # 2. Load application with job_posting eagerly, verify ownership
     app_result = await db.execute(
         select(Application)
+        .options(selectinload(Application.job_posting))
         .where(Application.id == payload.application_id)
         .where(Application.user_id == user_id)
     )
     application = app_result.scalar_one_or_none()
-    if application is None:
+    if application is None or application.job_posting is None:
         raise NotFoundError("Application not found.")
-
-    # 3. Load job posting
-    job_result = await db.execute(
-        select(JobPosting).where(JobPosting.id == application.job_posting_id)
-    )
-    job = job_result.scalar_one_or_none()
-    if job is None:
-        raise NotFoundError("Job posting not found.")
 
     # 4. Always create a new outcome record (one per status change / progress update)
     outcome = Outcome(
@@ -181,10 +175,10 @@ async def execute_outcome(
     await db.refresh(outcome)
 
     # 8. Update job_search_tracker.csv
-    await _update_tracker_csv(db, application, job, payload.status)
+    await _update_tracker_csv(db, application, payload.status)
 
     # 9. Archive outcome.md in documents/applications/
-    await _archive_outcome_md(application, job, outcome)
+    await _archive_outcome_md(application, outcome)
 
     # 10. Update job posting status
     application.job_posting.status = _map_outcome_to_job_status(payload.status)
@@ -266,13 +260,13 @@ def _map_outcome_to_job_status(outcome_status: str) -> str:
 async def _update_tracker_csv(
     db: AsyncSession,
     application: Application,
-    job: JobPosting,
     new_status: str,
 ) -> None:
     """Update job_search_tracker.csv with the new status.
 
     The tracker is used by /scrape and /rank for dedup and exclusion.
     """
+    job = application.job_posting
     tracker_path = _get_tracker_path()
     tracker_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -324,10 +318,10 @@ async def _update_tracker_csv(
 
 async def _archive_outcome_md(
     application: Application,
-    job: JobPosting,
     outcome: Outcome,
 ) -> None:
     """Archive outcome.md in documents/applications/<company>_<role>/."""
+    job = application.job_posting
     apps_dir = _get_applications_dir()
     company_slug = (job.company or "unknown").lower().replace(" ", "_")
     role_slug = job.title.lower().replace(" ", "_")
@@ -395,6 +389,7 @@ async def list_outcomes(
     """List outcomes for a user."""
     result = await db.execute(
         select(Outcome)
+        .options(selectinload(Outcome.application))
         .where(Outcome.user_id == user_id)
         .order_by(Outcome.created_at.desc())
         .limit(limit)
@@ -416,9 +411,9 @@ async def get_outcome_by_application(
 
 
 async def list_tracker_rows(
-    db: AsyncSession, user_id: str
+    db: AsyncSession, user_id: str, limit: int = 50, offset: int = 0
 ) -> list[TrackerRowOut]:
-    """List all tracker rows for a user (reads from CSV)."""
+    """List tracker rows for a user with pagination (reads from CSV)."""
     tracker_path = _get_tracker_path()
     if not tracker_path.exists():
         return []
@@ -427,6 +422,5 @@ async def list_tracker_rows(
         reader = csv.DictReader(f)
         rows = list(reader)
 
-    # Filter by user's applications (we'd need to join with DB, but for now return all)
-    # In a real implementation, we'd filter by user's companies/roles
-    return [TrackerRowOut(**row) for row in rows]
+    page = rows[offset : offset + limit]
+    return [TrackerRowOut(**row) for row in page]

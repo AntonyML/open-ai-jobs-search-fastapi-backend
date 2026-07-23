@@ -14,8 +14,8 @@ settings = get_settings()
 engine = create_async_engine(
     settings.database_url,
     echo=settings.app_env == "development",
-    pool_size=5,        # Base pool connections — Postgres caps at 15
-    max_overflow=3,     # Max overflow so total never exceeds Postgres limit (5+3=8)
+    pool_size=10,       # Base pool connections — Postgres caps at 15
+    max_overflow=5,     # Max overflow so total never exceeds Postgres limit (10+5=15)
     pool_pre_ping=True,
     pool_recycle=300,   # Recycle connections every 5 min to prevent stale conns
     # If using Transaction Pooler, uncomment:

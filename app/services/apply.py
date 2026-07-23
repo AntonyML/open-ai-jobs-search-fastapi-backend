@@ -1143,40 +1143,41 @@ async def execute_apply(
     The pipeline_stage is persisted in the Application record so the
     frontend can show real-time progress.
     """
-    # 1. Get job posting
-    job_result = await db.execute(
+    # 1. Load all dependencies in parallel
+    job_fut = db.execute(
         select(JobPosting).where(
             JobPosting.id == job_posting_id,
             JobPosting.user_id == user_id,
         )
     )
-    job = job_result.scalar_one_or_none()
-    if job is None:
-        raise NotFoundError("Job posting not found.")
-
-    # 2. Get rank evaluation
     if rank_evaluation_id:
-        eval_result = await db.execute(
+        eval_fut = db.execute(
             select(RankEvaluation).where(
                 RankEvaluation.id == rank_evaluation_id,
                 RankEvaluation.job_posting_id == job_posting_id,
             )
         )
     else:
-        eval_result = await db.execute(
+        eval_fut = db.execute(
             select(RankEvaluation)
             .where(RankEvaluation.job_posting_id == job_posting_id)
             .order_by(RankEvaluation.created_at.desc())
         )
-    evaluation = eval_result.scalar_one_or_none()
+    cand_fut = db.execute(
+        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+    )
+
+    job_res, eval_res, cand_res = await asyncio.gather(job_fut, eval_fut, cand_fut)
+
+    job = job_res.scalar_one_or_none()
+    if job is None:
+        raise NotFoundError("Job posting not found.")
+
+    evaluation = eval_res.scalar_one_or_none()
     if evaluation is None:
         raise NotFoundError("Rank evaluation not found. Run /rank first.")
 
-    # 3. Get candidate profile
-    candidate_result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-    )
-    candidate = candidate_result.scalar_one_or_none()
+    candidate = cand_res.scalar_one_or_none()
     if candidate is None:
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 

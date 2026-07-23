@@ -1,6 +1,6 @@
 """Outcome router — endpoints for recording job application outcomes."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,11 +80,13 @@ async def list_outcomes(
 
 @router.get("/tracker/rows", response_model=list[TrackerRowOut])
 async def list_tracker_rows(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """List all rows from job_search_tracker.csv."""
-    return await outcome.list_tracker_rows(db, user["sub"])
+    """List rows from job_search_tracker.csv with pagination."""
+    return await outcome.list_tracker_rows(db, user["sub"], limit=limit, offset=offset)
 
 
 @router.get("/calibration", response_model=CalibrationReport)
