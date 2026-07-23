@@ -11,19 +11,17 @@ Implements the /outcome workflow from the original repo:
 from __future__ import annotations
 
 import csv
-import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.settings import get_settings
-from app.db.models import Application, Outcome, User
-from app.exceptions import NotFoundError, ProfileIncompleteError
-from app.schemas.outcome import OutcomeCreate, OutcomeLLMOutput, OutcomeUpdate, TrackerRowOut
+from app.db.models import Application, Outcome
+from app.exceptions import NotFoundError
+from app.schemas.outcome import OutcomeCreate, OutcomeUpdate, TrackerRowOut
 
 settings = get_settings()
 
@@ -126,7 +124,7 @@ async def execute_outcome(
     if application is None or application.job_posting is None:
         raise NotFoundError("Application not found.")
 
-    # 4. Always create a new outcome record (one per status change / progress update)
+    # 3. Always create a new outcome record (one per status change / progress update)
     outcome = Outcome(
         user_id=user_id,
         application_id=payload.application_id,
@@ -134,7 +132,7 @@ async def execute_outcome(
     )
     db.add(outcome)
 
-    # 5. Update fields from payload
+    # 4. Update fields from payload
     if payload.date_resolved:
         outcome.date_resolved = payload.date_resolved
     if payload.phone_screen_date:
@@ -155,11 +153,11 @@ async def execute_outcome(
     if payload.valued_signals is not None:
         outcome.valued_signals = payload.valued_signals
 
-    # 6. Set date_resolved if this is a resolution status
+    # 5. Set date_resolved if this is a resolution status
     if _is_resolution(payload.status) and not outcome.date_resolved:
         outcome.date_resolved = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # 7. Update interview stage dates
+    # 6. Update interview stage dates
     if payload.phone_screen_date:
         outcome.phone_screen_date = payload.phone_screen_date
     if payload.technical_date:
@@ -174,17 +172,14 @@ async def execute_outcome(
     await db.flush()
     await db.refresh(outcome)
 
-    # 8. Update job_search_tracker.csv
+    # 7. Update job_search_tracker.csv
     await _update_tracker_csv(db, application, payload.status)
 
-    # 9. Archive outcome.md in documents/applications/
+    # 8. Archive outcome.md in documents/applications/
     await _archive_outcome_md(application, outcome)
 
-    # 10. Update job posting status
+    # 9. Update job posting status
     application.job_posting.status = _map_outcome_to_job_status(payload.status)
-    await db.commit()
-    await db.refresh(outcome)
-
     return outcome
 
 
@@ -223,7 +218,6 @@ async def update_outcome(
     if payload.offer_received_date:
         outcome.offer_received_date = payload.offer_received_date
     if payload.notes is not None:
-        # Store notes exactly as received, no timestamp prefix
         outcome.notes = payload.notes
     if payload.lessons_learned is not None:
         outcome.lessons_learned = payload.lessons_learned
@@ -270,14 +264,12 @@ async def _update_tracker_csv(
     tracker_path = _get_tracker_path()
     tracker_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Read existing rows
     rows = []
     if tracker_path.exists():
         with open(tracker_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
 
-    # Find existing row for this company+role
     company = job.company or "Unknown"
     role = job.title
     row_idx = None
@@ -286,7 +278,6 @@ async def _update_tracker_csv(
             row_idx = i
             break
 
-    # Build tracker row
     tracker_row = {
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "company": company,
@@ -308,7 +299,6 @@ async def _update_tracker_csv(
     else:
         rows.append(tracker_row)
 
-    # Write back
     fieldnames = _get_tracker_fieldnames()
     with open(tracker_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -328,7 +318,6 @@ async def _archive_outcome_md(
     app_dir = apps_dir / f"{company_slug}_{role_slug}"
     app_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build outcome.md content
     lines = [
         f"# Outcome: {job.company} — {job.title}",
         "",

@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 
 from app.core.settings import get_settings

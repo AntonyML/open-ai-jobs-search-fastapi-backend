@@ -24,6 +24,7 @@ from app.services.provider_credentials import (
     set_user_active_provider,
 )
 from app.services.provider_models import (
+    get_user_model_selection,
     list_provider_models,
     set_user_model_selection,
 )
