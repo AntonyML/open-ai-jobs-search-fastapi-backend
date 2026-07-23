@@ -118,29 +118,78 @@ async def start(
                     "accepted_jobs": total_jobs,
                 }
 
-    # 4. Create ExecutionJob (status='queued')
+    # 4. Verify no other active rank job exists (partial unique index uq_active_rank_per_user)
     async with db_factory() as db:
-        job_id, _ = await queue.enqueue(
-            db=db,
-            user_id=user_id,
-            pipeline="rank",
-            description=(
-                f"Rank run: focus={payload.get('focus_area', 'all')}, "
-                f"re_rank={re_rank}, jobs={total_jobs}"
-            ),
-            group_id=None,
-            messages=None,
-            output_schema="RankResult",
-            max_retries=1,
-            checkpoint_data={
-                "payload": payload,
-                "profile_snapshot": profile_snapshot,
-                "algorithm_version": ALGORITHM_VERSION,
-                "prompt_version": PROMPT_VERSION,
-            },
+        existing_active = await db.execute(
+            select(ExecutionJob).where(
+                ExecutionJob.user_id == user_id,
+                ExecutionJob.pipeline == "rank",
+                ExecutionJob.status.in_(["queued", "running"]),
+            )
         )
+        active_job = existing_active.scalar_one_or_none()
+        if active_job is not None:
+            logger.info(
+                "Active rank job %s already exists for user %s — returning it",
+                active_job.id, user_id,
+            )
+            return {
+                "job_id": active_job.id,
+                "status": active_job.status,
+                "total_jobs": total_jobs,
+                "accepted_jobs": 0,
+                "message": f"Rank run already in progress (job {active_job.id}).",
+            }
 
-    # 4b. Set idempotency key (separate session — enqueue already committed)
+    # 5. Create ExecutionJob (status='queued')
+    async with db_factory() as db:
+        try:
+            job_id, _ = await queue.enqueue(
+                db=db,
+                user_id=user_id,
+                pipeline="rank",
+                description=(
+                    f"Rank run: focus={payload.get('focus_area', 'all')}, "
+                    f"re_rank={re_rank}, jobs={total_jobs}"
+                ),
+                group_id=None,
+                messages=None,
+                output_schema="RankResult",
+                max_retries=1,
+                checkpoint_data={
+                    "payload": payload,
+                    "profile_snapshot": profile_snapshot,
+                    "algorithm_version": ALGORITHM_VERSION,
+                    "prompt_version": PROMPT_VERSION,
+                },
+            )
+        except IntegrityError:
+            # Race condition: another request snuck in an active job before we
+            # committed. Catch and return the existing active job instead.
+            await db.rollback()
+            recovered = await db.execute(
+                select(ExecutionJob).where(
+                    ExecutionJob.user_id == user_id,
+                    ExecutionJob.pipeline == "rank",
+                    ExecutionJob.status.in_(["queued", "running"]),
+                )
+            )
+            active_job = recovered.scalar_one_or_none()
+            if active_job is not None:
+                logger.info(
+                    "Deduplicated concurrent rank job for user %s — returning existing %s",
+                    user_id, active_job.id,
+                )
+                return {
+                    "job_id": active_job.id,
+                    "status": active_job.status,
+                    "total_jobs": total_jobs,
+                    "accepted_jobs": 0,
+                    "message": f"Rank run already in progress (job {active_job.id}).",
+                }
+            raise
+
+    # 6. Set idempotency key (separate session — enqueue already committed)
     if idempotency_key:
         async with db_factory() as db:
             result = await db.execute(
@@ -151,7 +200,7 @@ async def start(
                 db_job.idempotency_key = idempotency_key
             await db.commit()
 
-    # 5. Create one item per job posting
+    # 7. Create one item per job posting
     async with db_factory() as db:
         items = []
         for job in jobs:
