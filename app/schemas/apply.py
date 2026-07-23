@@ -128,7 +128,7 @@ class ApplicationStatusOut(BaseModel):
 class TailoredExperienceLLMOutput(BaseModel):
     """LLM output for tailored experience section."""
 
-    experience: list[TailoredExperienceEntry] = Field(max_length=10)
+    tailored_experience: list[TailoredExperienceEntry] = Field(max_length=10)
 
 
 class CoverLetterLLMOutput(BaseModel):

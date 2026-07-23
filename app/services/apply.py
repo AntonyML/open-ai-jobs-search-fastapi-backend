@@ -1096,7 +1096,7 @@ async def _generate_revision(
                 overall_quality_improvement="No changes needed.",
             )
 
-        return result.experience, ReviseResult(
+        return result.tailored_experience, ReviseResult(
             changes_made=[
                 ReviseAction(
                     issue_type=issue.type,
@@ -1130,6 +1130,7 @@ async def execute_apply(
     cv_template: str = "moderncv-banking",
     cover_letter_template: str = "cover-cls",
     provider_config: dict | None = None,
+    application: Application | None = None,
 ) -> ApplyResult:
     """Execute the full apply workflow with Drafter-Reviewer pipeline.
 
@@ -1143,6 +1144,9 @@ async def execute_apply(
 
     The pipeline_stage is persisted in the Application record so the
     frontend can show real-time progress.
+
+    If ``application`` is provided, the pipeline updates it in-place
+    (used by background task). Otherwise a new Application is created.
     """
     # 1. Load all dependencies in parallel
     job_fut = db.execute(
@@ -1185,6 +1189,30 @@ async def execute_apply(
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
     # ═══════════════════════════════════════════════════════════════
+    # Create or initialize Application record for stage tracking
+    # ═══════════════════════════════════════════════════════════════
+    if application is None:
+        application = Application(
+            user_id=user_id,
+            job_posting_id=job_posting_id,
+            rank_evaluation_id=evaluation.id,
+            cv_template=cv_template,
+            cover_letter_template=cover_letter_template,
+            language=job.language or "en",
+            pipeline_stage="draft",
+        )
+        db.add(application)
+        await db.commit()
+        await db.refresh(application)
+    else:
+        application.rank_evaluation_id = evaluation.id
+        application.cv_template = cv_template
+        application.cover_letter_template = cover_letter_template
+        application.language = job.language or "en"
+        application.pipeline_stage = "draft"
+        await db.commit()
+
+    # ═══════════════════════════════════════════════════════════════
     # STAGE 1: DRAFT — Generate tailored experience + cover letter
     # ═══════════════════════════════════════════════════════════════
 
@@ -1204,6 +1232,12 @@ async def execute_apply(
     draft_cv_tex = render_cv_latex(candidate, tailored_experience, job)
     draft_cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
 
+    # Persist draft for audit trail and update stage
+    application.pipeline_stage = "draft"
+    application.draft_cv_tex = draft_cv_tex
+    application.draft_cover_letter_tex = draft_cover_tex
+    await db.commit()
+
     # ── Company research ──────────────────────────────────────────
     # Fetch basic company info so the reviewer can verify cover letter
     # claims about the target company.
@@ -1220,6 +1254,12 @@ async def execute_apply(
         provider_config,
         company_research=company_research,
     )
+
+    # Persist review feedback and update stage
+    application.pipeline_stage = "reviewed"
+    application.review_feedback = review_feedback.model_dump()
+    application.review_issues = [i.model_dump() for i in review_feedback.issues]
+    await db.commit()
 
     # ═══════════════════════════════════════════════════════════════
     # STAGE 4: REVISE — Apply feedback and regenerate
@@ -1246,6 +1286,10 @@ async def execute_apply(
     except Exception as e:
         logger.warning(f"Cover letter revision failed — keeping original: {e}")
         revised_cover_letter = cover_letter_content
+
+    # Persist revised stage
+    application.pipeline_stage = "revised"
+    await db.commit()
 
     # ═══════════════════════════════════════════════════════════════
     # STAGE 5: RENDER FINAL — Produce final LaTeX from revised content
@@ -1479,38 +1523,23 @@ async def execute_apply(
     incorporated_keywords = _extract_incorporated_keywords(revised_experience, evaluation.missing_keywords or [])
     addressed_red_flags = _extract_addressed_red_flags(revised_experience, evaluation.red_flags or [])
 
-    # 9. Create Application record with pipeline stage and draft tracking
-    application = Application(
-        user_id=user_id,
-        job_posting_id=job_posting_id,
-        rank_evaluation_id=evaluation.id,
-        tailored_experience=[exp.model_dump() for exp in revised_experience],
-        incorporated_keywords=[k.model_dump() for k in incorporated_keywords],
-        addressed_red_flags=[r.model_dump() for r in addressed_red_flags],
-        cv_tex_path=str(cv_tex_final),
-        cv_pdf_path=str(cv_pdf_final),
-        cover_letter_tex_path=str(cover_tex_final),
-        cover_letter_pdf_path=str(cover_pdf_final),
-        cv_compiled=True,
-        cv_pages=cv_pages,
-        cover_letter_compiled=True,
-        cover_letter_pages=cover_pages,
-        cv_template=cv_template,
-        cover_letter_template=cover_letter_template,
-        language=job.language or "en",
-        # Pipeline tracking
-        pipeline_stage="verified" if (ats_result and ats_result.pass_ats) else "compiled",
-        draft_cv_tex=draft_cv_tex,  # Pre-review draft for audit
-        draft_cover_letter_tex=draft_cover_tex,  # Pre-review draft for audit
-        review_feedback=review_feedback.model_dump(),
-        review_issues=[i.model_dump() for i in review_feedback.issues],
-        # ATS check results
-        ats_score=ats_result.keyword_coverage if ats_result else None,
-        ats_missing_keywords=ats_result.missing_keywords if ats_result else None,
-        ats_pass=ats_result.pass_ats if ats_result else None,
-        ats_checked_at=datetime.now(timezone.utc) if ats_result else None,
-    )
-    db.add(application)
+    # 9. Update Application record with final generated content
+    application.tailored_experience = [exp.model_dump() for exp in revised_experience]
+    application.incorporated_keywords = [k.model_dump() for k in incorporated_keywords]
+    application.addressed_red_flags = [r.model_dump() for r in addressed_red_flags]
+    application.cv_tex_path = str(cv_tex_final)
+    application.cv_pdf_path = str(cv_pdf_final)
+    application.cover_letter_tex_path = str(cover_tex_final)
+    application.cover_letter_pdf_path = str(cover_pdf_final)
+    application.cv_compiled = True
+    application.cv_pages = cv_pages
+    application.cover_letter_compiled = True
+    application.cover_letter_pages = cover_pages
+    application.pipeline_stage = "verified" if (ats_result and ats_result.pass_ats) else "compiled"
+    application.ats_score = ats_result.keyword_coverage if ats_result else None
+    application.ats_missing_keywords = ats_result.missing_keywords if ats_result else None
+    application.ats_pass = ats_result.pass_ats if ats_result else None
+    application.ats_checked_at = datetime.now(timezone.utc) if ats_result else None
 
     # 10. Update job posting status
     job.status = "applied"
@@ -1553,6 +1582,50 @@ async def execute_apply(
     )
 
 
+async def execute_apply_background(
+    application_id: str,
+    provider_config: dict | None = None,
+):
+    """Run the apply pipeline in the background, updating progress progressively.
+
+    Creates its own DB session so it can outlive the HTTP request.
+    On success the Application record contains the full generated output;
+    on failure pipeline_stage is set to ``failed``.
+    """
+    from app.db.session import async_session_factory
+
+    async with async_session_factory() as db:
+        try:
+            result = await db.execute(
+                select(Application).where(Application.id == application_id)
+            )
+            application = result.scalar_one_or_none()
+            if application is None:
+                logger.error("execute_apply_background: Application %s not found", application_id)
+                return
+
+            application.pipeline_stage = "initializing"
+            await db.commit()
+
+            await execute_apply(
+                db=db,
+                user_id=application.user_id,
+                job_posting_id=application.job_posting_id,
+                provider_config=provider_config,
+                cv_template=application.cv_template,
+                cover_letter_template=application.cover_letter_template,
+                application=application,
+            )
+        except Exception as e:
+            logger.error("Pipeline failed for application %s: %s", application_id, e)
+            try:
+                await db.rollback()
+                application.pipeline_stage = "failed"
+                await db.commit()
+            except Exception:
+                pass
+
+
 def _get_provider_kwargs(provider_config: dict | None) -> dict:
     """Extract provider kwargs from provider config for LLM calls."""
     if not provider_config:
@@ -1584,7 +1657,7 @@ async def _generate_tailored_experience(
             temperature=0.3,
             max_tokens=3000,
         )
-        return result.experience
+        return result.tailored_experience
     except Exception as e:
         raise LLMError(f"Failed to generate tailored experience: {e}") from e
 

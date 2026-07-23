@@ -60,6 +60,8 @@ CATALOG: dict[str, dict[str, str]] = {
         "apply.stage.compiled": "Compiling LaTeX and verifying PDF...",
         "apply.stage.verified": "Application complete — ATS verified.",
         "apply.stage.initializing": "Initializing...",
+        "apply.stage.queued": "Queued...",
+        "apply.stage.failed": "Pipeline failed",
         # ── Interview ───────────────────────────────────────────
         "interview.prep_generated": "Interview prep pack generated for {stage} stage",
         "interview.mock_started": "Mock interview started",
@@ -145,6 +147,8 @@ CATALOG: dict[str, dict[str, str]] = {
         "apply.stage.compiled": "Compilando LaTeX y verificando PDF...",
         "apply.stage.verified": "Postulación completa — ATS verificado.",
         "apply.stage.initializing": "Inicializando...",
+        "apply.stage.queued": "En cola...",
+        "apply.stage.failed": "El pipeline falló",
         # ── Interview ───────────────────────────────────────────
         "interview.prep_generated": "Paquete de preparación generado para etapa {stage}",
         "interview.mock_started": "Entrevista simulada iniciada",

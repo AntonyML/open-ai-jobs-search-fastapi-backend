@@ -1,12 +1,14 @@
 """Apply router — endpoints for generating tailored CV and cover letter."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_llm_provider, get_locale
 from app.core.i18n.locale import t
-from app.db.models import Application, JobPosting
+from app.db.models import Application, JobPosting, RankEvaluation
 from app.db.session import get_db as _get_db
 from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
 from app.schemas.scrape import JobPostingSummary
@@ -28,7 +30,12 @@ async def trigger_apply(
     provider_config: dict = Depends(get_llm_provider),
     locale: str = Depends(get_locale),
 ):
-    """Generate tailored CV and cover letter for a ranked job."""
+    """Generate tailored CV and cover letter for a ranked job.
+
+    Creates the Application record immediately and schedules the
+    pipeline via a background task.  Poll ``GET /{id}/status`` for
+    real-time progress.
+    """
     tier = user.get("tier", "free")
     max_apply = get_tier_limits(tier).get("max_apply_count")
     if max_apply is not None and tier != "premium":
@@ -39,16 +46,69 @@ async def trigger_apply(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail="You have reached the maximum number of applications on your current plan. Upgrade to Premium for unlimited applications.",
             )
-    result = await apply.execute_apply(
-        db=db,
+
+    # Resolve rank evaluation and validate job ownership
+    job_fut = db.execute(
+        select(JobPosting).where(
+            JobPosting.id == payload.job_posting_id,
+            JobPosting.user_id == user["sub"],
+        )
+    )
+    if payload.rank_evaluation_id:
+        eval_fut = db.execute(
+            select(RankEvaluation).where(
+                RankEvaluation.id == payload.rank_evaluation_id,
+                RankEvaluation.job_posting_id == payload.job_posting_id,
+            )
+        )
+    else:
+        eval_fut = db.execute(
+            select(RankEvaluation)
+            .where(RankEvaluation.job_posting_id == payload.job_posting_id)
+            .order_by(RankEvaluation.created_at.desc())
+        )
+
+    job_res, eval_res = await asyncio.gather(job_fut, eval_fut)
+    job = job_res.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail=t("errors.not_found", locale))
+    evaluation = eval_res.scalar_one_or_none()
+    if evaluation is None:
+        raise HTTPException(
+            status_code=404,
+            detail=t("errors.not_found", locale) + " — Run /rank first.",
+        )
+
+    # Create Application record immediately for status tracking
+    application = Application(
         user_id=user["sub"],
         job_posting_id=payload.job_posting_id,
-        rank_evaluation_id=payload.rank_evaluation_id,
+        rank_evaluation_id=evaluation.id,
+        pipeline_stage="queued",
         cv_template=payload.cv_template or "moderncv-banking",
         cover_letter_template=payload.cover_letter_template or "cover-cls",
-        provider_config=provider_config,
+        language=job.language or "en",
     )
-    return result
+    db.add(application)
+    await db.commit()
+    await db.refresh(application)
+
+    # Schedule background pipeline — returns immediately
+    asyncio.create_task(
+        apply.execute_apply_background(
+            application_id=application.id,
+            provider_config=provider_config,
+        )
+    )
+
+    return ApplyResult(
+        application_id=application.id,
+        cv_compiled=False,
+        cv_pages=None,
+        cover_letter_compiled=False,
+        cover_letter_pages=None,
+        message="Application queued. Check status endpoint for progress.",
+    )
 
 
 @router.get("/available-jobs", response_model=list[JobPostingSummary])
@@ -107,11 +167,14 @@ async def get_application_status(
 
     # Map pipeline_stage to progress percentage and action text
     stage_progress = {
+        "queued": (0, t("apply.stage.queued", locale)),
+        "initializing": (3, t("apply.stage.initializing", locale)),
         "draft": (10, t("apply.stage.draft", locale)),
         "reviewed": (30, t("apply.stage.reviewed", locale)),
         "revised": (60, t("apply.stage.revised", locale)),
         "compiled": (80, t("apply.stage.compiled", locale)),
         "verified": (100, t("apply.stage.verified", locale)),
+        "failed": (0, t("apply.stage.failed", locale)),
     }
     progress_pct, current_action = stage_progress.get(
         app.pipeline_stage, (0, t("apply.stage.initializing", locale))
