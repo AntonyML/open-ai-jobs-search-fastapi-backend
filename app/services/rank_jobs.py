@@ -58,8 +58,30 @@ async def start(
     re_rank = payload.get("re_rank", False)
     max_jobs = payload.get("max_jobs")
 
-    # 1. Load candidate profile (for snapshot)
+    # ── All DB operations in a single session (7→1 consolidation) ──
     async with db_factory() as db:
+        # 1. Idempotency check (early return if hit)
+        if idempotency_key:
+            existing = await db.execute(
+                select(ExecutionJob).where(
+                    ExecutionJob.idempotency_key == idempotency_key
+                )
+            )
+            existing_job = existing.scalar_one_or_none()
+            if existing_job is not None:
+                logger.info(
+                    "Idempotency key %s hit — returning existing job %s",
+                    idempotency_key, existing_job.id,
+                )
+                return {
+                    "job_id": existing_job.id,
+                    "status": existing_job.status,
+                    "total_jobs": 0,
+                    "accepted_jobs": 0,
+                    "message": "Idempotency hit — job already exists.",
+                }
+
+        # 2. Load candidate profile + count unranked jobs
         cand_result = await db.execute(
             select(CandidateProfile).where(CandidateProfile.user_id == user_id)
         )
@@ -72,7 +94,6 @@ async def start(
             "job_target": candidate.job_target if candidate else {},
         }
 
-        # 2. Select unranked jobs (count before creating items)
         query = select(JobPosting).where(JobPosting.user_id == user_id)
         if not re_rank:
             query = query.where(
@@ -88,38 +109,16 @@ async def start(
         jobs = list(result.scalars().all())
         total_jobs = len(jobs)
 
-    if total_jobs == 0:
-        return {
-            "job_id": None,
-            "status": "skipped",
-            "total_jobs": 0,
-            "accepted_jobs": 0,
-            "message": "No unranked jobs found.",
-        }
+        if total_jobs == 0:
+            return {
+                "job_id": None,
+                "status": "skipped",
+                "total_jobs": 0,
+                "accepted_jobs": 0,
+                "message": "No unranked jobs found.",
+            }
 
-    # 3. Idempotency check
-    if idempotency_key:
-        async with db_factory() as db:
-            existing = await db.execute(
-                select(ExecutionJob).where(
-                    ExecutionJob.idempotency_key == idempotency_key
-                )
-            )
-            existing_job = existing.scalar_one_or_none()
-            if existing_job is not None:
-                logger.info(
-                    "Idempotency key %s hit — returning existing job %s",
-                    idempotency_key, existing_job.id,
-                )
-                return {
-                    "job_id": existing_job.id,
-                    "status": existing_job.status,
-                    "total_jobs": total_jobs,
-                    "accepted_jobs": total_jobs,
-                }
-
-    # 4. Verify no other active rank job exists (partial unique index uq_active_rank_per_user)
-    async with db_factory() as db:
+        # 3. Verify no other active rank job exists
         existing_active = await db.execute(
             select(ExecutionJob).where(
                 ExecutionJob.user_id == user_id,
@@ -141,10 +140,9 @@ async def start(
                 "message": f"Rank run already in progress (job {active_job.id}).",
             }
 
-    # 5. Create ExecutionJob (status='queued')
-    async with db_factory() as db:
+        # 4. Enqueue (creates ExecutionJob + commits internally)
         try:
-            job_id, _ = await queue.enqueue(
+            job_id, execution_job = await queue.enqueue(
                 db=db,
                 user_id=user_id,
                 pipeline="rank",
@@ -164,8 +162,7 @@ async def start(
                 },
             )
         except IntegrityError:
-            # Race condition: another request snuck in an active job before we
-            # committed. Catch and return the existing active job instead.
+            # Race condition: another request snuck in an active job
             await db.rollback()
             recovered = await db.execute(
                 select(ExecutionJob).where(
@@ -189,19 +186,13 @@ async def start(
                 }
             raise
 
-    # 6. Set idempotency key (separate session — enqueue already committed)
-    if idempotency_key:
-        async with db_factory() as db:
-            result = await db.execute(
-                select(ExecutionJob).where(ExecutionJob.id == job_id)
-            )
-            db_job = result.scalar_one_or_none()
+        # 5. Set idempotency key + create items in a single new transaction
+        #    (enqueue already committed, so autobegin starts a new transaction)
+        if idempotency_key:
+            db_job = await db.get(ExecutionJob, job_id)
             if db_job is not None:
                 db_job.idempotency_key = idempotency_key
-            await db.commit()
 
-    # 7. Create one item per job posting
-    async with db_factory() as db:
         items = []
         for job in jobs:
             item = ExecutionJobItem(
@@ -216,13 +207,12 @@ async def start(
 
         await db.commit()
 
-    # Notify worker via PostgreSQL LISTEN/NOTIFY
-    try:
-        async with db_factory() as db2:
-            await db2.execute(text("SELECT pg_notify('job_queued', '')"))
-            await db2.commit()
-    except Exception:
-        logger.debug("pg_notify failed (non-critical)")
+        # 6. pg_notify (same session, best-effort)
+        try:
+            await db.execute(text("SELECT pg_notify('job_queued', '')"))
+            await db.commit()
+        except Exception:
+            logger.debug("pg_notify failed (non-critical)")
 
     logger.info(
         "Rank job %s enqueued | %d items for %d total jobs",
