@@ -85,10 +85,11 @@ def _create_worker_engine():
     settings = get_settings()
     return create_async_engine(
         settings.database_url,
-        pool_size=3,
-        max_overflow=2,
+        pool_size=2,
+        max_overflow=1,
         pool_pre_ping=True,
         pool_recycle=300,
+        pool_timeout=30,
         echo=settings.app_env == "development",
     )
 
