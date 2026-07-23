@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
 from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation, User
+from app.db.session import async_session_factory
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
 from app.services import ats_check, cv_cutter, pdf_compiler
@@ -1637,10 +1638,9 @@ async def execute_apply_background(
     On success the Application record contains the full generated output;
     on failure pipeline_stage is set to ``failed``.
     """
-    from app.db.session import async_session_factory
-
     session = async_session_factory()
     try:
+        logger.info("execute_apply_background: loading application %s", application_id)
         application = await session.get(Application, application_id)
         if application is None:
             logger.error("execute_apply_background: Application %s not found", application_id)
@@ -1648,8 +1648,9 @@ async def execute_apply_background(
 
         application.pipeline_stage = "initializing"
         await session.commit()
+        logger.info("execute_apply_background: stage=initializing committed, calling execute_apply")
 
-        await execute_apply(
+        result = await execute_apply(
             db=session,
             user_id=application.user_id,
             job_posting_id=application.job_posting_id,
@@ -1658,19 +1659,28 @@ async def execute_apply_background(
             cover_letter_template=application.cover_letter_template,
             application=application,
         )
-    except Exception as e:
-        logger.error("Pipeline failed for application %s: %s", application_id, e)
-        try:
-            await session.rollback()
-            # Freshly load application to avoid stale session state
-            app = await session.get(Application, application_id)
-            if app is not None:
-                app.pipeline_stage = "failed"
-                await session.commit()
-        except Exception:
-            pass
+        logger.info("execute_apply_background: execute_apply completed successfully (stage=%s)", application.pipeline_stage)
+    except asyncio.CancelledError:
+        logger.warning("Pipeline cancelled for application %s", application_id)
+        await _fail_application(session, application_id)
+        raise
+    except BaseException as e:
+        logger.error("Pipeline failed for application %s: %s", application_id, e, exc_info=True)
+        await _fail_application(session, application_id)
     finally:
         await session.close()
+
+
+async def _fail_application(session: AsyncSession, application_id: str) -> None:
+    """Set application pipeline_stage to 'failed'. Errors are swallowed."""
+    try:
+        await session.rollback()
+        app = await session.get(Application, application_id)
+        if app is not None:
+            app.pipeline_stage = "failed"
+            await session.commit()
+    except Exception:
+        pass
 
 
 def _get_provider_kwargs(provider_config: dict | None) -> dict:
