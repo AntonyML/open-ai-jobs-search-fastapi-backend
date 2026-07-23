@@ -700,8 +700,11 @@ async def _build_rank_evaluation(
     behavioral_fit: dict | None = None,
 ) -> RankEvaluation:
     """Persist (upsert) a rank evaluation record."""
-    evaluation = existing_evaluation
-    if evaluation is None:
+    # Merge existing evaluation from a potentially different session (worker flow)
+    # into the current session to avoid "not persistent" errors on db.refresh()
+    if existing_evaluation is not None:
+        evaluation = await db.merge(existing_evaluation)
+    else:
         evaluation = RankEvaluation(
             job_posting_id=job.id,
             user_id=candidate.user_id,

@@ -430,7 +430,12 @@ class ExecutionQueue:
         db: AsyncSession,
         user_id: str,
     ) -> dict[str, Any]:
-        """Get overall queue status for a user."""
+        """Get overall queue status for a user.
+
+        Counts real jobs from the ``execution_jobs`` table to ensure accuracy
+        even when the rank pipeline bypasses ``execution_queue_state`` counters
+        (which only track the orchestrator's internal queue, not rank jobs).
+        """
         queue_state = await self._get_or_create_queue_state(db, user_id)
 
         pending = await self.get_jobs_by_status(
@@ -446,14 +451,54 @@ class ExecutionQueue:
             db, user_id, STATUS_FAILED, limit=5
         )
 
+        # Count actual jobs in the DB — rank pipeline bypasses the
+        # execution_queue_state counters, so they may be stale (0).
+        actual_total = await db.scalar(
+            select(sa_func.count()).select_from(ExecutionJobModel)
+            .where(ExecutionJobModel.user_id == user_id)
+        ) or 0
+
+        actual_completed = (
+            await db.scalar(
+                select(sa_func.count()).select_from(ExecutionJobModel)
+                .where(
+                    ExecutionJobModel.user_id == user_id,
+                    ExecutionJobModel.status == STATUS_COMPLETED,
+                )
+            )
+            or 0
+        )
+
+        actual_failed = (
+            await db.scalar(
+                select(sa_func.count()).select_from(ExecutionJobModel)
+                .where(
+                    ExecutionJobModel.user_id == user_id,
+                    ExecutionJobModel.status == STATUS_FAILED,
+                )
+            )
+            or 0
+        )
+
+        actual_cancelled = (
+            await db.scalar(
+                select(sa_func.count()).select_from(ExecutionJobModel)
+                .where(
+                    ExecutionJobModel.user_id == user_id,
+                    ExecutionJobModel.status == STATUS_CANCELLED,
+                )
+            )
+            or 0
+        )
+
         return {
             "paused": queue_state.paused,
             "max_concurrency": queue_state.max_concurrency,
             "active_workers": queue_state.active_workers,
-            "total_enqueued": queue_state.total_enqueued,
-            "total_completed": queue_state.total_completed,
-            "total_failed": queue_state.total_failed,
-            "total_cancelled": queue_state.total_cancelled,
+            "total_enqueued": max(queue_state.total_enqueued, actual_total),
+            "total_completed": max(queue_state.total_completed, actual_completed),
+            "total_failed": max(queue_state.total_failed, actual_failed),
+            "total_cancelled": max(queue_state.total_cancelled, actual_cancelled),
             "pending_jobs": pending,
             "running_jobs": running,
             "recent_completed": recent,
