@@ -4,18 +4,12 @@ This module implements ALL the ranking logic that CAN be computed without an LLM
 The LLM should only handle: overall fit reasoning, strengths, gaps, red flags,
 career alignment, and nuanced interpretation.
 
-Deterministic implementations:
-- Keyword extraction and normalization
-- Missing keyword calculation (set difference)
-- Location matching (city/country level)
-- Deadline extraction (regex-based)
-- Language detection
-- Experience matching (years of experience)
-- Technical score calculation (keyword overlap)
-- Experience score calculation (requirement matching)
-- Score normalization
-- Remote/hybrid detection
-- Relocation detection
+Fase 4: Capas A-E integradas.
+  - Capa A: Extracción y normalización via rank_extractor
+  - Capa B: Hard rejects (antes del LLM)
+  - Capa C: Matching semántico controlado (3 niveles)
+  - Capa D: Score estructurado (DimensionScore objects)
+  - Capa E: Evidencia textual por dimensión
 """
 
 from __future__ import annotations
@@ -25,11 +19,38 @@ import re
 from datetime import date, datetime
 from typing import Any
 
+from app.services.rank_extractor import (
+    clean_html,
+    extract_structured_requirements,
+    detect_structured_location,
+    extract_salary_range,
+    detect_seniority,
+    detect_education_requirement,
+    detect_work_authorization,
+    check_hard_rejects,
+    match_skills_controlled,
+    build_evidence,
+    normalize_skill,
+)
+from app.schemas.rank import DimensionScore
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ───────────────────────────────────────────────────────
 
-# Common tech skills for keyword extraction
+# Score weights (Fase 4.4)
+WEIGHTS = {
+    "technical_fit": 0.35,
+    "relevant_experience": 0.25,
+    "constraints": 0.20,
+    "career_alignment": 0.10,
+    "behavioral_fit": 0.10,
+}
+
+# Level order for seniority
+SENIORITY_LEVELS = ["junior", "mid", "senior", "lead", "manager", "director", "executive"]
+
+# Common tech skills (legacy, for keyword extraction)
 COMMON_TECH_SKILLS: set[str] = {
     "python", "java", "javascript", "typescript", "go", "rust", "c++", "c#",
     "ruby", "php", "swift", "kotlin", "scala", "r", "matlab", "sql",
@@ -41,11 +62,9 @@ COMMON_TECH_SKILLS: set[str] = {
     "airflow", "mlops", "ci/cd", "rest", "graphql", "grpc",
 }
 
-# Known remote/hybrid keywords
+# Known remote/hybrid keywords (legacy)
 REMOTE_KEYWORDS: set[str] = {"remote", "work from home", "wfh", "hybrid", "telecommute"}
 ONSITE_KEYWORDS: set[str] = {"onsite", "in-office", "on-site"}
-
-# Known relocation keywords
 RELOCATION_KEYWORDS: set[str] = {
     "relocation", "relocate", "must relocate", "willing to relocate",
 }
@@ -58,8 +77,7 @@ DANISH_CITIES: set[str] = {
 }
 
 
-
-# ── Text normalization ──────────────────────────────────────────────
+# ── Text normalization (legacy) ──────────────────────────────────────
 
 
 def normalize_text(text: str | None) -> str:
@@ -73,22 +91,12 @@ def normalize_text(text: str | None) -> str:
 
 
 def extract_keywords(text: str | None, min_length: int = 2) -> set[str]:
-    """Extract normalized keywords from text.
-
-    Uses a combination of:
-    - Known tech skill dictionary matching
-    - N-gram extraction (1-3 grams)
-    - Common word filtering
-    """
+    """Extract normalized keywords from text."""
     if not text:
         return set()
-
     normalized = normalize_text(text)
     words = normalized.split()
-
     keywords: set[str] = set()
-
-    # Single-word keywords (skip very common words)
     stop_words = {
         "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
         "for", "of", "with", "by", "from", "as", "is", "was", "are",
@@ -103,51 +111,24 @@ def extract_keywords(text: str | None, min_length: int = 2) -> set[str]:
         "own", "same", "so", "than", "too", "very", "just",
         "because", "also", "if", "then", "else", "this", "that",
     }
-
     for word in words:
         if len(word) >= min_length and word not in stop_words:
             keywords.add(word)
-
-    # Bigrams (for compound skills like "machine learning")
     for i in range(len(words) - 1):
         bigram = f"{words[i]} {words[i+1]}"
         if len(bigram) >= min_length and bigram not in stop_words:
             keywords.add(bigram)
-
-    # Trigrams
     for i in range(len(words) - 2):
         trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
         if len(trigram) >= min_length:
             keywords.add(trigram)
-
-    # Match against known tech skills
     for word in words:
         if word in COMMON_TECH_SKILLS:
             keywords.add(word)
-
     return keywords
 
 
-def compute_keyword_overlap(
-    source_keywords: set[str],
-    target_keywords: set[str],
-) -> tuple[set[str], set[str], float]:
-    """Compute overlap between two keyword sets.
-
-    Returns:
-        Tuple of (matched_keywords, missing_keywords, overlap_ratio)
-    """
-    matched = source_keywords & target_keywords
-    missing = target_keywords - source_keywords
-
-    if not target_keywords:
-        return matched, missing, 1.0
-
-    overlap_ratio = len(matched) / len(target_keywords)
-    return matched, missing, overlap_ratio
-
-
-# ── Location analysis ──────────────────────────────────────────────
+# ── Location analysis (legacy, kept for backward compat) ────────────
 
 
 def analyze_location(
@@ -155,78 +136,46 @@ def analyze_location(
     job_location: str | None,
     candidate_constraints: str | None = None,
 ) -> str:
-    """Deterministic location analysis.
-
-    Returns: "PASS", "FAIL", or "FLAG"
-
-    Logic:
-    - If candidate has no location constraints → FLAG (unknown)
-    - If job has no location → FLAG
-    - If candidate mentions "remote only" and job is onsite → FAIL
-    - If job is remote → PASS
-    - If same city/region → PASS
-    - If same country but different city → FLAG
-    - If different country and candidate has no relocation → FAIL
-    """
+    """Deterministic location analysis. Returns PASS, FAIL, or FLAG."""
     if not candidate_location:
         return "FLAG"
-
     candidate_norm = normalize_text(candidate_location)
     job_norm = normalize_text(job_location) if job_location else ""
-
-    # Check if job is remote → always PASS
     if job_norm:
         for kw in REMOTE_KEYWORDS:
             if kw in job_norm:
                 return "PASS"
-
-    # Check if candidate is remote-only and job is onsite
     constraints_norm = normalize_text(candidate_constraints or "")
     if constraints_norm:
         for kw in REMOTE_KEYWORDS:
             if kw in constraints_norm:
-                # Candidate prefers remote, job may be onsite
                 if job_norm and any(kw2 in job_norm for kw2 in ONSITE_KEYWORDS):
                     return "FAIL"
                 return "FLAG"
-
     if not job_norm:
         return "FLAG"
-
-    # Same city?
     candidate_cities = {c for c in DANISH_CITIES if c in candidate_norm}
     job_cities = {c for c in DANISH_CITIES if c in job_norm}
     if candidate_cities & job_cities:
         return "PASS"
-
-    # Same country? Check for "denmark" or "dk"
     candidate_in_dk = "denmark" in candidate_norm or "dk" in candidate_norm
     job_in_dk = "denmark" in job_norm or "dk" in job_norm
     if candidate_in_dk and job_in_dk:
-        return "FLAG"  # Same country, different city
-
-    # Different country — check relocation willingness
-    # "No relocation", "cannot relocate" = NOT willing → FAIL
-    # "willing to relocate", "open to relocate" = willing → FLAG
-    # "relocation" alone is ambiguous → FLAG (don't assume)
+        return "FLAG"
     if constraints_norm:
-        # Check for explicit unwillingness first (stronger signal)
         unwilling_patterns = ["no relocation", "cannot relocate", "not willing", "not open to relocate", "relocation not possible"]
         if any(p in constraints_norm for p in unwilling_patterns):
             return "FAIL"
-        # Check for willingness
         willing_patterns = ["willing to relocate", "open to relocate", "can relocate", "relocation possible"]
         if any(p in constraints_norm for p in willing_patterns):
             return "FLAG"
-        # Check for ambiguous mention of relocation
         for kw in RELOCATION_KEYWORDS:
             if kw in constraints_norm:
                 return "FLAG"
     if job_norm:
         for kw in RELOCATION_KEYWORDS:
             if kw in job_norm:
-                return "FLAG"  # Job offers relocation (we could ask)
-
+                return "FLAG"
     return "FAIL"
 
 
@@ -234,15 +183,9 @@ def analyze_location(
 
 
 def extract_deadline(text: str | None) -> tuple[str | None, bool]:
-    """Extract deadline date from text and determine if it's urgent.
-
-    Returns:
-        Tuple of (deadline_string YYYY-MM-DD, is_urgent)
-    """
+    """Extract deadline date from text and determine if it's urgent."""
     if not text:
         return None, False
-
-    # Common date patterns
     patterns = [
         r"deadline[:\s]+(\d{4}-\d{2}-\d{2})",
         r"apply by[:\s]+(\d{4}-\d{2}-\d{2})",
@@ -250,7 +193,6 @@ def extract_deadline(text: str | None) -> tuple[str | None, bool]:
         r"expires[:\s]+(\d{4}-\d{2}-\d{2})",
         r"(\d{4}-\d{2}-\d{2})",
     ]
-
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
@@ -262,19 +204,15 @@ def extract_deadline(text: str | None) -> tuple[str | None, bool]:
                 return deadline_str, is_urgent
             except ValueError:
                 continue
-
-    # Check for relative deadlines
     urgent_patterns = [
         (r"immediate", True),
         (r"urgent", True),
         (r"asap", True),
         (r"within \d+ days", True),
     ]
-
     for pattern, is_urgent in urgent_patterns:
         if re.search(pattern, text, re.IGNORECASE):
             return None, is_urgent
-
     return None, False
 
 
@@ -282,16 +220,10 @@ def extract_deadline(text: str | None) -> tuple[str | None, bool]:
 
 
 def detect_language(text: str | None) -> str | None:
-    """Simple rule-based language detection.
-
-    Returns 'en', 'da', or None if uncertain.
-    """
+    """Simple rule-based language detection. Returns 'en', 'da', or None."""
     if not text:
         return None
-
     text_lower = text.lower()
-
-    # Danish-specific words (high signal)
     danish_signals = {
         "stilling", "ansøgning", "virksomhed", "arbejde", "kvalifikationer",
         "opgaver", "team", "erfaring", "uddannelse", "sprog", "dansk",
@@ -299,24 +231,19 @@ def detect_language(text: str | None) -> str | None:
         "løn", "pension", "ferie", "medarbejder", "chef", "leder",
         "projekt", "system", "data", "udvikling", "it", "digital",
     }
-
-    # English-specific words (high signal)
     english_signals = {
         "opportunity", "qualifications", "responsibilities", "requirements",
         "experience", "education", "skills", "benefits", "salary",
         "apply", "submit", "resume", "cover letter", "interview",
     }
-
     danish_count = sum(1 for w in danish_signals if w in text_lower)
     english_count = sum(1 for w in english_signals if w in text_lower)
-
     if danish_count > english_count and danish_count >= 2:
         return "da"
     if english_count > danish_count and english_count >= 2:
         return "en"
     if danish_count == english_count and danish_count > 0:
-        return "da"  # Default to Danish if equal
-
+        return "da"
     return None
 
 
@@ -327,18 +254,15 @@ def extract_years_experience(text: str | None) -> int | None:
     """Extract years of experience from text."""
     if not text:
         return None
-
     patterns = [
         r"(\d+)\+?\s*years?\s*(?:of)?\s*experience",
         r"(\d+)\+?\s*yr(?:s)?\s*(?:of)?\s*exp",
         r"experience\s*(?:of\s*)?(\d+)\+?\s*years?",
     ]
-
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             return int(match.group(1))
-
     return None
 
 
@@ -346,202 +270,26 @@ def estimate_candidate_years(experience: list[dict[str, Any]] | None) -> int:
     """Estimate total years of professional experience from profile."""
     if not experience:
         return 0
-
     total_years = 0
     for exp in experience:
         start = exp.get("start_date", "")
         end = exp.get("end_date", "Present")
-
-        # Parse years
         start_year = None
         end_year = None
-
-        # Try YYYY-MM format
         match = re.match(r"(\d{4})", str(start))
         if match:
             start_year = int(match.group(1))
-
         match = re.match(r"(\d{4})", str(end))
         if match:
             end_year = int(match.group(1))
-
         if start_year and end_year:
             total_years += end_year - start_year
         elif start_year:
             total_years += date.today().year - start_year
-
     return total_years
 
 
-# ── Technical score calculation ────────────────────────────────────
-
-
-def compute_technical_score(
-    candidate_skills: set[str],
-    job_keywords: set[str],
-    job_requirements: list[str] | None = None,
-) -> int:
-    """Compute technical score (0-100) based on keyword overlap.
-
-    Higher is better. Uses keyword density and requirement matching.
-    """
-    if not job_keywords and not job_requirements:
-        return 50  # Neutral score when no data
-
-    matched, missing, overlap = compute_keyword_overlap(
-        candidate_skills, job_keywords
-    )
-
-    # Base score from keyword overlap
-    base_score = int(overlap * 100)
-
-    # Boost if candidate has specific tech skills mentioned in requirements
-    if job_requirements:
-        req_keywords = set()
-        for req in job_requirements:
-            req_keywords.update(extract_keywords(req))
-        req_matched, _, req_overlap = compute_keyword_overlap(
-            candidate_skills, req_keywords
-        )
-        # Blend: 70% keyword overlap + 30% requirement overlap
-        base_score = int(base_score * 0.7 + req_overlap * 100 * 0.3)
-
-    return max(0, min(100, base_score))
-
-
-def compute_experience_score(
-    candidate_years: int | None,
-    job_requirements: list[str] | None,
-    job_keywords: set[str],
-    candidate_skills: set[str],
-) -> int:
-    """Compute experience score (0-100) based on years and requirement matching.
-
-    Higher is better.
-    """
-    if not job_requirements and not job_keywords:
-        return 50
-
-    score = 0
-    components = 0
-
-    # Years of experience component
-    required_years = extract_years_experience(
-        " ".join(job_requirements) if job_requirements else None
-    )
-    if required_years and candidate_years:
-        components += 1
-        ratio = min(candidate_years / required_years, 2.0)
-        if ratio >= 1.0:
-            score += 100
-        elif ratio >= 0.75:
-            score += 75
-        elif ratio >= 0.5:
-            score += 50
-        else:
-            score += 25
-
-    # Requirement keyword matching
-    if job_requirements:
-        components += 1
-        req_keywords = set()
-        for req in job_requirements:
-            req_keywords.update(extract_keywords(req))
-        _, _, req_overlap = compute_keyword_overlap(
-            candidate_skills, req_keywords
-        )
-        score += int(req_overlap * 100)
-
-    return max(0, min(100, score // max(components, 1)))
-
-
-# ── Remote / hybrid detection ──────────────────────────────────────
-
-
-def detect_remote_or_hybrid(job_text: str | None) -> str | None:
-    """Detect if a job is remote, hybrid, or onsite.
-
-    Returns "remote", "hybrid", "onsite", or None.
-    """
-    if not job_text:
-        return None
-
-    text = normalize_text(job_text)
-    has_remote = any(kw in text for kw in REMOTE_KEYWORDS)
-    has_onsite = any(kw in text for kw in ONSITE_KEYWORDS)
-
-    if has_remote and has_onsite:
-        return "hybrid"
-    if has_remote:
-        return "remote"
-    if has_onsite:
-        return "onsite"
-    return None
-
-
-# ── Missing keyword extraction ─────────────────────────────────────
-
-
-def compute_missing_keywords(
-    candidate_profile: dict[str, Any] | None,
-    job_posting: dict[str, Any],
-    max_keywords: int = 5,
-) -> list[str]:
-    """Compute missing keywords deterministically.
-
-    Extracts keywords from both candidate profile and job posting,
-    then returns the set difference (job keywords not in profile).
-    """
-    # Extract candidate keywords
-    candidate_skills_set: set[str] = set()
-    if candidate_profile:
-        skills = candidate_profile.get("skills", {}) or {}
-        for prog in skills.get("programming_ml", []):
-            lang = prog.get("language", "")
-            if lang:
-                candidate_skills_set.add(normalize_text(lang))
-            for fw in prog.get("frameworks", []):
-                candidate_skills_set.add(normalize_text(fw))
-        for domain in skills.get("domain_expertise", []):
-            candidate_skills_set.add(normalize_text(domain))
-        for tool in skills.get("software_tools", []):
-            candidate_skills_set.add(normalize_text(tool))
-
-    # Extract from experience bullets
-    for exp in (candidate_profile or {}).get("experience", []):
-        for bullet in exp.get("bullets", []):
-            candidate_skills_set.update(extract_keywords(bullet))
-
-    # Extract job keywords
-    job_keywords: set[str] = set()
-    title = job_posting.get("title", "") or ""
-    description = job_posting.get("description", "") or ""
-    requirements = job_posting.get("requirements") or []
-
-    job_keywords.update(extract_keywords(title))
-    job_keywords.update(extract_keywords(description))
-    for req in requirements:
-        job_keywords.update(extract_keywords(req))
-
-    # Find missing keywords
-    missing = job_keywords - candidate_skills_set
-
-    # Prioritize by length (longer = more specific) and score
-    scored: list[tuple[str, float]] = []
-    for kw in missing:
-        score = len(kw)  # Longer keywords are more specific/important
-        # Boost score if keyword appears in requirements (not just description)
-        req_text = " ".join(requirements).lower()
-        if kw in req_text:
-            score *= 1.5
-        scored.append((kw, score))
-
-    # Sort by score descending
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [kw for kw, _ in scored[:max_keywords]]
-
-
-# ── Main deterministic analysis ────────────────────────────────────
+# ── Legacy helpers ─────────────────────────────────────────────────
 
 
 def determine_location_status(
@@ -549,7 +297,6 @@ def determine_location_status(
     job_location: str | None,
     candidate_constraints: str | None = None,
 ) -> str:
-    """Public wrapper for analyze_location."""
     return analyze_location(candidate_location, job_location, candidate_constraints)
 
 
@@ -557,7 +304,6 @@ def determine_deadline(
     job_description: str | None,
     job_deadline_field: str | None,
 ) -> tuple[str | None, bool]:
-    """Public wrapper for deadline extraction."""
     deadline_str, is_urgent = extract_deadline(job_description or "")
     if not deadline_str and job_deadline_field:
         deadline_str = job_deadline_field
@@ -569,29 +315,9 @@ def determine_deadline(
     return deadline_str, is_urgent
 
 
-def _extract_salary_from_text(text: str) -> tuple[int | None, int | None]:
-    """Extract salary min/max from text using regex patterns.
-
-    Returns:
-        Tuple of (salary_min, salary_max) or (None, None).
-    """
-    if not text:
-        return None, None
-
-    patterns = [
-        r'\$(\d{2,3}(?:,\d{3})?)\s*[-–]\s*\$(\d{2,3}(?:,\d{3})?)',
-        r'\$(\d+)\s*[-–]\s*\$(\d+)',
-        r'\$(\d+)k\s*[-–]\s*\$(\d+)k',
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            def _clean(val: str) -> int:
-                return int(val.replace(",", "").replace("k", "000").replace("K", "000"))
-            return _clean(match.group(1)), _clean(match.group(2))
-
-    return None, None
+# ═══════════════════════════════════════════════════════════════════════
+# Main deterministic analysis — Fase 4 complete
+# ═══════════════════════════════════════════════════════════════════════
 
 
 def compute_quantitative_scores(
@@ -601,16 +327,16 @@ def compute_quantitative_scores(
 ) -> dict[str, Any]:
     """Compute all quantitative scores deterministically.
 
-    Returns a dict with:
-    - technical_score
-    - experience_score
-    - location_status
-    - deadline
-    - deadline_urgent
-    - missing_keywords
-    - language
+    Capas A-E integradas:
+      A — Extracción estructurada via rank_extractor
+      B — Hard rejects (empresa, keyword, ubicación, seniority, modalidad)
+      C — Matching controlado (exacto → categoría → semántico como señal)
+      D — DimensionScore objects con pesos configurables
+      E — Evidencia textual por dimensión
+
+    Returns dict with all scores, evidence, and veto info.
     """
-    # Extract candidate skills
+    # ── Capa A: Extraer skills del candidato ────────────────────
     candidate_skills_set: set[str] = set()
     candidate_years: int = 0
     candidate_location: str | None = None
@@ -619,46 +345,37 @@ def compute_quantitative_scores(
     if candidate:
         skills = candidate.get("skills", {}) or {}
         for prog in skills.get("programming_ml", []):
-            lang = prog.get("language", "")
+            lang = normalize_skill(prog.get("language", ""))
             if lang:
-                candidate_skills_set.add(normalize_text(lang))
+                candidate_skills_set.add(lang)
             for fw in prog.get("frameworks", []):
-                candidate_skills_set.add(normalize_text(fw))
+                candidate_skills_set.add(normalize_skill(fw))
         for domain in skills.get("domain_expertise", []):
-            candidate_skills_set.add(normalize_text(domain))
+            candidate_skills_set.add(normalize_skill(domain))
         for tool in skills.get("software_tools", []):
-            candidate_skills_set.add(normalize_text(tool))
+            candidate_skills_set.add(normalize_skill(tool))
         for exp in candidate.get("experience", []):
             for bullet in exp.get("bullets", []):
-                candidate_skills_set.update(extract_keywords(bullet))
+                for kw in extract_keywords(bullet):
+                    candidate_skills_set.add(normalize_skill(kw))
         candidate_years = estimate_candidate_years(candidate.get("experience"))
         candidate_location = candidate.get("location")
         candidate_constraints = candidate.get("constraints")
 
-    # Extract job keywords
-    job_keywords: set[str] = set()
+    # ── Capa A: Extraer requisitos estructurados de la oferta ──
     title = job.get("title", "") or ""
     description = job.get("description", "") or ""
     requirements = job.get("requirements") or []
-    job_location = job.get("location")
+    combined_text = f"{title} {description} {' '.join(requirements)}"
 
-    job_keywords.update(extract_keywords(title))
-    job_keywords.update(extract_keywords(description))
-    for req in requirements:
-        job_keywords.update(extract_keywords(req))
+    extracted_req = extract_structured_requirements(description, requirements)
+    job_skills = extracted_req["skills"]
 
-    # Compute scores
-    technical = compute_technical_score(
-        candidate_skills_set, job_keywords, requirements
-    )
-    experience = compute_experience_score(
-        candidate_years, requirements, job_keywords, candidate_skills_set
-    )
-
-    # Location
-    location_status = analyze_location(
-        candidate_location, job_location, candidate_constraints
-    )
+    structured_loc = detect_structured_location(job.get("location"))
+    salary_range = extract_salary_range(combined_text)
+    seniority = detect_seniority(title, description)
+    edu_req = detect_education_requirement(description)
+    work_auth = detect_work_authorization(description, candidate_location)
 
     # Deadline
     deadline_str, is_urgent = extract_deadline(description or "")
@@ -675,133 +392,184 @@ def compute_quantitative_scores(
     if not language:
         language = job.get("language")
 
-    # Missing keywords
-    missing = compute_missing_keywords(candidate, job)
+    # ── Capa B: Hard rejects ────────────────────────────────────
+    extracted_for_reject = {
+        "structured_location": structured_loc,
+        "seniority": seniority,
+        "education_requirement": edu_req,
+        "salary_range": salary_range,
+        "years_experience": extracted_req["years_experience"],
+    }
+    reject_reason = check_hard_rejects(job, job_target, extracted_for_reject)
+    if reject_reason:
+        return {
+            "technical_score": 0,
+            "experience_score": 0,
+            "location_status": "excluded",
+            "deadline": deadline_str,
+            "deadline_urgent": is_urgent,
+            "missing_keywords": list(job_skills - candidate_skills_set),
+            "language": language,
+            "_candidate_skills": list(candidate_skills_set),
+            "_job_keywords": list(job_skills),
+            "_veto": True,
+            "_veto_reason": reject_reason,
+            "_extracted": extracted_for_reject,
+        }
 
-    # ── Apply job_target refinements ──────────────────────────
+    # ── Capa C: Matching controlado ─────────────────────────────
+    match_result = match_skills_controlled(candidate_skills_set, job_skills)
+
+    # ── Capa D: Score estructurado ──────────────────────────────
+    # Technical fit (35%)
+    coverage = match_result["coverage_ratio"]
+    technical_raw = int(coverage * 100)
+    # Boost from job_target title/keyword matches
     if job_target:
         target_titles = job_target.get("target_titles", [])
-        keywords = job_target.get("keywords", [])
-        exclude_companies_list = job_target.get("exclude_companies", [])
-        exclude_keywords = job_target.get("exclude_keywords", [])
-        target_work_modes = job_target.get("work_mode", [])
-
-        # Boost technical score if job title matches target titles
         title_lower = title.lower()
         for t in target_titles:
             if t.lower() in title_lower:
-                technical = min(100, technical + 8)
+                technical_raw = min(100, technical_raw + 8)
                 break
+        priority_kws = job_target.get("keywords", [])
+        desc_lower = description.lower()
+        if priority_kws:
+            found = sum(1 for kw in priority_kws if kw.lower() in desc_lower)
+            technical_raw = min(100, technical_raw + min(found * 3, 15))
+    technical_score = max(0, min(100, technical_raw))
 
-        # Boost for priority keywords found in job description
-        if keywords:
-            desc_lower = description.lower()
-            found = sum(1 for kw in keywords if kw.lower() in desc_lower)
-            technical = min(100, technical + min(found * 3, 15))
+    # Relevant experience (25%)
+    req_years = extracted_req["years_experience"]
+    if req_years and candidate_years:
+        ratio = candidate_years / req_years
+        if ratio >= 1.5:
+            exp_raw = 100
+        elif ratio >= 1.0:
+            exp_raw = 85
+        elif ratio >= 0.75:
+            exp_raw = 65
+        elif ratio >= 0.5:
+            exp_raw = 45
+        elif ratio >= 0.25:
+            exp_raw = 25
+        else:
+            exp_raw = 10
+    else:
+        exp_raw = 50  # neutral when no data
 
-        # Exclude companies
-        if exclude_companies_list and job.get("company"):
-            excluded = [c.lower() for c in exclude_companies_list]
-            if job["company"].lower() in excluded:
-                return {
-                    "technical_score": 0,
-                    "experience_score": 0,
-                    "location_status": "excluded_company",
-                    "deadline": deadline_str,
-                    "deadline_urgent": is_urgent,
-                    "missing_keywords": missing + list(exclude_keywords),
-                    "language": language,
-                    "_candidate_skills": list(candidate_skills_set),
-                    "_job_keywords": list(job_keywords),
-                    "_veto": True,
-                    "_veto_reason": f"Company {job['company']} is excluded",
-                }
+    # Seniority alignment adjustment
+    if job_target and seniority:
+        target_sen = job_target.get("seniority")
+        if target_sen and target_sen in SENIORITY_LEVELS and seniority in SENIORITY_LEVELS:
+            gap = abs(SENIORITY_LEVELS.index(target_sen) - SENIORITY_LEVELS.index(seniority))
+            if gap == 0:
+                exp_raw = min(100, exp_raw + 10)
+            elif gap == 1:
+                exp_raw = max(0, exp_raw - 5)
+            elif gap == 2:
+                exp_raw = max(0, exp_raw - 15)
+    experience_score = max(0, min(100, exp_raw))
 
-        # Add exclude_keywords to missing if present in description
-        if exclude_keywords:
-            ek_lower = [ek.lower() for ek in exclude_keywords]
-            desc_lower = description.lower()
-            found_excludes = [ek for ek in ek_lower if ek in desc_lower]
-            if found_excludes:
-                missing.extend([f"⚠️ Avoid: {ek}" for ek in found_excludes])
-                technical = max(0, technical - 12)
+    # Constraints (20%)
+    base_constraints = 70  # start neutral
+    if structured_loc.get("work_mode") == "remote":
+        base_constraints = 90
+    loc_status = analyze_location(candidate_location, job.get("location"), candidate_constraints)
+    if loc_status == "FAIL":
+        base_constraints = 10
+    elif loc_status == "FLAG":
+        base_constraints = 40
+    # Penalize salary mismatch
+    if salary_range.get("salary_max") and job_target:
+        target_min = job_target.get("salary_min")
+        if target_min and salary_range["salary_max"] < target_min:
+            base_constraints = max(0, base_constraints - 20)
+    constraints_score = max(0, min(100, base_constraints))
 
-        # Penalize work_mode mismatch
-        if target_work_modes and "remote" not in target_work_modes:
-            desc_lower = description.lower()
-            if "remote" in desc_lower:
-                technical = max(0, technical - 5)
+    # Career alignment (10%) — LLM territory for nuanced, base on title match
+    career_raw = 50
+    if job_target:
+        target_titles = job_target.get("target_titles", [])
+        title_lower = title.lower()
+        for t in target_titles:
+            if t.lower() in title_lower:
+                career_raw = 80
+                break
+    career_score_val = career_raw
 
-        # ── Seniority matching ────────────────────────────────
-        if job_target.get("seniority"):
-            target_seniority = job_target["seniority"].lower()
-            title_lower = title.lower()
+    # Behavioral fit (10%) — LLM territory
+    behavioral_score_val = 50  # neutral default, LLM overrides
 
-            seniority_levels = {
-                "junior": ["jr", "junior", "entry"],
-                "mid": ["mid", "intermediate"],
-                "senior": ["senior", "sr"],
-                "lead": ["lead", "principal"],
-                "manager": ["manager", "head"],
-                "director": ["director"],
-                "executive": ["vp", "evp", "svp", "cxo", "chief"],
-            }
-            level_order = ["junior", "mid", "senior", "lead", "manager", "director", "executive"]
+    # ── Capa E: Evidencia textual ──────────────────────────────
+    extracted_job_data = {
+        "structured_location": structured_loc,
+        "location_status": loc_status,
+        "years_experience": req_years,
+        "seniority": seniority,
+        "education_requirement": edu_req,
+        "salary_range": salary_range,
+    }
+    evidence = build_evidence(
+        match_result, extracted_job_data, candidate_skills_set, candidate_years,
+    )
 
-            found_levels = []
-            for level, keywords in seniority_levels.items():
-                if any(kw in title_lower for kw in keywords):
-                    found_levels.append(level)
+    # Build DimensionScore objects
+    technical_fit = DimensionScore(
+        score=technical_score,
+        confidence="high" if match_result["exact_matches"] else "medium",
+        evidence=evidence.get("technical_fit", []),
+    )
+    relevant_experience = DimensionScore(
+        score=experience_score,
+        confidence="high" if req_years else "medium",
+        evidence=evidence.get("relevant_experience", []),
+    )
+    constraints_fit = DimensionScore(
+        score=constraints_score,
+        confidence="high" if structured_loc.get("work_mode") else "medium",
+        evidence=evidence.get("constraints", []),
+    )
+    career_alignment = DimensionScore(
+        score=career_score_val,
+        confidence="low",  # LLM should refine this
+        evidence=evidence.get("career_alignment", []),
+    )
+    behavioral_fit = DimensionScore(
+        score=behavioral_score_val,
+        confidence="low",  # LLM should refine this
+        evidence=evidence.get("behavioral_fit", []),
+    )
 
-            if target_seniority in found_levels:
-                experience = min(100, experience + 10)
-            elif found_levels:
-                target_idx = level_order.index(target_seniority) if target_seniority in level_order else -1
-                for fl in found_levels:
-                    fl_idx = level_order.index(fl) if fl in level_order else -1
-                    if fl_idx > target_idx:
-                        experience = max(0, experience - 5)
-                    elif fl_idx < target_idx:
-                        experience = max(0, experience - 3)
+    # Compute weighted overall
+    overall = round(
+        technical_fit.score * WEIGHTS["technical_fit"]
+        + relevant_experience.score * WEIGHTS["relevant_experience"]
+        + constraints_fit.score * WEIGHTS["constraints"]
+        + career_alignment.score * WEIGHTS["career_alignment"]
+        + behavioral_fit.score * WEIGHTS["behavioral_fit"]
+    )
 
-        # ── Salary comparison ──────────────────────────────────
-        salary_min = job_target.get("salary_min")
-        salary_max = job_target.get("salary_max")
-        if salary_min or salary_max:
-            job_sal_min, job_sal_max = _extract_salary_from_text(description or "")
-            if salary_min and job_sal_max and salary_min > job_sal_max:
-                missing.append(f"⚠️ Salary mismatch: target min ${salary_min:,.0f} > job max ${job_sal_max:,.0f}")
-                technical = max(0, technical - 5)
-
-        # ── Employment types mismatch ──────────────────────────
-        target_emp_types = job_target.get("employment_types")
-        if target_emp_types:
-            desc_lower = (description or "").lower()
-            emp_map = {
-                "full-time": "full-time",
-                "part-time": "part-time",
-                "contract": "contract",
-                "freelance": "freelance",
-                "temporary": "temporary",
-            }
-            found_types = [k for k, v in emp_map.items() if v in desc_lower]
-            if "part-time" in found_types and "part-time" not in target_emp_types and "full-time" in target_emp_types:
-                experience = max(0, experience - 3)
-            if "full-time" in found_types and "full-time" not in target_emp_types and "part-time" in target_emp_types:
-                experience = max(0, experience - 3)
-            if "contract" in found_types and "contract" not in target_emp_types and "full-time" in target_emp_types:
-                experience = max(0, experience - 2)
+    # Missing keywords (for display)
+    missing = sorted(match_result["unmatched_job_skills"])[:5]
 
     return {
-        "technical_score": technical,
-        "experience_score": experience,
-        "location_status": location_status,
+        "technical_score": technical_score,       # legacy
+        "experience_score": experience_score,     # legacy
+        "location_status": loc_status,
         "deadline": deadline_str,
         "deadline_urgent": is_urgent,
         "missing_keywords": missing,
         "language": language,
         "_candidate_skills": list(candidate_skills_set),
-        "_job_keywords": list(job_keywords),
-        # These are still LLM responsibilities:
-        # behavioral_score, career_score, strengths, gaps, red_flags
+        "_job_keywords": list(job_skills),
+        # Fase 4 structured dimensions
+        "technical_fit": technical_fit.model_dump(),
+        "relevant_experience": relevant_experience.model_dump(),
+        "constraints_fit": constraints_fit.model_dump(),
+        "career_alignment": career_alignment.model_dump(),
+        "behavioral_fit": behavioral_fit.model_dump(),
+        "overall": overall,
+        "match_result": match_result,
+        "_extracted": extracted_for_reject,
     }

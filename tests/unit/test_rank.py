@@ -17,6 +17,27 @@ from app.schemas.rank import RankLLMOutput
 from app.services import rank
 
 
+class _SessionFactory:
+    """Wraps an AsyncSession to be re-usable as a db_factory in tests.
+
+    Unlike async_sessionmaker which creates new sessions, this reuses the
+    same session across all `async with factory():` blocks without
+    closing it (the test fixture handles cleanup).
+    """
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self) -> AsyncSession:
+        return self._session
+
+    async def __aexit__(self, *args) -> None:
+        pass
+
+
 # ── Fixtures ────────────────────────────────────────────────────────
 
 
@@ -41,6 +62,12 @@ async def db_session():
         yield session
 
     await engine.dispose()
+
+
+@pytest.fixture
+def db_factory(db_session):
+    """Return a _SessionFactory wrapping the db_session fixture."""
+    return _SessionFactory(db_session)
 
 
 @pytest.fixture
@@ -201,7 +228,7 @@ async def test_execute_rank_basic(db_session, sample_candidate, sample_job, mock
     )
 
     result = await rank.execute_rank(
-        db=db_session,
+        db_factory,
         user_id="test-user-id",
         focus_area=None,
         re_rank=False,
@@ -232,10 +259,10 @@ async def test_execute_rank_basic(db_session, sample_candidate, sample_job, mock
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_no_jobs(db_session, sample_candidate):
+async def test_execute_rank_no_jobs(db_session, db_factory, sample_candidate):
     """execute_rank returns empty result when no jobs to rank."""
     result = await rank.execute_rank(
-        db=db_session,
+        db_factory,
         user_id="test-user-id",
         focus_area=None,
         re_rank=False,
@@ -248,11 +275,11 @@ async def test_execute_rank_no_jobs(db_session, sample_candidate):
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_profile_incomplete(db_session):
+async def test_execute_rank_profile_incomplete(db_session, db_factory):
     """execute_rank raises ProfileIncompleteError when profile missing."""
     with pytest.raises(ProfileIncompleteError):
         await rank.execute_rank(
-            db=db_session,
+            db_factory,
             user_id="test-user-id",
             focus_area=None,
             re_rank=False,
@@ -261,7 +288,7 @@ async def test_execute_rank_profile_incomplete(db_session):
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_llm_error_continues(db_session, sample_candidate, sample_job):
+async def test_execute_rank_llm_error_continues(db_session, db_factory, sample_candidate, sample_job):
     """execute_rank continues with other jobs if one LLM call fails."""
     # Add a second job
     job2 = JobPosting(
@@ -289,7 +316,7 @@ async def test_execute_rank_llm_error_continues(db_session, sample_candidate, sa
         ]
 
         result = await rank.execute_rank(
-            db=db_session,
+            db_factory,
             user_id="test-user-id",
             focus_area=None,
             re_rank=False,
@@ -302,27 +329,27 @@ async def test_execute_rank_llm_error_continues(db_session, sample_candidate, sa
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_re_rank(db_session, sample_candidate, sample_job):
+async def test_execute_rank_re_rank(db_session, db_factory, sample_candidate, sample_job):
     """execute_rank with re_rank=True re-evaluates already-ranked jobs."""
     with patch(
         "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
     ) as mock:
         mock.return_value = mock_orchestrator_output(behavioral=50, career=50)
-        await rank.execute_rank(db=db_session, user_id="test-user-id", re_rank=False)
+        await rank.execute_rank(db_factory, user_id="test-user-id", re_rank=False)
 
     # Re-rank with different scores
     with patch(
         "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
     ) as mock:
         mock.return_value = mock_orchestrator_output(behavioral=90, career=90)
-        result = await rank.execute_rank(db=db_session, user_id="test-user-id", re_rank=True)
+        result = await rank.execute_rank(db_factory, user_id="test-user-id", re_rank=True)
 
     assert result.ranked_count == 1
     assert result.shortlist[0].evaluation.behavioral_score == 90
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_focus_area(db_session, sample_candidate):
+async def test_execute_rank_focus_area(db_session, db_factory, sample_candidate):
     """execute_rank passes focus_area as guidance to the LLM prompt,
     not as a SQL pre-filter. Both jobs should still be ranked."""
     # Add two jobs with different titles
@@ -352,7 +379,7 @@ async def test_execute_rank_focus_area(db_session, sample_candidate):
     ) as mock:
         mock.return_value = mock_orchestrator_output()
         result = await rank.execute_rank(
-            db=db_session,
+            db_factory,
             user_id="test-user-id",
             focus_area="machine learning",
             re_rank=False,
@@ -364,7 +391,7 @@ async def test_execute_rank_focus_area(db_session, sample_candidate):
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_location_fail(db_session, sample_candidate):
+async def test_execute_rank_location_fail(db_session, db_factory, sample_candidate):
     """execute_rank vetoes jobs with location FAIL."""
     job = JobPosting(
         user_id="test-user-id",
@@ -382,7 +409,7 @@ async def test_execute_rank_location_fail(db_session, sample_candidate):
         "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
     ) as mock:
         mock.return_value = mock_orchestrator_output()
-        result = await rank.execute_rank(db=db_session, user_id="test-user-id")
+        result = await rank.execute_rank(db_factory, user_id="test-user-id")
 
     # Location is now deterministic: San Francisco vs Copenhagen with "No relocation" → FAIL
     assert result.ranked_count == 1
@@ -391,7 +418,7 @@ async def test_execute_rank_location_fail(db_session, sample_candidate):
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_deadline_urgent(db_session, sample_candidate):
+async def test_execute_rank_deadline_urgent(db_session, db_factory, sample_candidate):
     """execute_rank marks deadline_urgent for jobs with deadline within 7 days."""
     from datetime import date, timedelta
 
@@ -413,7 +440,7 @@ async def test_execute_rank_deadline_urgent(db_session, sample_candidate):
         "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
     ) as mock:
         mock.return_value = mock_orchestrator_output()
-        result = await rank.execute_rank(db=db_session, user_id="test-user-id")
+        result = await rank.execute_rank(db_factory, user_id="test-user-id")
 
     # Deadline urgency is now determined by rank_analyzer (3 days away = urgent)
     assert result.shortlist[0].evaluation.deadline_urgent is True

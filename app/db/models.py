@@ -405,7 +405,7 @@ class RankEvaluation(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     job_posting_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), unique=True, nullable=False
+        String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -416,6 +416,13 @@ class RankEvaluation(Base, TimestampMixin):
     experience_score: Mapped[int] = mapped_column(default=0)
     behavioral_score: Mapped[int] = mapped_column(default=0)
     career_score: Mapped[int] = mapped_column(default=0)
+
+    # ── Structured dimensions (Fase 4) ────────────────────────
+    technical_fit: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    relevant_experience: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    constraints_fit: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    career_alignment: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    behavioral_fit: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
     # ── Overall ───────────────────────────────────────────────
     overall_score: Mapped[int] = mapped_column(default=0)
@@ -442,6 +449,10 @@ class RankEvaluation(Base, TimestampMixin):
 
     # ── Relationships ─────────────────────────────────────────
     job_posting: Mapped["JobPosting"] = relationship(backref="rank_evaluation")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "job_posting_id", name="uq_eval_per_user_job"),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -886,10 +897,22 @@ class ExecutionJob(Base, TimestampMixin):
     # ── Worker info ───────────────────────────────────────────
     worker_id: Mapped[str | None] = mapped_column(String(50))
 
+    # ── Idempotency (Fase 6) ───────────────────────────────────
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(100), unique=True, index=True
+    )
+
     __table_args__ = (
         # Composite index for the orchestrator's hot path: "find next X job for pipeline Y"
         # Individual pipeline index is kept for queries filtering by pipeline alone.
         Index("ix_execution_jobs_status_pipeline", "status", "pipeline"),
+        # Prevent concurrent rank runs per user (only one active at a time)
+        Index(
+            "uq_active_rank_per_user",
+            "user_id", "pipeline",
+            postgresql_where=("status IN ('queued', 'running')"),
+            unique=True,
+        ),
     )
 
 
@@ -999,3 +1022,96 @@ class ExecutionQueueState(Base):
     total_completed: Mapped[int] = mapped_column(default=0)
     total_failed: Mapped[int] = mapped_column(default=0)
     total_cancelled: Mapped[int] = mapped_column(default=0)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# RANKING EXECUTION JOB ITEMS (one per posting within a rank run)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class ExecutionJobItem(Base, TimestampMixin):
+    """Individual job posting item within a ranking execution.
+
+    A single rank run (execution_jobs) is split into N items, one per
+    job posting to be evaluated.  The worker claims and processes items
+    individually so progress is tracked per-posting and the run survives
+    partial failures.
+    """
+
+    __tablename__ = "execution_job_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    execution_job_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("execution_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    job_posting_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # ── Lifecycle ─────────────────────────────────────────────
+    status: Mapped[str] = mapped_column(
+        String(20), default="queued", index=True
+    )
+    worker_id: Mapped[str | None] = mapped_column(String(50))
+
+    # ── Lease / concurrency ───────────────────────────────────
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # ── Retry / error ─────────────────────────────────────────
+    attempt_count: Mapped[int] = mapped_column(default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error_code: Mapped[str | None] = mapped_column(String(50))
+
+    # ── Timing ────────────────────────────────────────────────
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_items_claimable", "status", "created_at", postgresql_where=("status = 'queued'")),
+        Index("ix_items_expired_lease", "locked_until", postgresql_where=("status = 'running' AND locked_until IS NOT NULL")),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# RANK EVALUATION VERSIONS (auditable history of every evaluation)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class RankEvaluationVersion(Base, TimestampMixin):
+    """Immutable snapshot of each rank evaluation — preserves audit trail.
+
+    Every time a rank evaluation is created or updated, a new row is
+    inserted here capturing the exact profile, algorithm version, prompt
+    version, model, temperature, and input hash at the time of evaluation.
+    This guarantees full reproducibility.
+    """
+
+    __tablename__ = "rank_evaluation_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    evaluation_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("rank_evaluations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    job_posting_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # ── Snapshot & metadata ───────────────────────────────────
+    overall_score: Mapped[int] = mapped_column(default=0)
+    verdict: Mapped[str] = mapped_column(String(50))
+    profile_snapshot: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    algorithm_version: Mapped[str | None] = mapped_column(String(50))
+    prompt_version: Mapped[str | None] = mapped_column(String(50))
+    model_provider: Mapped[str | None] = mapped_column(String(50))
+    model_name: Mapped[str | None] = mapped_column(String(100))
+    temperature: Mapped[float | None] = mapped_column()
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    token_usage: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    latency_ms: Mapped[int | None] = mapped_column()

@@ -13,6 +13,21 @@ from pydantic import BaseModel, Field
 from app.schemas.salary import SalaryBenchmark
 
 
+# ── Dimension score (Fase 4) ─────────────────────────────────────────
+
+
+class DimensionScore(BaseModel):
+    """Score estructurado para una dimensión del ranking.
+
+    Cada dimensión incluye score numérico, nivel de confianza,
+    y evidencia textual que justifica el score.
+    """
+
+    score: int = Field(ge=0, le=100)
+    confidence: str = Field(pattern="^(high|medium|low|unknown)$")
+    evidence: list[str] = Field(default_factory=list)
+
+
 # ── Request schemas ─────────────────────────────────────────────────
 
 
@@ -48,6 +63,13 @@ class RankEvaluationOut(BaseModel):
     experience_score: int
     behavioral_score: int
     career_score: int
+
+    # Structured dimensions (Fase 4)
+    technical_fit: DimensionScore | None = None
+    relevant_experience: DimensionScore | None = None
+    constraints_fit: DimensionScore | None = None
+    career_alignment: DimensionScore | None = None
+    behavioral_fit: DimensionScore | None = None
 
     # Overall
     overall_score: int
@@ -107,24 +129,40 @@ class RankResult(BaseModel):
     salary_data_company_count: int = 0
 
 
-# ── LLM output schema (for structured output parsing) ───────────────
+# ── LLM output schemas ───────────────────────────────────────────────
+
+
+class RankQualitativeOutput(BaseModel):
+    """Nuevo contrato LLM (Fase 5) — solo campos cualitativos.
+
+    technical_score, experience_score, location_status, deadline,
+    missing_keywords y language son deterministas (Fase 4) y se
+    calculan server-side — el LLM ya no los recibe ni produce.
+    """
+
+    behavioral_score: int = Field(ge=0, le=100)
+    career_score: int = Field(ge=0, le=100)
+    strengths: list[str] = Field(default_factory=list, max_length=5)
+    gaps: list[str] = Field(default_factory=list, max_length=5)
+    red_flags: list[str] = Field(default_factory=list, max_length=3)
+    confidence: str = Field(default="medium", pattern="^(low|medium|high)$")
 
 
 class RankLLMOutput(BaseModel):
-    """Expected JSON structure from the LLM for a single job evaluation."""
-
-    technical_score: int = Field(ge=0, le=100)
-    experience_score: int = Field(ge=0, le=100)
+    """Legacy schema — kept for backward compat.  Use RankQualitativeOutput."""
+    technical_score: int = Field(ge=0, le=100, default=0)
+    experience_score: int = Field(ge=0, le=100, default=0)
     behavioral_score: int = Field(ge=0, le=100)
     career_score: int = Field(ge=0, le=100)
-    location_status: str = Field(pattern="^(PASS|FAIL|FLAG)$")
+    location_status: str = Field(default="FLAG", pattern="^(PASS|FAIL|FLAG)$")
     deadline: str | None = None
     deadline_urgent: bool = False
-    strengths: list[str] = Field(default_factory=list, max_length=3)
-    gaps: list[str] = Field(default_factory=list, max_length=3)
+    strengths: list[str] = Field(default_factory=list, max_length=5)
+    gaps: list[str] = Field(default_factory=list, max_length=5)
     missing_keywords: list[str] = Field(default_factory=list, max_length=5)
     red_flags: list[str] = Field(default_factory=list, max_length=3)
     language: str | None = None
+    confidence: str = Field(default="medium", pattern="^(low|medium|high)$")
 
 
 # Forward reference resolution

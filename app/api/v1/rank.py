@@ -1,8 +1,12 @@
-"""Rank router — endpoints for ranking job postings."""
+"""Rank router — endpoints for ranking job postings.
+
+Fase 6: POST /rank/ supports Idempotency-Key header, returns
+{job_id, status, total_jobs, accepted_jobs}.
+"""
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +22,7 @@ from app.services import rank
 from app.services import rank_jobs
 from app.db.session import async_session_factory
 from app.services.rank import count_jobs_to_rank
-from app.services.tiers import get_tier_limits, get_user_tier_limits
+from app.services.tiers import get_user_tier_limits
 
 router = APIRouter(prefix="/rank", tags=["rank"])
 
@@ -32,8 +36,14 @@ async def trigger_rank(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
     locale: str = Depends(get_locale),
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
-    """Trigger a rank evaluation for unranked jobs."""
+    """Trigger a rank evaluation for unranked jobs.
+
+    Accepts an optional ``Idempotency-Key`` header to prevent duplicate
+    submissions (e.g. from network retries).  If a job with that key
+    already exists, the existing job is returned instead of creating a new one.
+    """
     settings = get_settings()
     window = datetime.now(timezone.utc) - timedelta(seconds=settings.rate_limit_window_seconds)
     count_result = await db.execute(
@@ -50,16 +60,21 @@ async def trigger_rank(
             detail=f"Rate limit exceeded. Max {settings.rate_limit_attempts} rank runs per {settings.rate_limit_window_seconds // 60} minutes.",
         )
 
-    # Validate tier limits from DB (not just JWT)
+    # Validate tier limits from DB
     tier_limits = await get_user_tier_limits(db, user["sub"])
     max_jobs = tier_limits.get("max_rank_iterations")
     pdata = payload.model_dump()
     if max_jobs is not None:
         pdata["max_jobs"] = max_jobs
-    job_id = await rank_jobs.start(async_session_factory, user["sub"], pdata)
-    counts = await count_jobs_to_rank(db, user["sub"], payload.model_dump())
-    accepted = min(counts["total"], max_jobs or counts["total"])
-    return {"job_id": job_id, "status": "queued", "total_jobs": counts["total"], "accepted_jobs": accepted}
+
+    result = await rank_jobs.start(
+        async_session_factory,
+        user["sub"],
+        pdata,
+        idempotency_key=idempotency_key,
+    )
+    return result
+
 
 @router.get("/status/{job_id}")
 async def rank_status(
@@ -72,6 +87,7 @@ async def rank_status(
     if result is None:
         raise HTTPException(status_code=404, detail=t("errors.not_found", locale))
     return result
+
 
 @router.post("/cancel/{job_id}")
 async def cancel_rank(

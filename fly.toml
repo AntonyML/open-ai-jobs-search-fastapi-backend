@@ -24,14 +24,19 @@ primary_region = "iad"
   # APScheduler
   SCRAPE_INTERVAL_HOURS = "6"
 
-[http_service]
+[processes]
+  web = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  worker = "python -m app.worker"
+
+[[services]]
   internal_port = 8000
+  processes = ["web"]
   force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
   
-  [[http_service.checks]]
+  [[services.checks]]
     interval = "30s"
     timeout = "10s"
     grace_period = "5s"
