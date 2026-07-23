@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import litellm
-from sqlalchemy import select, update, func as sa_func
+from sqlalchemy import select, text, update, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.settings import get_settings
@@ -65,12 +65,14 @@ logger = logging.getLogger("worker")
 
 # ── Constants ────────────────────────────────────────────────────────
 
-POLL_INTERVAL = 2.0        # seconds between claim attempts
+POLL_INTERVAL = 2.0        # seconds between claim attempts (fallback when LISTEN unavailable)
 HEARTBEAT_INTERVAL = 30.0  # seconds between heartbeat updates
 LEASE_DURATION = 300       # seconds (5 min) before another worker can steal
 RECOVERY_INTERVAL = 60.0   # seconds between recovery cycles
 SHUTDOWN_TIMEOUT = 30.0    # max seconds to wait for current item to finish
 MAX_RETRIES = 3            # max attempts per item before marking failed
+
+POLL_FALLBACK = 60.0       # fallback poll interval when LISTEN is unavailable
 
 ALGORITHM_VERSION = "2.0.0"
 WORKER_ID: str = ""
@@ -458,6 +460,28 @@ async def _recovery_loop():
             pass
 
 
+async def _listen_for_notifications(notify_event: asyncio.Event) -> None:
+    """Connect via asyncpg and LISTEN for job_queued notifications."""
+    try:
+        import asyncpg
+        from urllib.parse import urlparse
+
+        settings = get_settings()
+        url = urlparse(settings.database_url.replace("+asyncpg", ""))
+        conn = await asyncpg.connect(
+            user=url.username,
+            password=url.password or "",
+            host=url.hostname or "localhost",
+            port=url.port or 5432,
+            database=url.path.lstrip("/"),
+        )
+        await conn.add_listener("job_queued", lambda *_: notify_event.set())
+        logger.info("LISTEN job_queued — waiting for notifications")
+        await asyncio.Event().wait()  # run until cancelled
+    except Exception as exc:
+        logger.warning("LISTEN failed (%s), will fall back to polling", exc)
+
+
 async def _worker_main():
     """Main worker loop — claim items and process them."""
     global _current_item
@@ -468,15 +492,26 @@ async def _worker_main():
     heartbeat_task = asyncio.create_task(_heartbeat_loop(WORKER_ID), name="heartbeat")
     recovery_task = asyncio.create_task(_recovery_loop(), name="recovery")
 
+    # Listen for PostgreSQL notifications (wake on new items)
+    notify_event = asyncio.Event()
+    listen_task = asyncio.create_task(_listen_for_notifications(notify_event), name="listener")
+
     while not _shutdown_event.is_set():
         item: ExecutionJobItem | None = None
         try:
+            # Wait for notification or fallback poll
+            notify_event.clear()
+            done, _ = await asyncio.wait(
+                [notify_event.wait(), asyncio.sleep(POLL_FALLBACK)],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if _shutdown_event.is_set():
+                break
             # Claim
             async with _worker_session_factory() as db:
                 item = await _claim_item(db, WORKER_ID)
 
             if item is None:
-                await asyncio.sleep(POLL_INTERVAL)
                 continue
 
             _current_item = item
@@ -508,7 +543,8 @@ async def _worker_main():
     # Shutdown
     heartbeat_task.cancel()
     recovery_task.cancel()
-    await asyncio.gather(heartbeat_task, recovery_task, return_exceptions=True)
+    listen_task.cancel()
+    await asyncio.gather(heartbeat_task, recovery_task, listen_task, return_exceptions=True)
 
     if _current_item is not None:
         try:

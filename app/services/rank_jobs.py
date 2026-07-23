@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import CandidateProfile, ExecutionJob, ExecutionJobItem, JobPosting
@@ -166,6 +166,14 @@ async def start(
             items.append(item)
 
         await db.commit()
+
+    # Notify worker via PostgreSQL LISTEN/NOTIFY
+    try:
+        async with db_factory() as db2:
+            await db2.execute(text("SELECT pg_notify('job_queued', '')"))
+            await db2.commit()
+    except Exception:
+        logger.debug("pg_notify failed (non-critical)")
 
     logger.info(
         "Rank job %s enqueued | %d items for %d total jobs",
