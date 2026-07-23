@@ -36,29 +36,45 @@ from app.llm.adapter import llm_completion
 router = APIRouter(prefix="/providers", tags=["providers"])
 
 
+MASKED_KEY = "__MASKED__"
+
+
 @router.post("/test")
 async def test_active_provider(
     payload: ProviderCredentialCreate | None = None,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Verify that the active provider, credential, and selected model work."""
+    """Verify that the active provider, credential, and selected model work.
+
+    If ``api_key`` is ``__MASKED__`` (sent by the frontend when editing without
+    changing the key), the stored encrypted key from the database is used instead.
+    """
     config = await get_user_active_provider_config(db, user["sub"])
     if payload is not None:
+        api_key = payload.api_key
+        # __MASKED__ means "use stored key" — frontend sends this during edit
+        if api_key == MASKED_KEY:
+            api_key = config.get("api_key")
         config = {
             "provider": payload.provider,
-            "model": payload.model,
-            "api_key": payload.api_key,
-            "api_base": str(payload.api_base) if payload.api_base else None,
+            "model": payload.model or config.get("model"),
+            "api_key": api_key,
+            "api_base": str(payload.api_base) if payload.api_base else config.get("api_base"),
         }
     response = await llm_completion(
-        [{"role": "user", "content": "Reply with exactly: provider-ok"}],
+        [{"role": "user", "content": (
+            "Reply with ONLY a valid JSON object with these fields: "
+            "{\"status\": \"ok\", \"provider\": \"<provider-name>\", "
+            "\"model\": \"<model-name>\", \"timestamp\": \"<current-iso-timestamp>\"}. "
+            "No explanation, no markdown, no extra text."
+        )}],
         provider=config["provider"],
         model=config["model"],
         api_key=config.get("api_key"),
         api_base=config.get("api_base"),
         temperature=0,
-        max_tokens=20,
+        max_tokens=100,
     )
     return {"ok": True, "provider": config["provider"], "model": config["model"], "response": response}
 
