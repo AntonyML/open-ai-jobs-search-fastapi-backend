@@ -1639,36 +1639,38 @@ async def execute_apply_background(
     """
     from app.db.session import async_session_factory
 
-    async with async_session_factory() as db:
+    session = async_session_factory()
+    try:
+        application = await session.get(Application, application_id)
+        if application is None:
+            logger.error("execute_apply_background: Application %s not found", application_id)
+            return
+
+        application.pipeline_stage = "initializing"
+        await session.commit()
+
+        await execute_apply(
+            db=session,
+            user_id=application.user_id,
+            job_posting_id=application.job_posting_id,
+            provider_config=provider_config,
+            cv_template=application.cv_template,
+            cover_letter_template=application.cover_letter_template,
+            application=application,
+        )
+    except Exception as e:
+        logger.error("Pipeline failed for application %s: %s", application_id, e)
         try:
-            result = await db.execute(
-                select(Application).where(Application.id == application_id)
-            )
-            application = result.scalar_one_or_none()
-            if application is None:
-                logger.error("execute_apply_background: Application %s not found", application_id)
-                return
-
-            application.pipeline_stage = "initializing"
-            await db.commit()
-
-            await execute_apply(
-                db=db,
-                user_id=application.user_id,
-                job_posting_id=application.job_posting_id,
-                provider_config=provider_config,
-                cv_template=application.cv_template,
-                cover_letter_template=application.cover_letter_template,
-                application=application,
-            )
-        except Exception as e:
-            logger.error("Pipeline failed for application %s: %s", application_id, e)
-            try:
-                await db.rollback()
-                application.pipeline_stage = "failed"
-                await db.commit()
-            except Exception:
-                pass
+            await session.rollback()
+            # Freshly load application to avoid stale session state
+            app = await session.get(Application, application_id)
+            if app is not None:
+                app.pipeline_stage = "failed"
+                await session.commit()
+        except Exception:
+            pass
+    finally:
+        await session.close()
 
 
 def _get_provider_kwargs(provider_config: dict | None) -> dict:
