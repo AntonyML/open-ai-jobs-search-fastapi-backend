@@ -1194,42 +1194,41 @@ async def execute_apply(
     If ``application`` is provided, the pipeline updates it in-place
     (used by background task). Otherwise a new Application is created.
     """
-    # 1. Load all dependencies in parallel
-    job_fut = db.execute(
+    # 1. Load all dependencies sequentially (async session does not support
+    #    concurrent execute() on the same session — the greenlet-based
+    #    provisioning would conflict).
+    job_res = await db.execute(
         select(JobPosting).where(
             JobPosting.id == job_posting_id,
             JobPosting.user_id == user_id,
         )
     )
+    job = job_res.scalar_one_or_none()
+    if job is None:
+        raise NotFoundError("Job posting not found.")
+
     if rank_evaluation_id:
-        eval_fut = db.execute(
+        eval_res = await db.execute(
             select(RankEvaluation).where(
                 RankEvaluation.id == rank_evaluation_id,
                 RankEvaluation.job_posting_id == job_posting_id,
             )
         )
     else:
-        eval_fut = db.execute(
+        eval_res = await db.execute(
             select(RankEvaluation)
             .where(RankEvaluation.job_posting_id == job_posting_id)
             .order_by(RankEvaluation.created_at.desc())
         )
-    cand_fut = db.execute(
-        select(CandidateProfile)
-        .options(selectinload(CandidateProfile.user))
-        .where(CandidateProfile.user_id == user_id)
-    )
-
-    job_res, eval_res, cand_res = await asyncio.gather(job_fut, eval_fut, cand_fut)
-
-    job = job_res.scalar_one_or_none()
-    if job is None:
-        raise NotFoundError("Job posting not found.")
-
     evaluation = eval_res.scalar_one_or_none()
     if evaluation is None:
         raise NotFoundError("Rank evaluation not found. Run /rank first.")
 
+    cand_res = await db.execute(
+        select(CandidateProfile)
+        .options(selectinload(CandidateProfile.user))
+        .where(CandidateProfile.user_id == user_id)
+    )
     candidate = cand_res.scalar_one_or_none()
     if candidate is None:
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
@@ -1668,13 +1667,19 @@ async def execute_apply_background(
         logger.error("Pipeline failed for application %s: %s", application_id, e, exc_info=True)
         await _fail_application(session, application_id)
     finally:
-        await session.close()
+        try:
+            await session.close()
+        except Exception:
+            pass
 
 
 async def _fail_application(session: AsyncSession, application_id: str) -> None:
     """Set application pipeline_stage to 'failed'. Errors are swallowed."""
     try:
-        await session.rollback()
+        try:
+            await session.rollback()
+        except Exception:
+            pass
         app = await session.get(Application, application_id)
         if app is not None:
             app.pipeline_stage = "failed"
