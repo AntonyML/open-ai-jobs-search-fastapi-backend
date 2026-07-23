@@ -31,7 +31,11 @@ item to finish (with timeout), and marks it ``queued`` if it didn't complete.
 
 from __future__ import annotations
 
+import sys
 import asyncio
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 import logging
 import signal
 import sys

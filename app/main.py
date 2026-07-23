@@ -8,6 +8,12 @@ Usage:
     app = create_app(settings=test_settings)
 """
 
+import sys
+import asyncio
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 import time
 from contextlib import asynccontextmanager
 
