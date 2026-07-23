@@ -501,10 +501,14 @@ async def _worker_main():
         try:
             # Wait for notification or fallback poll
             notify_event.clear()
+            notify_task = asyncio.create_task(notify_event.wait())
+            fallback_task = asyncio.create_task(asyncio.sleep(POLL_FALLBACK))
             done, _ = await asyncio.wait(
-                [notify_event.wait(), asyncio.sleep(POLL_FALLBACK)],
+                [notify_task, fallback_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            notify_task.cancel()
+            fallback_task.cancel()
             if _shutdown_event.is_set():
                 break
             # Claim
