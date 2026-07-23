@@ -39,10 +39,6 @@ jobs:
 
     environment: ${{ github.event.inputs.environment }}
 
-    defaults:
-      run:
-        working-directory: open-ai-jobs-search-fastapi-backend
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -57,7 +53,7 @@ jobs:
       - name: Install scraper dependencies
         shell: bash
         run: |
-          for dir in open-ai-jobs-search-fastapi-backend/app/external/scrapers/*/cli; do
+          for dir in app/external/scrapers/*/cli; do
             if [ -f "$dir/package.json" ]; then
               bun install --cwd "$dir"
             fi
