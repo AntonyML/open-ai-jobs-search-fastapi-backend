@@ -94,6 +94,8 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 4. **Sanitización antes de validación.** Las respuestas del LLM se sanitizan (truncar arrays, trim strings, reparar JSON, llenar defaults) ANTES de pasarlas por Pydantic. Solo se rechazan respuestas irrecuperables.
 
+5. **Worker de ranking como proceso separado.** El ranking corre en un worker independiente del API (proceso Fly.io separado). Usa `FOR UPDATE SKIP LOCKED` para evitar contención, sesiones de BD cortas (solo LOAD y SAVE), y LLM calls sin conexión a DB abierta.
+
 ---
 
 ## Pipeline completo
@@ -122,12 +124,20 @@ Perfil completo: datos personales, experiencia, educación, skills, **perfil con
 Scraping multi-portal vía scrapers Bun/TS. Deduplicación automática por `(portal, external_id)`. Los scrapers corren en paralelo via `asyncio.gather`.
 
 ### Fase 3 — Rank (evaluación de fit)
+
 Evaluación multi-dimensión usando el **RankAnalyzer** determinista:
-- **Técnico**: keyword overlap, experiencia requerida, skills matching
+- **Técnico**: keyword overlap, experiencia requerida, skills matching (3 niveles: exacto → categoría → señal semántica)
 - **Experiencia**: años, seniority, industrias relevantes
 - **Comportamental**: alineación con perfil conductual
 - **Carrera**: salario (si hay datos), ubicación, modalidad (remote/hybrid)
 - **Fit general**: combinación ponderada + qualitative reasoning del LLM
+
+**Worker separado**: El ranking se ejecuta en un proceso independiente (`app/worker.py`). El API crea los jobs en una cola (`execution_job_items`) y el worker los reclama con `FOR UPDATE SKIP LOCKED`. Cada item se procesa en 3 fases:
+1. **LOAD** — sesión corta para cargar candidato + job posting
+2. **RANK** — sin conexión a DB: extracción → scores cuantitativos → llamada LLM
+3. **SAVE** — sesión corta para persistir `RankEvaluation` + actualizar `JobPosting`
+
+Esto permite escalar workers horizontalmente y garantiza que no haya sesiones abiertas durante LLM calls.
 
 ### Fase 4 — Apply (generación de documentos)
 **Pipeline Drafter-Reviewer-Revise** de 3 etapas:
@@ -167,6 +177,7 @@ Análisis 100% determinista que correlaciona outcomes reales (entrevistas, ofert
 FastAPI-backend/
 ├── app/
 │   ├── main.py                    # app factory: create_app()
+│   ├── worker.py                  # Worker separado de ranking (FOR UPDATE SKIP LOCKED)
 │   ├── core/                      # config (settings, security, logging, scheduler, task_manager, i18n)
 │   ├── llm/                       # adaptador LiteLLM
 │   ├── db/
@@ -178,6 +189,9 @@ FastAPI-backend/
 │   │   ├── setup.py               # Perfil candidato + conductual + STAR
 │   │   ├── scrape.py              # Orquestación scrapers Bun/TS
 │   │   ├── rank.py                # Ranking + RankAnalyzer determinista
+│   │   ├── rank_analyzer.py       # Cómputo cuantitativo de scores (5 dimensiones)
+│   │   ├── rank_extractor.py      # Extracción estructurada (skills, años, modalidad, etc.)
+│   │   ├── rank_jobs.py           # Orquestación del job de ranking (idempotencia)
 │   │   ├── apply.py               # Drafter-Reviewer-Revise pipeline
 │   │   ├── interview.py           # Prep + mock interview
 │   │   ├── outcome.py             # Tracking + fit calibration
@@ -210,9 +224,11 @@ FastAPI-backend/
 │   └── integration/
 ├── alembic/                       # 15 migraciones DB
 ├── scripts/                       # check_miktex.py
+├── entrypoint.sh                  # Docker entrypoint (API o worker según DOCKER_PROCESS)
+├── dev.ps1                        # Script desarrollo: arranca API + worker localmente
 ├── pyproject.toml
 ├── Dockerfile                     # Multi-stage (Python + MiKTeX + Bun)
-└── fly.toml                       # Config Fly.io
+└── fly.toml                       # Config Fly.io (procesos app + worker)
 ```
 
 ---
@@ -255,7 +271,24 @@ bun install --cwd app/external/scrapers/jobnet-search/cli
 bun install --cwd app/external/scrapers/linkedin-search/cli
 
 # 6. Servidor de desarrollo
+
+El backend consta de dos procesos:
+- **API** (uvicorn) — sirve endpoints HTTP
+- **Worker** — procesa la cola de ranking en segundo plano
+
+Para arrancar ambos a la vez:
+
+```powershell
+# Windows — arranca API + worker automáticamente
+.\dev.ps1
+```
+
+```bash
+# Linux/Mac — terminal 1: API
 uvicorn app.main:create_app --factory --reload
+
+# Terminal 2: Worker
+python -m app.worker
 ```
 
 Servidor en `http://127.0.0.1:8000`. Healthcheck: `GET /api/v1/health`
@@ -675,12 +708,27 @@ pytest tests/unit/test_rank.py -v --tb=short
 
 La app deploya en **Fly.io** con Docker multi-stage (instala MiKTeX vía apt del repositorio de Debian bookworm).
 
+El `fly.toml` define dos procesos:
+- **`app`** — API HTTP (uvicorn)
+- **`worker`** — worker de ranking (entrypoint con `DOCKER_PROCESS=worker`)
+
 ```bash
+# Desplegar API
+flyctl deploy --process-groups app
+
+# Desplegar worker
+flyctl deploy --process-groups worker
+
+# O ambos a la vez
+flyctl deploy
+
+# Variables de entorno
 flyctl secrets set DATABASE_URL="postgresql+asyncpg://..." \
     JWT_SECRET_KEY="$(openssl rand -hex 32)" \
     CORS_ORIGINS='["https://tu-frontend.com"]'
 
-flyctl deploy
+# Escalar workers
+flyctl scale count worker=2
 ```
 
 Ver `fly.toml` para configuración de máquina (1GB RAM mínimo por MiKTeX + LaTeX).

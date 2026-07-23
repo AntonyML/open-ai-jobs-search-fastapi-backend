@@ -83,9 +83,13 @@ USER appuser
 # Expose port
 EXPOSE 8000
 
-# Health check
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Health check (only for API process)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
-# Run the application
-CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# Run via entrypoint — set DOCKER_PROCESS=worker to start the ranking worker
+CMD ["/entrypoint.sh"]
