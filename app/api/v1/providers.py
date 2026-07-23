@@ -55,7 +55,10 @@ async def test_active_provider(
         api_key = payload.api_key
         # __MASKED__ means "use stored key" — frontend sends this during edit
         if api_key == MASKED_KEY:
-            api_key = config.get("api_key")
+            # Fetch the key for the SPECIFIC provider being tested, not the active one
+            # (user might be editing a non-active provider)
+            stored = await get_provider_credential(db, user["sub"], payload.provider)
+            api_key = stored.__dict__.get("_api_key_plain") if stored else config.get("api_key")
         config = {
             "provider": payload.provider,
             "model": payload.model or config.get("model"),
