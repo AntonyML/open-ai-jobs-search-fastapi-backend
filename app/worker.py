@@ -42,6 +42,7 @@ from typing import Any
 import litellm
 from sqlalchemy import select, text, update, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 
 from app.core.settings import get_settings
 from app.db.models import (
@@ -134,7 +135,9 @@ async def _load_item_data(
 ) -> tuple[CandidateProfile, JobPosting, dict[str, Any], RankEvaluation | None]:
     """Load candidate, job, provider config, and existing evaluation."""
     result = await session.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == item.user_id)
+        select(CandidateProfile)
+        .options(selectinload(CandidateProfile.user))
+        .where(CandidateProfile.user_id == item.user_id)
     )
     candidate = result.scalar_one_or_none()
     if candidate is None:
