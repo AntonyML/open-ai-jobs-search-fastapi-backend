@@ -195,6 +195,9 @@ def extract_structured_requirements(
         r"experience\s*(?:of\s*)?(\d+)\+?\s*years?",
         r"minimum of (\d+)\+?\s*years?",
         r"at least (\d+)\+?\s*years?",
+        r"(\d+)\+?\s*years?\s+\w+(?:\s+\w+){0,2}\s+experience",
+        r"(\d+)\+?\s*years?\s+in\s+\w+",
+        r"(\d+)\+?\s*years?\s+with\s+\w+",
     ]:
         m = re.search(pattern, combined, re.IGNORECASE)
         if m:

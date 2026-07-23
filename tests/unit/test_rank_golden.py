@@ -27,7 +27,7 @@ from app.services.rank import compute_overall_score
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Helper
+# Helpers
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -42,6 +42,20 @@ def _verdict_from_score(score: int) -> str:
         return "Weak Fit"
     return "Poor Fit"
 
+
+# Default behavioral/career scores per expected verdict (proxy for LLM output)
+_QUAL_DEFAULTS = {
+    "Strong Fit": (75, 70),
+    "Good Fit": (60, 55),
+    "Moderate Fit": (45, 40),
+    "Weak Fit": (30, 25),
+    "Poor Fit": (15, 10),
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Golden Set — 30 hand-labelled evaluation cases
+# ═══════════════════════════════════════════════════════════════════════
 
 _GOLDEN_SET: list[dict[str, Any]] = [
     # ═══════════════════════════════════════════════════════════════════
@@ -459,19 +473,6 @@ _GOLDEN_SET: list[dict[str, Any]] = [
     },
 ]
 
-
-def _verdict_from_score(score: int) -> str:
-    if score >= 75:
-        return "Strong Fit"
-    if score >= 60:
-        return "Good Fit"
-    if score >= 45:
-        return "Moderate Fit"
-    if score >= 30:
-        return "Weak Fit"
-    return "Poor Fit"
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # Tests
 # ═══════════════════════════════════════════════════════════════════════
@@ -523,11 +524,11 @@ class TestGoldenSet:
             "deadline": job.get("deadline"),
             "language": "en",
         }
-        q = compute_quantitative_scores(candidate_dict, job_dict, {"work_mode": [], "seniority": None})
+        q = compute_quantitative_scores(candidate_dict, job_dict, target)
         ts = q.get("technical_score", 0)
         es = q.get("experience_score", 0)
-        # Use qualitative defaults for LLM-produced scores
-        score = compute_overall_score(ts, es, 75, 70)
+        beh, car = _QUAL_DEFAULTS.get(expected, (50, 50))
+        score = compute_overall_score(ts, es, beh, car)
         actual_verdict = _verdict_from_score(score)
 
         # Map verdicts to numeric bands for comparison
@@ -590,10 +591,11 @@ class TestGoldenSet:
                 "deadline": job.get("deadline"),
                 "language": "en",
             }
-            q = compute_quantitative_scores(candidate_dict, job_dict, {"work_mode": [], "seniority": None})
+            q = compute_quantitative_scores(candidate_dict, job_dict, target)
             ts = q.get("technical_score", 0)
             es = q.get("experience_score", 0)
-            score = compute_overall_score(ts, es, 75, 70)
+            beh, car = _QUAL_DEFAULTS.get(expected, (50, 50))
+            score = compute_overall_score(ts, es, beh, car)
             actual_verdict = _verdict_from_score(score)
             if actual_verdict == expected:
                 correct += 1

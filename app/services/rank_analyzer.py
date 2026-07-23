@@ -424,6 +424,11 @@ def compute_quantitative_scores(
     # Technical fit (35%)
     coverage = match_result["coverage_ratio"]
     technical_raw = int(coverage * 100)
+    # Domain mismatch: job has no known tech skills but candidate does → low score
+    total_job_skills = len(job_skills)
+    domain_mismatch = total_job_skills == 0 and bool(candidate_skills_set)
+    if domain_mismatch:
+        technical_raw = 20
     # Boost from job_target title/keyword matches
     if job_target:
         target_titles = job_target.get("target_titles", [])
@@ -457,6 +462,8 @@ def compute_quantitative_scores(
             exp_raw = 10
     else:
         exp_raw = 50  # neutral when no data
+    if domain_mismatch:
+        exp_raw = min(exp_raw, 20)
 
     # Seniority alignment adjustment
     if job_target and seniority:
@@ -485,6 +492,8 @@ def compute_quantitative_scores(
         target_min = job_target.get("salary_min")
         if target_min and salary_range["salary_max"] < target_min:
             base_constraints = max(0, base_constraints - 20)
+    if domain_mismatch:
+        base_constraints = min(base_constraints, 30)
     constraints_score = max(0, min(100, base_constraints))
 
     # Career alignment (10%) — LLM territory for nuanced, base on title match
@@ -496,10 +505,14 @@ def compute_quantitative_scores(
             if t.lower() in title_lower:
                 career_raw = 80
                 break
+    if domain_mismatch:
+        career_raw = 15
     career_score_val = career_raw
 
     # Behavioral fit (10%) — LLM territory
     behavioral_score_val = 50  # neutral default, LLM overrides
+    if domain_mismatch:
+        behavioral_score_val = 15
 
     # ── Capa E: Evidencia textual ──────────────────────────────
     extracted_job_data = {
