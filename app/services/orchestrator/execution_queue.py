@@ -74,7 +74,7 @@ class ExecutionQueue:
         """
         # Check if queue is paused
         queue_state = await self._get_or_create_queue_state(db, user_id)
-        initial_status = STATUS_PENDING if not queue_state.paused else STATUS_QUEUED
+        initial_status = STATUS_QUEUED if not queue_state.paused else STATUS_PENDING
 
         job = ExecutionJobModel(
             user_id=user_id,
