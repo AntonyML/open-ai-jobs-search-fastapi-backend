@@ -29,6 +29,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
@@ -1164,7 +1165,9 @@ async def execute_apply(
             .order_by(RankEvaluation.created_at.desc())
         )
     cand_fut = db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        select(CandidateProfile)
+        .options(selectinload(CandidateProfile.user))
+        .where(CandidateProfile.user_id == user_id)
     )
 
     job_res, eval_res, cand_res = await asyncio.gather(job_fut, eval_fut, cand_fut)
