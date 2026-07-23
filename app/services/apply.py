@@ -126,6 +126,71 @@ as the original draft, plus a separate ReviseResult describing the changes made.
 """
 
 
+# ── JSON output examples for LLM prompts (plain strings, NOT f-strings) ──
+
+_TAILORED_EXPERIENCE_JSON_EXAMPLE = """
+    Return JSON with EXACTLY this structure (field names must match exactly):
+    {
+      "tailored_experience": [                                  // array, max 10 entries
+        {
+          "title": "string (job title, required)",
+          "company": "string (company name, required)",
+          "start_date": "string or null (e.g. '2020-03')",
+          "end_date": "string or null (e.g. '2023-01')",
+          "location": "string or null (e.g. 'San Francisco, CA')",
+          "bullets": ["string (X-Y-Z formatted bullet, required)"]
+        }
+      ]
+    }
+"""
+
+_COVER_LETTER_JSON_EXAMPLE = """
+    Return JSON with EXACTLY this structure (field names must match exactly):
+    {
+      "opening_paragraph": "string (2-3 sentences, role + strongest connection)",
+      "body_paragraphs": ["string (concrete bullets, max 4)"],
+      "company_connection_paragraph": "string (why THIS company specifically)",
+      "personal_fit_paragraph": "string (behavioral strengths, 2-3 sentences)",
+      "closing_paragraph": "string (brief, confident, forward-looking)"
+    }
+"""
+
+_REVIEW_JSON_EXAMPLE = """
+    TASK:
+Review these draft documents critically. Return JSON with EXACTLY this structure (field names must match exactly):
+{
+  "overall_assessment": "string (2-3 sentence summary of document quality)",
+  "passes": ["string (things done well)"],
+  "issues": [
+    {
+      "type": "string (one of: missing_keyword, generic_bullet, fabricated_claim, weak_framing, inconsistency, factual_error, formatting)",
+      "description": "string (clear description of the issue)",
+      "severity": "string (high, medium, or low)",
+      "location": "string (cv, cover_letter, or both)",
+      "suggestion": "string or null (how to fix this issue)"
+    }
+  ],
+  "missed_keywords": ["string (keywords from job posting still absent after review)"],
+  "strong_recommendations": ["string (top 3 changes that would most improve the application, ordered by impact)"]
+}
+"""
+
+_REVISE_JSON_EXAMPLE = """
+    Return the revised experience entries as JSON with EXACTLY this structure (field names must match exactly):
+    {
+      "tailored_experience": [                                  // array, max 10 entries
+        {
+          "title": "string (job title, required)",
+          "company": "string (company name, required)",
+          "start_date": "string or null (e.g. '2020-03')",
+          "end_date": "string or null (e.g. '2023-01')",
+          "location": "string or null (e.g. 'San Francisco, CA')",
+          "bullets": ["string (X-Y-Z formatted bullet, required)"]
+        }
+      ]
+    }
+"""
+
 # ── LaTeX template paths ────────────────────────────────────────────
 
 CV_TEMPLATE_DIR = settings.latex_cv_dir
@@ -237,19 +302,7 @@ Rewrite the candidate's experience section for this specific job application.
 5. Prioritize bullets that match the job's requirements
 6. Maximum 4 bullets per role, 3 roles max in tailored CV
 
-    Return JSON with EXACTLY this structure (field names must match exactly):
-    {
-      "tailored_experience": [                                  // array, max 10 entries
-        {
-          "title": "string (job title, required)",
-          "company": "string (company name, required)",
-          "start_date": "string or null (e.g. '2020-03')",
-          "end_date": "string or null (e.g. '2023-01')",
-          "location": "string or null (e.g. 'San Francisco, CA')",
-          "bullets": ["string (X-Y-Z formatted bullet, required)"]
-        }
-      ]
-    }
+{_TAILORED_EXPERIENCE_JSON_EXAMPLE}
 """
 
     user_prompt = "Generate the tailored experience section for this job application."
@@ -320,14 +373,7 @@ Cover letter must be ~1 page when rendered with cover.cls template.
 No em-dashes, no cliches, no unverified company claims.
 Use "Claude Code" by name if mentioning AI tooling.
 
-    Return JSON with EXACTLY this structure (field names must match exactly):
-    {
-      "opening_paragraph": "string (2-3 sentences, role + strongest connection)",
-      "body_paragraphs": ["string (concrete bullets, max 4)"],
-      "company_connection_paragraph": "string (why THIS company specifically)",
-      "personal_fit_paragraph": "string (behavioral strengths, 2-3 sentences)",
-      "closing_paragraph": "string (brief, confident, forward-looking)"
-    }
+{_COVER_LETTER_JSON_EXAMPLE}
 """
 
     user_prompt = "Generate the cover letter content for this job application."
@@ -391,23 +437,7 @@ DRAFT COVER LETTER (full rendered LaTeX):
 {cover_letter_latex[:3000]}
 ```
 
-    TASK:
-Review these draft documents critically. Return JSON with EXACTLY this structure (field names must match exactly):
-{
-  "overall_assessment": "string (2-3 sentence summary of document quality)",
-  "passes": ["string (things done well)"],
-  "issues": [
-    {
-      "type": "string (one of: missing_keyword, generic_bullet, fabricated_claim, weak_framing, inconsistency, factual_error, formatting)",
-      "description": "string (clear description of the issue)",
-      "severity": "string (high, medium, or low)",
-      "location": "string (cv, cover_letter, or both)",
-      "suggestion": "string or null (how to fix this issue)"
-    }
-  ],
-  "missed_keywords": ["string (keywords from job posting still absent after review)"],
-  "strong_recommendations": ["string (top 3 changes that would most improve the application, ordered by impact)"]
-}
+{_REVIEW_JSON_EXAMPLE}
 Be specific — reference exact bullet points, paragraph sections, and keywords.
 """
 
@@ -490,19 +520,7 @@ Strong recommendations (priority order):
 4. NEVER fabricate experience
 5. If an issue cannot be fixed honestly, note it as a remaining concern
 
-Return the revised experience entries as JSON with EXACTLY this structure (field names must match exactly):
-{
-  "tailored_experience": [                                  // array, max 10 entries
-    {
-      "title": "string (job title, required)",
-      "company": "string (company name, required)",
-      "start_date": "string or null (e.g. '2020-03')",
-      "end_date": "string or null (e.g. '2023-01')",
-      "location": "string or null (e.g. 'San Francisco, CA')",
-      "bullets": ["string (X-Y-Z formatted bullet, required)"]
-    }
-  ]
-}
+{_REVISE_JSON_EXAMPLE}
 The changed entries will be used to re-render the CV and cover letter.
 """
 
