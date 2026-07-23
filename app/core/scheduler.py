@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -20,6 +21,48 @@ settings = get_settings()
 scheduler: AsyncIOScheduler | None = None
 
 MAX_CONCURRENT_SCRAPES = 3
+
+# ── Lifespan helpers used by app.main ────────────────────────
+
+
+@contextlib.asynccontextmanager
+async def scheduler_lifespan():
+    """Start the scheduler on enter, yield, then shut it down on exit."""
+    start_scheduler()
+    try:
+        yield
+    finally:
+        pass  # shutdown is handled by lifespan's explicit call
+
+
+def start_scheduler() -> None:
+    """Create and start the global APScheduler instance."""
+    global scheduler
+    if scheduler is not None:
+        return
+
+    interval = settings.scrape_interval_minutes
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        _run_scheduled_scrape,
+        trigger="interval",
+        minutes=interval,
+        id="scrape_all_users",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("Scheduler started (interval=%d min)", interval)
+
+
+def shutdown_scheduler() -> None:
+    """Shut down the global APScheduler instance."""
+    global scheduler
+    if scheduler is None:
+        return
+    scheduler.shutdown(wait=False)
+    scheduler = None
+    logger.info("Scheduler shut down")
 
 
 async def _scrape_user(sem: asyncio.Semaphore, user_id: str) -> None:
