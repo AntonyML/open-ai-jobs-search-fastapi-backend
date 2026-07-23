@@ -41,18 +41,18 @@ def start_scheduler() -> None:
     if scheduler is not None:
         return
 
-    interval = settings.scrape_interval_minutes
+    interval_hours = settings.scrape_interval_hours
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         _run_scheduled_scrape,
         trigger="interval",
-        minutes=interval,
+        hours=interval_hours,
         id="scrape_all_users",
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Scheduler started (interval=%d min)", interval)
+    logger.info("Scheduler started (interval=%d hours)", interval_hours)
 
 
 def shutdown_scheduler() -> None:
