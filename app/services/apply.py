@@ -16,6 +16,7 @@ We use SEPARATE LLM calls for draft, review, and revise so that:
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import os
 import re
@@ -1368,6 +1369,12 @@ async def execute_apply(
         # ═══════════════════════════════════════════════════════════════
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Resolver el path largo de Windows (MiKTeX no tolera tildes 8.3)
+            if sys.platform == "win32":
+                import ctypes
+                buf = ctypes.create_unicode_buffer(260)
+                ctypes.windll.kernel32.GetLongPathNameW(tmpdir, buf, 260)
+                tmpdir = buf.value or tmpdir
             tmpdir_path = Path(tmpdir)
 
             fonts_dest = tmpdir_path / "OpenFonts"
