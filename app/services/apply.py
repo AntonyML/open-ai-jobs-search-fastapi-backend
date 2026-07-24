@@ -228,8 +228,7 @@ def _resolve_latex_binary(name: str) -> str | Path:
         linux_path = bin_dir / name
         if linux_path.exists():
             return linux_path
-        import sys
-        return windows_path if sys.platform == "win32" else linux_path
+        return name
     return name
 
 
