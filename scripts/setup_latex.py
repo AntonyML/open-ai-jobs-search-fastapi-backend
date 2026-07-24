@@ -130,6 +130,48 @@ def _filter_miktex_output(text: str, prefix: str = "stdout") -> None:
             print(f"  [{prefix}] {line}")
 
 
+_FMT_ENGINES = {
+    "lualatex.fmt": ("miktex-luatex.exe", ["-ini", "-jobname=lualatex", "lualatex.ini"]),
+    "xelatex.fmt":  ("miktex-xetex.exe",  ["-ini", "-etex", "-jobname=xelatex", "xelatex.ini"]),
+}
+
+
+def _build_formats() -> None:
+    """Build LaTeX format files (lualatex.fmt, xelatex.fmt) via engine -ini."""
+    fmt_dir = MIKTEX_TARGET / "miktex" / "fmt"
+    if all((fmt_dir / f).is_file() for f in _FMT_ENGINES):
+        return
+
+    print(" Generando formatos LaTeX...")
+    fmt_dir.mkdir(parents=True, exist_ok=True)
+    cwd = Path.cwd()
+
+    for fmt_name, (engine, args) in _FMT_ENGINES.items():
+        fmt_path = fmt_dir / fmt_name
+        if fmt_path.is_file():
+            continue
+        engine_path = MIKTEX_BIN_DIR / engine
+        if not engine_path.is_file():
+            print(f"WARNING: {engine} no encontrado, saltando {fmt_name}", file=sys.stderr)
+            continue
+        print(f"  {fmt_name} ...")
+        subprocess.run(
+            [str(engine_path)] + args,
+            timeout=120, capture_output=True,
+        )
+        src = cwd / fmt_name
+        if src.is_file():
+            src.replace(fmt_path)
+            print(f"    OK")
+        else:
+            print(f"    ERROR: no se generó {fmt_name}", file=sys.stderr)
+
+    if all((fmt_dir / f).is_file() for f in _FMT_ENGINES):
+        print(f"OK: Formatos en {fmt_dir}")
+    else:
+        print("WARNING: Faltan formatos (LaTeX puede fallar)", file=sys.stderr)
+
+
 def _write_env() -> None:
     if not ENV_FILE.is_file():
         print("WARNING: .env no existe, no se puede escribir LATEX_BIN_DIR")
@@ -156,6 +198,7 @@ def main() -> int:
 
     if _is_installed():
         print(f"OK: MiKTeX Portable ya instalado en {MIKTEX_BIN_DIR}")
+        _build_formats()
         return 0
 
     url = _resolve_download_url()
@@ -174,6 +217,8 @@ def main() -> int:
     if not _is_installed():
         print("ERROR: La extracción no produjo los binarios esperados", file=sys.stderr)
         return 1
+
+    _build_formats()
 
     _write_env()
     print("OK: MiKTeX Portable listo para usar")
