@@ -49,27 +49,85 @@ def _download_installer(url: str) -> None:
 
 def _extract_installer() -> bool:
     import shutil
+    # Map of standard binary names -> miktex-prefixed names
+    _BINARY_ALIASES = {
+        "lualatex.exe": "miktex-luatex.exe",
+        "xelatex.exe": "miktex-xetex.exe",
+        "pdfinfo.exe": "miktex-pdfinfo.exe",
+        "pdftotext.exe": "miktex-pdftotext.exe",
+    }
     default_install = Path("C:/miktex-portable/texmfs/install")
+    default_bin = default_install / "miktex" / "bin" / "x64"
 
-    print(" extrayendo...")
-    subprocess.run([str(MIKTEX_INSTALLER), "/S"], check=True, timeout=300)
+    print(" extrayendo (puede tomar varios minutos)...")
 
-    src_bin = default_install / "miktex" / "bin" / "x64"
-    if not src_bin.is_dir():
-        print(f"ERROR: No se encuentra {src_bin} tras la extracción", file=sys.stderr)
-        return False
+    # 1. Intentar instalación directa en nuestra carpeta
+    result = subprocess.run(
+        [
+            str(MIKTEX_INSTALLER),
+            "--unattended",
+            "--portable",
+            str(MIKTEX_TARGET),
+        ],
+        capture_output=True, text=True, timeout=600,
+    )
 
-    MIKTEX_TARGET.mkdir(parents=True, exist_ok=True)
-    for item in default_install.iterdir():
-        dst = MIKTEX_TARGET / item.name
-        if item.is_dir():
-            shutil.copytree(item, dst, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, dst)
+    # Verificar por binarios, no por exit code (post-install warnings son inofensivos)
+    _ensure_binary_aliases(MIKTEX_BIN_DIR, _BINARY_ALIASES)
+    if _is_installed():
+        print(f"OK: Binarios en {MIKTEX_BIN_DIR}")
+        return True
 
-    shutil.rmtree("C:/miktex-portable", ignore_errors=True)
-    print(f"OK: Binarios en {MIKTEX_BIN_DIR}")
-    return True
+    # 2. Fallback: el instalador ignoró --portable y fue a C:\miktex-portable\
+    if default_bin.is_dir():
+        print("  (instalado en ruta default, copiando al proyecto...)", file=sys.stderr)
+        MIKTEX_TARGET.mkdir(parents=True, exist_ok=True)
+        for item in default_install.iterdir():
+            dst = MIKTEX_TARGET / item.name
+            if item.is_dir():
+                shutil.copytree(item, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, dst)
+        shutil.rmtree("C:/miktex-portable", ignore_errors=True)
+        _ensure_binary_aliases(MIKTEX_BIN_DIR, _BINARY_ALIASES)
+        if _is_installed():
+            print(f"OK: Binarios en {MIKTEX_BIN_DIR}")
+            return True
+
+    print("ERROR: No se encontraron binarios tras la instalación.", file=sys.stderr)
+    print(f"  Buscado en: {MIKTEX_BIN_DIR}", file=sys.stderr)
+    print(f"  Buscado en: {default_bin}", file=sys.stderr)
+    if result.stdout:
+        _filter_miktex_output(result.stdout)
+    if result.stderr:
+        _filter_miktex_output(result.stderr, prefix="stderr")
+    return False
+
+
+def _ensure_binary_aliases(bin_dir: Path, aliases: dict[str, str]) -> None:
+    """Crear wrappers para nombres estándar (lualatex.exe → miktex-luatex.exe)."""
+    import shutil
+    if not bin_dir.is_dir():
+        return
+    for std_name, miktex_name in aliases.items():
+        std_path = bin_dir / std_name
+        miktex_path = bin_dir / miktex_name
+        if not std_path.is_file() and miktex_path.is_file():
+            shutil.copy2(miktex_path, std_path)
+            print(f"  -> {std_name}")
+
+
+def _filter_miktex_output(text: str, prefix: str = "stdout") -> None:
+    """Mostrar output del instalador filtrando warnings conocidos."""
+    _SAFE_LINES = [
+        "option --admin only makes sense for a shared MiKTeX setup",
+        "The executed process did not succeed",
+        "log4cxx: No appender could be found",
+        "log4cxx: Please initialize the log4cxx system properly",
+    ]
+    for line in text.splitlines():
+        if not any(s in line for s in _SAFE_LINES):
+            print(f"  [{prefix}] {line}")
 
 
 def _write_env() -> None:
