@@ -11,6 +11,7 @@ Windows-only; Linux/Mac prints a message and exits 0.
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -69,8 +70,35 @@ def _is_installed() -> bool:
     return all((MIKTEX_BIN_DIR / b).is_file() for b in REQUIRED_BINARIES)
 
 
+def _github_token() -> str | None:
+    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or None
+
+
 def _download_installer(url: str) -> None:
     MIKTEX_INSTALLER_DIR.mkdir(parents=True, exist_ok=True)
+    token = _github_token()
+
+    # If it's a GitHub URL and we have a token, use authenticated request
+    if "github.com" in url and token:
+        print(f"Descargando MiKTeX Portable (autenticado)...")
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req) as src, open(MIKTEX_INSTALLER, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        print(f"OK: Descargado a {MIKTEX_INSTALLER}")
+        return
+
+    # Fallback: try gh CLI (handles auth via gh auth status)
+    if "github.com" in url and shutil.which("gh"):
+        print("Descargando con gh CLI...")
+        subprocess.run(
+            ["gh", "release", "download", "latex-v1",
+             "-p", "miktex-portable.exe", "--dir", str(MIKTEX_INSTALLER_DIR)],
+            check=True, cwd=PROJECT_ROOT, timeout=120,
+        )
+        print(f"OK: Descargado a {MIKTEX_INSTALLER}")
+        return
+
+    # Unauthenticated fallback (works for public repos / direct URLs)
     print(f"Descargando MiKTeX Portable desde:\n  {url}")
     urllib.request.urlretrieve(url, MIKTEX_INSTALLER)
     print(f"OK: Descargado a {MIKTEX_INSTALLER}")
