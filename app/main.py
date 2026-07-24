@@ -72,6 +72,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.db.session import engine
     setup_sqlalchemy_logging(engine)
 
+    # ── LaTeX binary check (Windows, non-blocking) ─────────────
+    if settings.latex_bin_dir and sys.platform == "win32":
+        import os as _os
+        if not _os.path.isdir(settings.latex_bin_dir):
+            logger.warning(
+                "LATEX_BIN_DIR apunta a %s pero no existe. "
+                "Ejecutá 'python scripts/setup_latex.py' para instalar MiKTeX Portable.",
+                settings.latex_bin_dir,
+            )
+
     app = FastAPI(
         title="Open Ai Jobs Search API",
         version="0.1.0",
