@@ -13,6 +13,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -20,11 +21,17 @@ from app.core.security import decode_access_token
 from app.schemas.orchestrator import (
     ExecutionJobOut,
     ModelListOut,
+    ProviderHealthOut,
     ProviderListOut,
     QueueControlRequest,
     QueueControlResult,
     QueueStatusOut,
 )
+
+try:
+    from asyncpg.exceptions import InternalServerError as AsyncpgError
+except ImportError:
+    AsyncpgError = OperationalError
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.orchestrator import LLMOrchestrator
 from app.services.orchestrator.queue_notifier import get_queue_notifier
@@ -106,7 +113,14 @@ async def get_provider_health(
     Shows status (healthy/degraded/cooldown/disabled), health scores,
     error counts, and cooldown information.
     """
-    return await orchestrator.get_provider_health(db, user["sub"])
+    try:
+        return await orchestrator.get_provider_health(db, user["sub"])
+    except (AsyncpgError, OperationalError) as e:
+        error_str = str(e)
+        if "EMAXCONNSESSION" in error_str or "max clients" in error_str:
+            logger.warning("Pool de conexiones agotado — devolviendo degraded")
+            return ProviderListOut(providers=[])
+        raise
 
 
 @router.get("/models", response_model=ModelListOut)

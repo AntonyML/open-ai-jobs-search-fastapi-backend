@@ -71,7 +71,7 @@ logger = get_logger("app.worker")
 
 # ── Constants ────────────────────────────────────────────────────────
 
-POLL_INTERVAL = 2.0        # seconds between claim attempts (fallback when LISTEN unavailable)
+POLL_INTERVAL = 30.0       # seconds between claim attempts (fallback when LISTEN unavailable)
 HEARTBEAT_INTERVAL = 30.0  # seconds between heartbeat updates
 LEASE_DURATION = 300       # seconds (5 min) before another worker can steal
 RECOVERY_INTERVAL = 60.0   # seconds between recovery cycles
