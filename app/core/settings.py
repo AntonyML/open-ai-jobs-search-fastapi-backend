@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # ── LiteLLM / LLM Providers ───────────────────────────────
     llm_default_provider: str = "anthropic"
+    llm_timeout: int = 180
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     nvidia_nim_api_key: str | None = None

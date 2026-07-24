@@ -21,7 +21,7 @@ settings = get_settings()
 # at call time instead.
 litellm.suppress_debug_info = True
 litellm.num_retries = 0
-litellm.request_timeout = 30
+litellm.request_timeout = settings.llm_timeout
 
 
 def _build_kwargs(
@@ -121,7 +121,7 @@ async def llm_completion(
     kwargs = _build_kwargs(provider, model, api_key, api_base)
     kwargs["temperature"] = temperature
     kwargs["max_tokens"] = max_tokens
-    kwargs["timeout"] = 30
+    kwargs["timeout"] = settings.llm_timeout
     kwargs["num_retries"] = 0
 
     if response_format:
