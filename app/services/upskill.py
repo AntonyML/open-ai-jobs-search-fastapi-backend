@@ -481,6 +481,9 @@ async def _execute_upskill_background(upskill_id: str) -> None:
     This function runs in a background task with its own database session.
     """
     from app.db.session import async_session_factory
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
     async with async_session_factory() as db:
         try:

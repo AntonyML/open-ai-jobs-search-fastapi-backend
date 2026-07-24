@@ -31,6 +31,7 @@ from app.db.models import (
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.services.apply import compile_latex  # noqa: F401  — re-export for tests/callers
 from app.llm.adapter import llm_completion_structured
+from app.core.logging import get_logger
 from app.schemas.interview import (
     CompanyResearchLLMOutput,
     CompanyResearchOut,
@@ -52,6 +53,7 @@ from app.schemas.interview import (
     LogisticsOut,
 )
 
+logger = get_logger(__name__)
 settings = get_settings()
 
 
@@ -1154,7 +1156,6 @@ async def submit_mock_answer(
 
         # Use a simple LLM completion (not structured since we want free-form JSON with feedback)
         from app.llm.adapter import llm_completion
-
         llm_response = await llm_completion(
             messages=messages,
             provider=settings.llm_default_provider,

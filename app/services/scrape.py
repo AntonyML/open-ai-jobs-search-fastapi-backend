@@ -28,6 +28,10 @@ from app.core.settings import get_settings
 from app.db.models import CandidateProfile, JobPosting, ScrapeRun
 from app.exceptions import ScraperError
 from app.schemas.scrape import ScraperOutput, ScraperResultItem
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 settings = get_settings()
 
@@ -422,6 +426,7 @@ async def get_job_posting(
 ) -> JobPosting:
     """Get a single job posting, verifying ownership."""
     from app.exceptions import NotFoundError
+
 
     result = await db.execute(
         select(JobPosting).where(

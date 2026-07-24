@@ -6,12 +6,13 @@ motor de ranking los evalúe.  Todo es determinista (regex + catálogo), cero LL
 
 from __future__ import annotations
 
-import logging
+
 import re
 from datetime import date, datetime
 from typing import Any
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════
 # Catálogo de normalización de skills

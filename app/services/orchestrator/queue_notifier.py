@@ -12,11 +12,12 @@ who (if anyone) is listening.
 from __future__ import annotations
 
 import asyncio
-import logging
+
 from datetime import datetime, timedelta
 from typing import Any
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class QueueNotifier:

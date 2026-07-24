@@ -19,7 +19,7 @@ Architecture decision:
 
 from __future__ import annotations
 
-import logging
+
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,8 +30,9 @@ from app.llm.adapter import llm_completion_structured, get_provider_kwargs
 from app.schemas.ats_check import ATSResult
 from app.schemas.verification import LlmContentCheckOutput, VerificationCheck, VerificationResult
 from app.services import ats_check
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ── Public entry point ──────────────────────────────────────────────

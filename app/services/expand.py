@@ -27,6 +27,10 @@ from app.db.models import (
 )
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.schemas.expand import (
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
     CompetencyExpansionSummaryOut,
     EnrichedCompetenciesLLMOutput,
     EnrichedCompetency,
@@ -628,6 +632,7 @@ async def _execute_expand_background(expansion_id: str) -> None:
     This function runs in a background task with its own database session.
     """
     from app.db.session import async_session_factory
+
 
     async with async_session_factory() as db:
         try:

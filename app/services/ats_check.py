@@ -18,7 +18,7 @@ with ``pass_ats`` = None and does NOT block the pipeline.
 from __future__ import annotations
 
 import asyncio
-import logging
+
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,7 +28,8 @@ from app.schemas.ats_check import ATSResult
 if TYPE_CHECKING:
     from app.db.models import CandidateProfile, JobPosting
 
-logger = logging.getLogger(__name__)
+from app.core.logging import get_logger
+logger = get_logger(__name__)
 
 # ── Regular expressions ─────────────────────────────────────────────
 

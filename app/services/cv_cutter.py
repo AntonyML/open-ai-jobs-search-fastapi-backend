@@ -21,7 +21,7 @@ reasonable CV content).
 
 from __future__ import annotations
 
-import logging
+
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -32,8 +32,9 @@ from app.schemas.cv_cutter import CVTrimResult, ScoredBullet
 
 if TYPE_CHECKING:
     from app.db.models import JobPosting
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Scoring weights (must sum to 1.0)
 WEIGHT_RELEVANCE = 0.5

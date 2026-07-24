@@ -9,7 +9,7 @@ Responsibilities:
 
 from __future__ import annotations
 
-import logging
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
 
 from app.db.models import ModelHealth as ModelHealthModel
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Default model priorities within a provider (lower = higher priority)
 DEFAULT_MODEL_PRIORITIES: dict[str, dict[str, int]] = {

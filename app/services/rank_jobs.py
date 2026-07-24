@@ -7,7 +7,7 @@ and returns {job_id, status, total_jobs, accepted_jobs}.
 
 from __future__ import annotations
 
-import logging
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,7 +19,8 @@ from app.services.orchestrator.execution_queue import ExecutionQueue
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.rank import ALGORITHM_VERSION, PROMPT_VERSION
 
-logger = logging.getLogger(__name__)
+from app.core.logging import get_logger
+logger = get_logger(__name__)
 
 # ── Queue instance (shared with orchestrator) ───────────────────────
 

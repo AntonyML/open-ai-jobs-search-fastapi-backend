@@ -15,7 +15,7 @@ Architecture decisions:
 from __future__ import annotations
 
 import json
-import logging
+
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -44,7 +44,8 @@ from app.services.orchestrator import (
     provider_manager as pm,
 )
 
-logger = logging.getLogger(__name__)
+from app.core.logging import get_logger
+logger = get_logger(__name__)
 
 
 class LLMOrchestrator:

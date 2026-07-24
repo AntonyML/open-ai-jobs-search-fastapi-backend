@@ -19,7 +19,7 @@ Design rationale:
 
 from __future__ import annotations
 
-import logging
+
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
@@ -32,7 +32,8 @@ from app.schemas.pdf_compiler import (
     IssueSeverity,
 )
 
-logger = logging.getLogger(__name__)
+from app.core.logging import get_logger
+logger = get_logger(__name__)
 
 # Maximum iterations for the compilation verification loop
 MAX_COMPILE_ITERATIONS = 5

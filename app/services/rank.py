@@ -8,7 +8,7 @@ The LLM now only handles qualitative reasoning (strengths, gaps, red flags).
 from __future__ import annotations
 
 import json
-import logging
+
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -26,9 +26,10 @@ from app.schemas.rank import RankQualitativeOutput, RankResult, RankedJobOut
 from app.schemas.scrape import JobPostingSummary
 from app.services.provider_credentials import get_user_active_provider_config
 from app.services.salary import service as salary_service
+from app.core.logging import get_logger
 
 settings = get_settings()
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── Version pinning (Fase 5) ─────────────────────────────────────────
 

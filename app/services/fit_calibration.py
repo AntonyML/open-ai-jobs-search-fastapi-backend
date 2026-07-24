@@ -12,7 +12,7 @@ aggregation queries and simple statistics.
 
 from __future__ import annotations
 
-import logging
+
 from collections import Counter
 from typing import Any
 
@@ -29,7 +29,8 @@ from app.schemas.outcome import (
     FunnelMetrics,
 )
 
-logger = logging.getLogger(__name__)
+from app.core.logging import get_logger
+logger = get_logger(__name__)
 
 # ── Status classification ───────────────────────────────────────────
 

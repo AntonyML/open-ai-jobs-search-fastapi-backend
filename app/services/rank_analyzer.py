@@ -14,7 +14,7 @@ Fase 4: Capas A-E integradas.
 
 from __future__ import annotations
 
-import logging
+
 import re
 from datetime import date, datetime
 from typing import Any
@@ -33,8 +33,9 @@ from app.services.rank_extractor import (
     normalize_skill,
 )
 from app.schemas.rank import DimensionScore
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── Constants ───────────────────────────────────────────────────────
 

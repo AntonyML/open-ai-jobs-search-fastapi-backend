@@ -16,7 +16,7 @@ We use SEPARATE LLM calls for draft, review, and revise so that:
 from __future__ import annotations
 
 import asyncio
-import logging
+
 import os
 import re
 import shutil
@@ -26,7 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from app.core.logging import get_logger, bind_context
+logger = get_logger(__name__)
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload

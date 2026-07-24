@@ -10,7 +10,7 @@ Responsibilities:
 
 from __future__ import annotations
 
-import logging
+
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -19,8 +19,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ProviderHealth as ProviderHealthModel
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── Priority tiers (lower = higher priority) ─────────────────────────
 # These are defaults; users can override via the API or DB.

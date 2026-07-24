@@ -13,11 +13,12 @@ This is the LAST line of defense — prompts should already constrain output.
 from __future__ import annotations
 
 import json
-import logging
+
 import re
 from typing import Any
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def sanitize_llm_response(

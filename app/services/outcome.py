@@ -22,6 +22,9 @@ from app.core.settings import get_settings
 from app.db.models import Application, Outcome
 from app.exceptions import NotFoundError
 from app.schemas.outcome import OutcomeCreate, OutcomeUpdate, TrackerRowOut
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 settings = get_settings()
 

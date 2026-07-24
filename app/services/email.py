@@ -5,11 +5,11 @@ Sends transactional emails for payment requests, donations, and admin contact.
 
 from __future__ import annotations
 
-import logging
 
 from app.core.settings import get_settings
 
-logger = logging.getLogger(__name__)
+from app.core.logging import get_logger
+logger = get_logger(__name__)
 
 settings = get_settings()
 

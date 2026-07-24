@@ -12,7 +12,7 @@ Responsibilities:
 from __future__ import annotations
 
 import asyncio
-import logging
+
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
 
@@ -22,8 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ExecutionJob as ExecutionJobModel
 from app.db.models import ExecutionQueueState
 from app.services.orchestrator.queue_notifier import get_queue_notifier
+from app.core.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── Job states ──────────────────────────────────────────────────────
 
