@@ -14,17 +14,19 @@ import asyncio
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-import time
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import structlog
 
 from app.api.v1.router import router as v1_router
-from app.core.logging import configure_logging
+from app.core.logging import get_logger, setup_logging
+from app.core.logging.middleware import RequestLoggingMiddleware
+
+logger = get_logger("app")
 from app.core.settings import Settings, get_settings
 from app.exceptions import AppError, app_error_handler, validation_error_handler
 
@@ -32,9 +34,6 @@ from app.exceptions import AppError, app_error_handler, validation_error_handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown logic for the app."""
-    # Configure structured logging
-    configure_logging()
-
     # Startup: start APScheduler for periodic scraping
     from app.core.scheduler import scheduler_lifespan
 
@@ -65,29 +64,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = get_settings()
 
+    # Logging BEFORE everything else
+    setup_logging()
+
+    # SQLAlchemy query logging (goes to logs/sql.log, not terminal)
+    from app.core.logging.interceptors import setup_sqlalchemy_logging
+    from app.db.session import engine
+    setup_sqlalchemy_logging(engine)
+
     app = FastAPI(
         title="Open Ai Jobs Search API",
         version="0.1.0",
         description="Backend multi-proveedor para búsqueda de empleos con IA",
         lifespan=lifespan,
     )
-
-    # ── Sentry ─────────────────────────────────────────────────
-    if settings.sentry_dsn:
-        import sentry_sdk
-        from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.logging import LoggingIntegration
-
-        sentry_sdk.init(
-            dsn=settings.sentry_dsn,
-            integrations=[
-                FastApiIntegration(),
-                LoggingIntegration(),
-            ],
-            environment=settings.app_env,
-            traces_sample_rate=0.1,
-            send_default_pii=True,
-        )
 
     # ── CORS ───────────────────────────────────────────────────
     app.add_middleware(
@@ -98,20 +88,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Request logging middleware ─────────────────────────────
-    @app.middleware("http")
-    async def log_requests(request: Request, call_next):
-        start = time.monotonic()
-        response = await call_next(request)
-        duration = (time.monotonic() - start) * 1000
-        structlog.get_logger("api").info(
-            "request",
-            method=request.method,
-            path=request.url.path,
-            status=response.status_code,
-            duration_ms=round(duration, 1),
-        )
-        return response
+    # ── Request logging middleware (request_id, latency, access.log) ─
+    app.add_middleware(RequestLoggingMiddleware)
 
     # ── Exception handlers ─────────────────────────────────────
     app.add_exception_handler(AppError, app_error_handler)
@@ -119,16 +97,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        """Catch-all for unhandled exceptions.
-
-        Logs the error and reports it to Sentry so we can actually see
-        what caused the HTTP 500 — instead of silently swallowing it
-        and only seeing downstream symptoms like pool warnings.
-        """
-        structlog.get_logger("api").error(
-            "Unhandled exception",
-            path=request.url.path,
-            method=request.method,
+        """Catch-all for unhandled exceptions."""
+        logger.error(
+            "Unhandled exception at %s %s",
+            request.method,
+            request.url.path,
             exc_info=exc,
         )
         if settings.sentry_dsn:

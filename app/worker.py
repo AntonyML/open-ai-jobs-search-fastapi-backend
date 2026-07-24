@@ -48,6 +48,7 @@ from sqlalchemy import select, text, update, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
+from app.core.logging import get_logger, setup_logging
 from app.core.settings import get_settings
 from app.db.models import (
     ExecutionJob,
@@ -66,7 +67,7 @@ from app.services.rank import (
 )
 from app.services.provider_credentials import get_user_active_provider_config
 
-logger = logging.getLogger("worker")
+logger = get_logger("app.worker")
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -575,11 +576,7 @@ async def _worker_main():
 
 def main():
     """Entry point — ``python -m app.worker``."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-        stream=sys.stdout,
-    )
+    setup_logging()
 
     global WORKER_ID
     import uuid

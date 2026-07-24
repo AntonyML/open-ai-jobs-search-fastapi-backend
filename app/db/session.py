@@ -13,7 +13,7 @@ settings = get_settings()
 
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.app_env == "development",
+    echo=False,  # controlled via logging levels, not echo
     pool_size=6,       # Base pool connections — leave room for worker + other clients (Postgres caps at 15)
     max_overflow=3,     # Max overflow so API stays within available connections (6+3=9)
     pool_pre_ping=True,
