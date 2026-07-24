@@ -79,6 +79,18 @@ async def trigger_apply(
             detail=t("errors.not_found", locale) + " — Run /rank first.",
         )
 
+    # Delete any previous failed / stuck application for this job
+    clean_old = await db.execute(
+        select(Application).where(
+            Application.user_id == user["sub"],
+            Application.job_posting_id == payload.job_posting_id,
+            Application.pipeline_stage.notin_({"compiled", "verified"}),
+        )
+    )
+    for stale in clean_old.scalars().all():
+        await db.delete(stale)
+    await db.commit()
+
     # Create Application record immediately for status tracking
     application = Application(
         user_id=user["sub"],
@@ -118,17 +130,23 @@ async def list_available_jobs(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """List ranked jobs that do not have a generated application yet."""
-    application_exists = exists().where(
+    """List ranked jobs available to apply.
+
+    Includes jobs with no application yet, AND jobs where the most recent
+    application failed — allowing the user to retry.
+    """
+    terminal_stages = {"compiled", "verified", "draft", "reviewed", "revised"}
+    active_application_exists = exists().where(
         Application.user_id == user["sub"],
         Application.job_posting_id == JobPosting.id,
+        Application.pipeline_stage.in_(terminal_stages),
     )
     result = await db.execute(
         select(JobPosting)
         .where(
             JobPosting.user_id == user["sub"],
             JobPosting.status == "ranked",
-            ~application_exists,
+            ~active_application_exists,
         )
         .order_by(JobPosting.rank_score.desc().nullslast())
         .limit(limit)
