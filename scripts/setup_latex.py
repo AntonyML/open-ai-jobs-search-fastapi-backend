@@ -47,14 +47,29 @@ def _download_installer(url: str) -> None:
     print(f"OK: Descargado a {MIKTEX_INSTALLER}")
 
 
-def _extract_installer() -> None:
-    print(f" extrayendo a {MIKTEX_TARGET} ...")
+def _extract_installer() -> bool:
+    import shutil
+    default_install = Path("C:/miktex-portable/texmfs/install")
+
+    print(" extrayendo...")
+    subprocess.run([str(MIKTEX_INSTALLER), "/S"], check=True, timeout=300)
+
+    src_bin = default_install / "miktex" / "bin" / "x64"
+    if not src_bin.is_dir():
+        print(f"ERROR: No se encuentra {src_bin} tras la extracción", file=sys.stderr)
+        return False
+
     MIKTEX_TARGET.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [str(MIKTEX_INSTALLER), "/S", f"/D={MIKTEX_TARGET}"],
-        check=True, timeout=300,
-    )
-    print("OK: Extracción completada")
+    for item in default_install.iterdir():
+        dst = MIKTEX_TARGET / item.name
+        if item.is_dir():
+            shutil.copytree(item, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, dst)
+
+    shutil.rmtree("C:/miktex-portable", ignore_errors=True)
+    print(f"OK: Binarios en {MIKTEX_BIN_DIR}")
+    return True
 
 
 def _write_env() -> None:
@@ -95,7 +110,8 @@ def main() -> int:
     else:
         print(f"OK: Instalador ya existe: {MIKTEX_INSTALLER}")
 
-    _extract_installer()
+    if not _extract_installer():
+        return 1
 
     if not _is_installed():
         print("ERROR: La extracción no produjo los binarios esperados", file=sys.stderr)
