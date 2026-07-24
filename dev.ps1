@@ -5,6 +5,12 @@ param(
 $ErrorActionPreference = "Stop"
 $VENV_PYTHON = Join-Path $PSScriptRoot ".venv" "Scripts" "python.exe"
 
+Write-Host "=== setup_latex.py ===" -ForegroundColor Cyan
+& $VENV_PYTHON scripts/setup_latex.py
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[WARN] setup_latex.py fallo, continuando de todas formas" -ForegroundColor Yellow
+}
+
 Write-Host "=== Iniciando API + Worker ===" -ForegroundColor Cyan
 
 if (-not $NoWorker) {

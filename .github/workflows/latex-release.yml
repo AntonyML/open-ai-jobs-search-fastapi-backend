@@ -1,0 +1,49 @@
+name: LaTeX Binary Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag (e.g. latex-v1, latex-v2)"
+        required: true
+        default: latex-v1
+      file_path:
+        description: "Path to miktex-portable.exe (relative to repo root)"
+        required: true
+        default: MikTex/miktex-portable.exe
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify binary exists
+        run: |
+          if [ ! -f "${{ inputs.file_path }}" ]; then
+            echo "ERROR: File ${{ inputs.file_path }} not found"
+            exit 1
+          fi
+
+      - name: Compute SHA256
+        id: hash
+        run: |
+          echo "sha256=$(sha256sum ${{ inputs.file_path }} | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: "MiKTeX Portable ${{ inputs.version }}"
+          body: |
+            MiKTeX Portable installer for local Windows development.
+
+            **SHA256:** `${{ steps.hash.outputs.sha256 }}`
+
+            ### Usage
+            1. Download `miktex-portable.exe`
+            2. Place it in the repo root as `MikTex/miktex-portable.exe`
+            3. Run `python scripts/setup_latex.py`
+          files: ${{ inputs.file_path }}
+          draft: false
+          prerelease: false

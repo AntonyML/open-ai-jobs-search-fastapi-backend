@@ -69,7 +69,8 @@ bun.lockb
 
 # MiKTeX Portable (binarios grandes, no commitear)
 app/external/latex/miktex-portable/
-MikTex/miktex-portable.exe
+MikTex/
+miktex-portable.exe
 
 # Generated documents
 documents/

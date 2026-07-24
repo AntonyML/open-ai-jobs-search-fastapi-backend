@@ -48,7 +48,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends miktex \
     && rm -rf /var/lib/apt/lists/* \
     && miktexsetup --shared=yes finish \
-    && initexmf --admin --set-config-value [MPM]AutoInstall=1
+    && initexmf --admin --set-config-value [MPM]AutoInstall=1 \
+    && which lualatex && which xelatex && which pdfinfo && which pdftotext
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser

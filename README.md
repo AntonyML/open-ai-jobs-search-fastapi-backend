@@ -733,21 +733,21 @@ flyctl scale count worker=2
 
 Ver `fly.toml` para configuración de máquina (1GB RAM mínimo por MiKTeX + LaTeX).
 
-### MiKTeX Portable (para compilar LaTeX sin instalación global)
+### MiKTeX Portable (auto-instalación)
 
-El endpoint `/apply` compila CV y cover letter con `lualatex` (CV) y `xelatex` (cover). Para funcionar en cualquier entorno sin instalar LaTeX globalmente:
+El endpoint `/apply` compila CV y cover letter con `lualatex` (CV) y `xelatex` (cover). En **Windows**, el setup se hace automáticamente al ejecutar `dev.ps1` (que corre `python scripts/setup_latex.py`).
 
-1. **Descargar** el instalador portable desde: https://miktex.org/howto/portable-edition
-2. **Renombrar** a `miktex-portable.exe`
-3. **Colocar** en: `MikTex/miktex-portable.exe` (raíz del proyecto)
-4. **Ejecutar** — se extrae en `app/external/latex/miktex-portable/`
-5. **Configurar** en `.env`: `LATEX_BIN_DIR=app/external/latex/miktex-portable/miktex/bin/x64`
+`setup_latex.py` descarga el instalador portable desde **GitHub Releases** (tag `latex-v1`) o desde `MIKTEX_DOWNLOAD_URL` si está definida en `.env`, lo extrae en `app/external/latex/miktex-portable/`, y escribe `LATEX_BIN_DIR` en `.env`.
 
-**Verificación:**
+**Requisito:** Antes del primer uso hay que crear un Release `latex-v1` en GitHub con `miktex-portable.exe` como adjunto, o definir `MIKTEX_DOWNLOAD_URL` en `.env`.
+
+**Verificación manual:**
 ```bash
-python scripts/check_miktex.py
+python scripts/setup_latex.py
 # → OK: MiKTeX Portable listo para usar
 ```
+
+En **Docker** (Linux), MiKTeX se instala vía `apt` (ver `Dockerfile`). En **Linux/Mac** nativo, instalar TeX Live manualmente.
 
 Los binarios de MiKTeX Portable **no se commitean** (~150 MB, en `.gitignore`).
 
