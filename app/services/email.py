@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from app.core.settings import get_settings
 
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 settings = get_settings()
@@ -21,46 +21,35 @@ async def send_resend_email(
     *,
     from_name: str = "Open Ai Jobs Search",
 ) -> dict:
-    """Send an email via the Resend API.
+    """Send an email via the Resend API."""
+    with bind_context(pipeline_stage="email"):
+        logger.info("Sending email | to=%s subject=%s", to, subject)
+        if not settings.resend_api_key:
+            logger.warning("RESEND_API_KEY is not configured — email not sent")
+            return {"status": "skipped", "reason": "RESEND_API_KEY not configured"}
 
-    Args:
-        to: Recipient email address.
-        subject: Email subject line.
-        html_body: HTML body content.
-        from_name: Sender display name.
+        import httpx
 
-    Returns:
-        The JSON response from Resend.
-
-    Raises:
-        RuntimeError: If RESEND_API_KEY is not configured.
-    """
-    if not settings.resend_api_key:
-        logger.warning("RESEND_API_KEY is not configured — email not sent")
-        return {"status": "skipped", "reason": "RESEND_API_KEY not configured"}
-
-    import httpx
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {settings.resend_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": f"{from_name} <{settings.resend_from_email}>",
-                "to": [to],
-                "subject": subject,
-                "html": html_body,
-            },
-        )
-        try:
-            resp.raise_for_status()
-        except Exception:
-            logger.warning("Resend API returned error (status=%s): %s", resp.status_code, resp.text[:500])
-            return {"status": "error", "reason": f"Resend API error: {resp.status_code}"}
-        return resp.json()
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": f"{from_name} <{settings.resend_from_email}>",
+                    "to": [to],
+                    "subject": subject,
+                    "html": html_body,
+                },
+            )
+            try:
+                resp.raise_for_status()
+            except Exception:
+                logger.warning("Resend API returned error (status=%s): %s", resp.status_code, resp.text[:500])
+                return {"status": "error", "reason": f"Resend API error: {resp.status_code}"}
+            return resp.json()
 
 
 async def send_upgrade_request(

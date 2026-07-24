@@ -32,7 +32,7 @@ from app.schemas.cv_cutter import CVTrimResult, ScoredBullet
 
 if TYPE_CHECKING:
     from app.db.models import JobPosting
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 
 logger = get_logger(__name__)
 
@@ -294,113 +294,114 @@ async def trim_cv_to_page_limit(
         count instead of raising on wrong page count. If your existing
         compile function raises on mismatch, wrap it.
     """
-    bullets_before = sum(len(e.bullets) for e in experience)
-    entries_before = len(experience)
-    all_bullet_tuples = _bullets_from_experience(experience)
+    with bind_context(pipeline_stage="cv_cutter"):
+        bullets_before = sum(len(e.bullets) for e in experience)
+        entries_before = len(experience)
+        all_bullet_tuples = _bullets_from_experience(experience)
 
-    # First compile to check current page count
-    current_tex = render_fn(experience)
-    _, current_pages = await compile_fn(current_tex, output_dir, job_name)
-
-    if current_pages <= max_pages:
-        # Already within limit — no trimming needed
-        return experience, CVTrimResult(
-            entries_before=entries_before,
-            bullets_before=bullets_before,
-            bullets_removed=0,
-            pages_achieved=current_pages,
-            removed_bullet_texts=[],
-            remaining_bullets_per_entry=[len(e.bullets) for e in experience],
-            was_trimmed=False,
-        )
-
-    # Trim loop
-    trimmed_experience = deepcopy(experience)
-    removed_texts: list[str] = []
-
-    for iteration in range(MAX_TRIM_ITERATIONS):
-        # Re-build bullet list from current state
-        current_bullets = _extract_all_bullets(trimmed_experience)
-        if not current_bullets:
-            break  # Nothing left to remove
-
-        # Score each bullet
-        all_current_tuples = _bullets_from_experience(trimmed_experience)
-
-        scored: list[ScoredBullet] = []
-        for sb in current_bullets:
-            sb.relevance_score = _compute_relevance_score(sb.text, job_posting)
-            sb.uniqueness_score = _compute_uniqueness_score(
-                sb.text, all_current_tuples, (sb.entry_index, sb.bullet_index)
-            )
-            sb.cover_reference_score = _compute_cover_reference_score(
-                sb.text, cover_letter_latex
-            )
-            sb.combined_score = (
-                sb.relevance_score * WEIGHT_RELEVANCE
-                + sb.uniqueness_score * WEIGHT_UNIQUENESS
-                + sb.cover_reference_score * WEIGHT_COVER_REFERENCE
-            )
-            scored.append(sb)
-
-        # Find the lowest-scoring removable bullet
-        # Sort by combined_score ascending, filter by removability
-        scored.sort(key=lambda s: s.combined_score)
-
-        # Skip bullets that are protected (last bullet in an entry)
-        lowest = None
-        for sb in scored:
-            entry = trimmed_experience[sb.entry_index]
-            if len(entry.bullets) > MIN_BULLETS_PER_ENTRY:
-                lowest = sb
-                break
-
-        if lowest is None:
-            # All entries at minimum — can't remove more
-            break
-
-        # Remove the lowest-scoring bullet
-        removed_texts.append(lowest.text)
-        trimmed_experience = _remove_bullet(
-            trimmed_experience, lowest.entry_index, lowest.bullet_index
-        )
-
-        # Re-render and re-compile
-        current_tex = render_fn(trimmed_experience)
+        # First compile to check current page count
+        current_tex = render_fn(experience)
         _, current_pages = await compile_fn(current_tex, output_dir, job_name)
 
         if current_pages <= max_pages:
-            # Success! Within limit now
-            logger.info(
-                f"CV trimmed to {max_pages} page(s) in {iteration + 1} iteration(s). "
-                f"Removed {len(removed_texts)} bullet(s)."
-            )
-            return trimmed_experience, CVTrimResult(
+            # Already within limit — no trimming needed
+            return experience, CVTrimResult(
                 entries_before=entries_before,
                 bullets_before=bullets_before,
-                bullets_removed=len(removed_texts),
+                bullets_removed=0,
                 pages_achieved=current_pages,
-                removed_bullet_texts=removed_texts,
-                remaining_bullets_per_entry=[
-                    len(e.bullets) for e in trimmed_experience
-                ],
-                was_trimmed=True,
+                removed_bullet_texts=[],
+                remaining_bullets_per_entry=[len(e.bullets) for e in experience],
+                was_trimmed=False,
             )
 
-    # If we exhausted iterations or bullets and still don't fit, log warning
-    # but return what we have. The caller will handle page count verification.
-    final_bullets = sum(len(e.bullets) for e in trimmed_experience)
-    logger.warning(
-        f"CV trim exhausted: removed {len(removed_texts)} bullet(s) "
-        f"({bullets_before} → {final_bullets}), "
-        f"but still at {current_pages} pages (max {max_pages})."
-    )
-    return trimmed_experience, CVTrimResult(
-        entries_before=entries_before,
-        bullets_before=bullets_before,
-        bullets_removed=len(removed_texts),
-        pages_achieved=current_pages,
-        removed_bullet_texts=removed_texts,
-        remaining_bullets_per_entry=[len(e.bullets) for e in trimmed_experience],
-        was_trimmed=len(removed_texts) > 0,
-    )
+        # Trim loop
+        trimmed_experience = deepcopy(experience)
+        removed_texts: list[str] = []
+
+        for iteration in range(MAX_TRIM_ITERATIONS):
+            # Re-build bullet list from current state
+            current_bullets = _extract_all_bullets(trimmed_experience)
+            if not current_bullets:
+                break  # Nothing left to remove
+
+            # Score each bullet
+            all_current_tuples = _bullets_from_experience(trimmed_experience)
+
+            scored: list[ScoredBullet] = []
+            for sb in current_bullets:
+                sb.relevance_score = _compute_relevance_score(sb.text, job_posting)
+                sb.uniqueness_score = _compute_uniqueness_score(
+                    sb.text, all_current_tuples, (sb.entry_index, sb.bullet_index)
+                )
+                sb.cover_reference_score = _compute_cover_reference_score(
+                    sb.text, cover_letter_latex
+                )
+                sb.combined_score = (
+                    sb.relevance_score * WEIGHT_RELEVANCE
+                    + sb.uniqueness_score * WEIGHT_UNIQUENESS
+                    + sb.cover_reference_score * WEIGHT_COVER_REFERENCE
+                )
+                scored.append(sb)
+
+            # Find the lowest-scoring removable bullet
+            # Sort by combined_score ascending, filter by removability
+            scored.sort(key=lambda s: s.combined_score)
+
+            # Skip bullets that are protected (last bullet in an entry)
+            lowest = None
+            for sb in scored:
+                entry = trimmed_experience[sb.entry_index]
+                if len(entry.bullets) > MIN_BULLETS_PER_ENTRY:
+                    lowest = sb
+                    break
+
+            if lowest is None:
+                # All entries at minimum — can't remove more
+                break
+
+            # Remove the lowest-scoring bullet
+            removed_texts.append(lowest.text)
+            trimmed_experience = _remove_bullet(
+                trimmed_experience, lowest.entry_index, lowest.bullet_index
+            )
+
+            # Re-render and re-compile
+            current_tex = render_fn(trimmed_experience)
+            _, current_pages = await compile_fn(current_tex, output_dir, job_name)
+
+            if current_pages <= max_pages:
+                # Success! Within limit now
+                logger.info(
+                    f"CV trimmed to {max_pages} page(s) in {iteration + 1} iteration(s). "
+                    f"Removed {len(removed_texts)} bullet(s)."
+                )
+                return trimmed_experience, CVTrimResult(
+                    entries_before=entries_before,
+                    bullets_before=bullets_before,
+                    bullets_removed=len(removed_texts),
+                    pages_achieved=current_pages,
+                    removed_bullet_texts=removed_texts,
+                    remaining_bullets_per_entry=[
+                        len(e.bullets) for e in trimmed_experience
+                    ],
+                    was_trimmed=True,
+                )
+
+        # If we exhausted iterations or bullets and still don't fit, log warning
+        # but return what we have. The caller will handle page count verification.
+        final_bullets = sum(len(e.bullets) for e in trimmed_experience)
+        logger.warning(
+            f"CV trim exhausted: removed {len(removed_texts)} bullet(s) "
+            f"({bullets_before} → {final_bullets}), "
+            f"but still at {current_pages} pages (max {max_pages})."
+        )
+        return trimmed_experience, CVTrimResult(
+            entries_before=entries_before,
+            bullets_before=bullets_before,
+            bullets_removed=len(removed_texts),
+            pages_achieved=current_pages,
+            removed_bullet_texts=removed_texts,
+            remaining_bullets_per_entry=[len(e.bullets) for e in trimmed_experience],
+            was_trimmed=len(removed_texts) > 0,
+        )

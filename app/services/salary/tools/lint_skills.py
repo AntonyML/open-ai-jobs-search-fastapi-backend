@@ -103,11 +103,11 @@ def main() -> int:
     check_settings()
 
     if errors:
-        print(f"lint_skills: {len(errors)} failure(s)")
+        sys.stdout.write(f"lint_skills: {len(errors)} failure(s)" + chr(10))
         for err in errors:
-            print(f"  - {err}")
+            sys.stdout.write(f"  - {err}" + chr(10))
         return 1
-    print(f"lint_skills: OK ({len(skills)} skills, {len(commands)} commands, settings.json)")
+    sys.stdout.write(f"lint_skills: OK ({len(skills)} skills, {len(commands)} commands, settings.json)" + chr(10))
     return 0
 
 

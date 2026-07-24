@@ -87,7 +87,7 @@ def check_permissions() -> None:
     for entry in ALLOWED_PERMISSIONS - set(allow):
         # Not an error: settings may legitimately drop an entry. But an
         # allowlist entry that no longer exists should be pruned.
-        print(f"note: allowlisted permission not present in settings.json: {entry!r}")
+        sys.stdout.write(f"note: allowlisted permission not present in settings.json: {entry!r}" + chr(10))
 
 
 def check_gitignore() -> None:
@@ -145,11 +145,11 @@ def main() -> int:
     check_gitignore()
     check_package_manifests()
     if errors:
-        print(f"security_guards: {len(errors)} failure(s)")
+        sys.stdout.write(f"security_guards: {len(errors)} failure(s)" + chr(10))
         for err in errors:
-            print(f"  - {err}")
+            sys.stdout.write(f"  - {err}" + chr(10))
         return 1
-    print("security_guards: OK (permissions allowlist, gitignore rules, package manifests)")
+    sys.stdout.write("security_guards: OK (permissions allowlist, gitignore rules, package manifests)" + chr(10))
     return 0
 
 

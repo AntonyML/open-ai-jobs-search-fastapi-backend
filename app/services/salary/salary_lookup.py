@@ -268,7 +268,7 @@ def main():
         for entry in companies:
             city = entry.get("city", "")
             city_str = f" ({city})" if city else ""
-            print(f"{entry['company']}{city_str}")
+            sys.stdout.write(f"{entry['company']}{city_str}" + chr(10))
         return
 
     if not args.company:
@@ -278,20 +278,20 @@ def main():
     results = search_company(data, args.company, args.city)
 
     if not results:
-        print(f"No results found for '{args.company}'")
+        sys.stdout.write(f"No results found for '{args.company}'" + chr(10))
         if args.city:
-            print(f"  (filtered by city: {args.city})")
-        print("\nTry a shorter or different name. Company names in the dataset")
-        print("may include legal suffixes like 'A/S' or 'ApS'.")
+            sys.stdout.write(f"  (filtered by city: {args.city})" + chr(10))
+        sys.stdout.write("\nTry a shorter or different name. Company names in the dataset" + chr(10))
+        sys.stdout.write("may include legal suffixes like 'A/S' or 'ApS'." + chr(10))
         sys.exit(1)
 
     if args.json:
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        sys.stdout.write(json.dumps(results, ensure_ascii=False, indent=2) + chr(10))
     else:
-        print(f"\nFound {len(results)} match(es) for '{args.company}':")
+        sys.stdout.write(f"\nFound {len(results)} match(es) for '{args.company}':" + chr(10))
         for entry in results:
-            print(format_entry(entry, metadata))
-        print()
+            sys.stdout.write(format_entry(entry, metadata) + chr(10))
+        sys.stdout.write( + chr(10))
 
 
 if __name__ == "__main__":

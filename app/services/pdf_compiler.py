@@ -32,7 +32,7 @@ from app.schemas.pdf_compiler import (
     IssueSeverity,
 )
 
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 # Maximum iterations for the compilation verification loop
@@ -263,15 +263,15 @@ def _apply_enlargethispage_fix(latex: str, target: str = "cv") -> str:
 
 
 async def compile_with_verification(
-    cv_latex: str,
-    cover_letter_latex: str,
-    cv_name: str,
-    cover_name: str,
-    candidate_name: str | None,
-    output_dir: Path,
-    compile_cv_fn: Callable[[str, Path, str], Awaitable[tuple[Path, int]]],
-    compile_cover_fn: Callable[[str, Path, str], Awaitable[tuple[Path, int]]],
-    ats_check_fn: Callable[[Path], Awaitable[object]] | None = None,
+        cv_latex: str,
+        cover_letter_latex: str,
+        cv_name: str,
+        cover_name: str,
+        candidate_name: str | None,
+        output_dir: Path,
+        compile_cv_fn: Callable[[str, Path, str], Awaitable[tuple[Path, int]]],
+        compile_cover_fn: Callable[[str, Path, str], Awaitable[tuple[Path, int]]],
+        ats_check_fn: Callable[[Path], Awaitable[object]] | None = None,
 ) -> CompileResult:
     """Compile CV and cover letter with iterative page-break verification.
 
@@ -306,228 +306,229 @@ async def compile_with_verification(
     Returns:
         ``CompileResult`` with all iterations, issues, and final paths.
     """
-    current_cv = cv_latex
-    current_cover = cover_letter_latex
-    enlargethispage_applied = {"cv": False, "cover": False}
-    final_cv_pdf: Path | None = None
-    final_cover_pdf: Path | None = None
-    iterations: list[CompileIteration] = []
+    with bind_context(pipeline_stage="latex"):
+        current_cv = cv_latex
+        current_cover = cover_letter_latex
+        enlargethispage_applied = {"cv": False, "cover": False}
+        final_cv_pdf: Path | None = None
+        final_cover_pdf: Path | None = None
+        iterations: list[CompileIteration] = []
 
-    for iteration in range(MAX_COMPILE_ITERATIONS):
-        iter_record = CompileIteration(
-            iteration=iteration,
-            cv_latex=current_cv,
-            cover_latex=current_cover,
-        )
-        issues: list[CompilationIssue] = []
-        fixes_applied: list[str] = []
-
-        # ── Step 1: Compile CV ──────────────────────────────────────
-        cv_pdf: Path | None = None
-        cv_pages: int | None = None
-        try:
-            cv_pdf, cv_pages = await compile_cv_fn(current_cv, output_dir, cv_name)
-            iter_record.cv_pages = cv_pages
-            final_cv_pdf = cv_pdf
-        except Exception as e:
-            issues.append(
-                CompilationIssue(
-                    category=IssueCategory.COMPILE_ERROR,
-                    severity=IssueSeverity.ERROR,
-                    document="cv",
-                    description=f"CV compilation failed: {e}",
-                )
+        for iteration in range(MAX_COMPILE_ITERATIONS):
+            iter_record = CompileIteration(
+                iteration=iteration,
+                cv_latex=current_cv,
+                cover_latex=current_cover,
             )
+            issues: list[CompilationIssue] = []
+            fixes_applied: list[str] = []
 
-        # ── Step 2: Compile cover letter ────────────────────────────
-        cover_pdf: Path | None = None
-        cover_pages: int | None = None
-        try:
-            cover_pdf, cover_pages = await compile_cover_fn(
-                current_cover, output_dir, cover_name
-            )
-            iter_record.cover_pages = cover_pages
-            final_cover_pdf = cover_pdf
-        except Exception as e:
-            issues.append(
-                CompilationIssue(
-                    category=IssueCategory.COMPILE_ERROR,
-                    severity=IssueSeverity.ERROR,
-                    document="cover_letter",
-                    description=f"Cover letter compilation failed: {e}",
-                )
-            )
-
-        # ── Step 3: Extract text for verification ───────────────────
-        cv_page_texts: list[str] = []
-        cover_page_texts: list[str] = []
-        if cv_pdf and cv_pdf.exists():
-            cv_page_texts = await _extract_pdf_page_text(cv_pdf)
-        if cover_pdf and cover_pdf.exists():
-            cover_page_texts = await _extract_pdf_page_text(cover_pdf)
-
-        # ── Step 4: Check CV page count ─────────────────────────────
-        if cv_pages is not None and cv_pages != 2:
-            severity = IssueSeverity.WARNING if cv_pages <= 2 else IssueSeverity.ERROR
-            issues.append(
-                CompilationIssue(
-                    category=IssueCategory.PAGE_COUNT,
-                    severity=severity,
-                    document="cv",
-                    description=f"CV has {cv_pages} page(s), expected 2.",
-                    line_ref=f"actual={cv_pages}, expected=2",
-                )
-            )
-
-        # ── Step 5: Check cover letter page count ───────────────────
-        if cover_pages is not None and cover_pages != 1:
-            severity = IssueSeverity.ERROR if cover_pages > 1 else IssueSeverity.WARNING
-            issues.append(
-                CompilationIssue(
-                    category=IssueCategory.PAGE_COUNT,
-                    severity=severity,
-                    document="cover_letter",
-                    description=f"Cover letter has {cover_pages} page(s), expected 1.",
-                    line_ref=f"actual={cover_pages}, expected=1",
-                )
-            )
-
-        # ── Step 6: Detect orphaned entries ─────────────────────────
-        orphans = _detect_orphaned_entries(cv_page_texts)
-        orphan_line_texts = [o["line_text"] for o in orphans]
-        if orphans:
-            for orphan in orphans:
+            # ── Step 1: Compile CV ──────────────────────────────────────
+            cv_pdf: Path | None = None
+            cv_pages: int | None = None
+            try:
+                cv_pdf, cv_pages = await compile_cv_fn(current_cv, output_dir, cv_name)
+                iter_record.cv_pages = cv_pages
+                final_cv_pdf = cv_pdf
+            except Exception as e:
                 issues.append(
                     CompilationIssue(
-                        category=IssueCategory.ORPHANED_ENTRY,
-                        severity=IssueSeverity.WARNING,
+                        category=IssueCategory.COMPILE_ERROR,
+                        severity=IssueSeverity.ERROR,
                         document="cv",
-                        description=(
-                            f"Orphaned \\\\cventry on page {orphan['page'] + 1}: "
-                            f"\"{orphan['line_text'][:60]}\""
-                        ),
-                        line_ref=orphan["line_text"],
+                        description=f"CV compilation failed: {e}",
                     )
                 )
 
-        # ── Step 7: Detect missing signature ────────────────────────
-        if not _detect_missing_signature(cover_page_texts, candidate_name):
-            issues.append(
-                CompilationIssue(
-                    category=IssueCategory.MISSING_SIGNATURE,
-                    severity=IssueSeverity.WARNING,
-                    document="cover_letter",
-                    description=(
-                        f"Candidate name \"{candidate_name}\" not found "
-                        f"as extractable text in cover letter PDF."
-                    ),
+            # ── Step 2: Compile cover letter ────────────────────────────
+            cover_pdf: Path | None = None
+            cover_pages: int | None = None
+            try:
+                cover_pdf, cover_pages = await compile_cover_fn(
+                    current_cover, output_dir, cover_name
                 )
-            )
+                iter_record.cover_pages = cover_pages
+                final_cover_pdf = cover_pdf
+            except Exception as e:
+                issues.append(
+                    CompilationIssue(
+                        category=IssueCategory.COMPILE_ERROR,
+                        severity=IssueSeverity.ERROR,
+                        document="cover_letter",
+                        description=f"Cover letter compilation failed: {e}",
+                    )
+                )
 
-        iter_record.issues = issues
-        iterations.append(iter_record)
+            # ── Step 3: Extract text for verification ───────────────────
+            cv_page_texts: list[str] = []
+            cover_page_texts: list[str] = []
+            if cv_pdf and cv_pdf.exists():
+                cv_page_texts = await _extract_pdf_page_text(cv_pdf)
+            if cover_pdf and cover_pdf.exists():
+                cover_page_texts = await _extract_pdf_page_text(cover_pdf)
 
-        # ── Step 8: If no issues, we're done! ───────────────────────
-        if not issues:
-            logger.info(
-                f"Compilation verified in {iteration + 1} iteration(s): "
-                f"CV={cv_pages}p, Cover={cover_pages}p, no issues."
-            )
-            break
+            # ── Step 4: Check CV page count ─────────────────────────────
+            if cv_pages is not None and cv_pages != 2:
+                severity = IssueSeverity.WARNING if cv_pages <= 2 else IssueSeverity.ERROR
+                issues.append(
+                    CompilationIssue(
+                        category=IssueCategory.PAGE_COUNT,
+                        severity=severity,
+                        document="cv",
+                        description=f"CV has {cv_pages} page(s), expected 2.",
+                        line_ref=f"actual={cv_pages}, expected=2",
+                    )
+                )
 
-        # ── Step 9: Apply automatic fixes ───────────────────────────
-        # Check if we've already exhausted all fixes for this iteration
-        if iteration >= MAX_COMPILE_ITERATIONS - 1:
-            logger.warning(
-                f"Compilation loop exhausted ({iteration + 1} iterations). "
-                f"Remaining issues: {len(issues)}"
-            )
-            break
+            # ── Step 5: Check cover letter page count ───────────────────
+            if cover_pages is not None and cover_pages != 1:
+                severity = IssueSeverity.ERROR if cover_pages > 1 else IssueSeverity.WARNING
+                issues.append(
+                    CompilationIssue(
+                        category=IssueCategory.PAGE_COUNT,
+                        severity=severity,
+                        document="cover_letter",
+                        description=f"Cover letter has {cover_pages} page(s), expected 1.",
+                        line_ref=f"actual={cover_pages}, expected=1",
+                    )
+                )
 
-        # Determine which fixes to apply based on detected issues
-        cv_orphan_lines = [
-            o["line_text"] for o in orphans
-        ]
-        cv_orphan_positions = _find_orphan_cventry_in_latex(
-            current_cv, cv_orphan_lines
-        )
-
-        if cv_orphan_positions:
-            current_cv = _apply_needspace_fixes(current_cv, cv_orphan_positions)
-            fixes_applied.append(
-                f"Added \\\\needspace before {len(cv_orphan_positions)} "
-                f"orphaned \\\\cventry entr(y/ies)"
-            )
-
-            # If we have both orphan issues AND page count issues, try \\enlargethispage
-            if cv_pages is not None and cv_pages > 2 and not enlargethispage_applied["cv"]:
-                current_cv = _apply_enlargethispage_fix(current_cv, "cv")
-                enlargethispage_applied["cv"] = True
-                fixes_applied.append("Added \\\\enlargethispage to CV")
-        elif cv_pages is not None and cv_pages > 2 and not enlargethispage_applied["cv"]:
-            # Try \\enlargethispage for borderline page overflow
-            current_cv = _apply_enlargethispage_fix(current_cv, "cv")
-            enlargethispage_applied["cv"] = True
-            fixes_applied.append("Added \\\\enlargethispage to CV")
-
-        # Cover letter fixes
-        if cover_pages is not None and cover_pages != 1 and not enlargethispage_applied["cover"]:
-            current_cover = _apply_enlargethispage_fix(current_cover, "cover_letter")
-            enlargethispage_applied["cover"] = True
-            fixes_applied.append("Added \\\\enlargethispage to cover letter")
-
-        iter_record.fixes_applied = fixes_applied
-        logger.info(
-            f"Iteration {iteration + 1}: {len(issues)} issue(s), "
-            f"applied {len(fixes_applied)} fix(es). Recompiling..."
-        )
-
-    # ── Step 10: Build final result ─────────────────────────────────
-    success = all(
-        i.severity != IssueSeverity.ERROR
-        for iter_rec in iterations
-        for i in iter_rec.issues
-    )
-
-    # Run ATS check on final CV if provided
-    if ats_check_fn and final_cv_pdf and final_cv_pdf.exists():
-        try:
-            ats_result = await ats_check_fn(final_cv_pdf)
-            # ATS check failed — add as a warning, not blocking
-            # model_dump() is the canonical Pydantic v2 API for BaseModel serialization
-            ats_dict = ats_result if isinstance(ats_result, dict) else ats_result.model_dump()
-            if ats_dict.get("pass_ats", False) is False:
-                if ats_dict.get("has_cid_markers"):
+            # ── Step 6: Detect orphaned entries ─────────────────────────
+            orphans = _detect_orphaned_entries(cv_page_texts)
+            orphan_line_texts = [o["line_text"] for o in orphans]
+            if orphans:
+                for orphan in orphans:
                     issues.append(
                         CompilationIssue(
-                            category=IssueCategory.CID_MARKERS,
+                            category=IssueCategory.ORPHANED_ENTRY,
                             severity=IssueSeverity.WARNING,
                             document="cv",
                             description=(
-                                "CID (cid:*) glyph markers found in PDF — "
-                                "ATS systems may not extract text correctly."
+                                f"Orphaned \\\\cventry on page {orphan['page'] + 1}: "
+                                f"\"{orphan['line_text'][:60]}\""
                             ),
+                            line_ref=orphan["line_text"],
                         )
                     )
-        except Exception as e:
-            logger.warning(f"ATS check in compilation loop failed (non-blocking): {e}")
 
-    # Gather final unresolved issues (warnings only at this point)
-    all_issues: list[CompilationIssue] = []
-    for iter_rec in iterations:
-        for issue in iter_rec.issues:
-            if issue not in all_issues:
-                all_issues.append(issue)
+            # ── Step 7: Detect missing signature ────────────────────────
+            if not _detect_missing_signature(cover_page_texts, candidate_name):
+                issues.append(
+                    CompilationIssue(
+                        category=IssueCategory.MISSING_SIGNATURE,
+                        severity=IssueSeverity.WARNING,
+                        document="cover_letter",
+                        description=(
+                            f"Candidate name \"{candidate_name}\" not found "
+                            f"as extractable text in cover letter PDF."
+                        ),
+                    )
+                )
 
-    return CompileResult(
-        success=success,
-        cv_pdf_path=str(final_cv_pdf) if final_cv_pdf else None,
-        cover_pdf_path=str(final_cover_pdf) if final_cover_pdf else None,
-        cv_pages=iter_record.cv_pages,
-        cover_pages=iter_record.cover_pages,
-        iterations=iterations,
-        total_iterations=len(iterations),
-        final_issues=[i for i in all_issues if i.severity != IssueSeverity.ERROR],
-        cv_latex=current_cv,
-        cover_latex=current_cover,
-    )
+            iter_record.issues = issues
+            iterations.append(iter_record)
+
+            # ── Step 8: If no issues, we're done! ───────────────────────
+            if not issues:
+                logger.info(
+                    f"Compilation verified in {iteration + 1} iteration(s): "
+                    f"CV={cv_pages}p, Cover={cover_pages}p, no issues."
+                )
+                break
+
+            # ── Step 9: Apply automatic fixes ───────────────────────────
+            # Check if we've already exhausted all fixes for this iteration
+            if iteration >= MAX_COMPILE_ITERATIONS - 1:
+                logger.warning(
+                    f"Compilation loop exhausted ({iteration + 1} iterations). "
+                    f"Remaining issues: {len(issues)}"
+                )
+                break
+
+            # Determine which fixes to apply based on detected issues
+            cv_orphan_lines = [
+                o["line_text"] for o in orphans
+            ]
+            cv_orphan_positions = _find_orphan_cventry_in_latex(
+                current_cv, cv_orphan_lines
+            )
+
+            if cv_orphan_positions:
+                current_cv = _apply_needspace_fixes(current_cv, cv_orphan_positions)
+                fixes_applied.append(
+                    f"Added \\\\needspace before {len(cv_orphan_positions)} "
+                    f"orphaned \\\\cventry entr(y/ies)"
+                )
+
+                # If we have both orphan issues AND page count issues, try \\enlargethispage
+                if cv_pages is not None and cv_pages > 2 and not enlargethispage_applied["cv"]:
+                    current_cv = _apply_enlargethispage_fix(current_cv, "cv")
+                    enlargethispage_applied["cv"] = True
+                    fixes_applied.append("Added \\\\enlargethispage to CV")
+            elif cv_pages is not None and cv_pages > 2 and not enlargethispage_applied["cv"]:
+                # Try \\enlargethispage for borderline page overflow
+                current_cv = _apply_enlargethispage_fix(current_cv, "cv")
+                enlargethispage_applied["cv"] = True
+                fixes_applied.append("Added \\\\enlargethispage to CV")
+
+            # Cover letter fixes
+            if cover_pages is not None and cover_pages != 1 and not enlargethispage_applied["cover"]:
+                current_cover = _apply_enlargethispage_fix(current_cover, "cover_letter")
+                enlargethispage_applied["cover"] = True
+                fixes_applied.append("Added \\\\enlargethispage to cover letter")
+
+            iter_record.fixes_applied = fixes_applied
+            logger.info(
+                f"Iteration {iteration + 1}: {len(issues)} issue(s), "
+                f"applied {len(fixes_applied)} fix(es). Recompiling..."
+            )
+
+        # ── Step 10: Build final result ─────────────────────────────────
+        success = all(
+            i.severity != IssueSeverity.ERROR
+            for iter_rec in iterations
+            for i in iter_rec.issues
+        )
+
+        # Run ATS check on final CV if provided
+        if ats_check_fn and final_cv_pdf and final_cv_pdf.exists():
+            try:
+                ats_result = await ats_check_fn(final_cv_pdf)
+                # ATS check failed — add as a warning, not blocking
+                # model_dump() is the canonical Pydantic v2 API for BaseModel serialization
+                ats_dict = ats_result if isinstance(ats_result, dict) else ats_result.model_dump()
+                if ats_dict.get("pass_ats", False) is False:
+                    if ats_dict.get("has_cid_markers"):
+                        issues.append(
+                            CompilationIssue(
+                                category=IssueCategory.CID_MARKERS,
+                                severity=IssueSeverity.WARNING,
+                                document="cv",
+                                description=(
+                                    "CID (cid:*) glyph markers found in PDF — "
+                                    "ATS systems may not extract text correctly."
+                                ),
+                            )
+                        )
+            except Exception as e:
+                logger.warning(f"ATS check in compilation loop failed (non-blocking): {e}")
+
+        # Gather final unresolved issues (warnings only at this point)
+        all_issues: list[CompilationIssue] = []
+        for iter_rec in iterations:
+            for issue in iter_rec.issues:
+                if issue not in all_issues:
+                    all_issues.append(issue)
+
+        return CompileResult(
+            success=success,
+            cv_pdf_path=str(final_cv_pdf) if final_cv_pdf else None,
+            cover_pdf_path=str(final_cover_pdf) if final_cover_pdf else None,
+            cv_pages=iter_record.cv_pages,
+            cover_pages=iter_record.cover_pages,
+            iterations=iterations,
+            total_iterations=len(iterations),
+            final_issues=[i for i in all_issues if i.severity != IssueSeverity.ERROR],
+            cv_latex=current_cv,
+            cover_latex=current_cover,
+        )

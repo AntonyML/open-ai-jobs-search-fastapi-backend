@@ -19,7 +19,7 @@ from app.services.orchestrator.execution_queue import ExecutionQueue
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.rank import ALGORITHM_VERSION, PROMPT_VERSION
 
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 # ── Queue instance (shared with orchestrator) ───────────────────────
@@ -30,10 +30,10 @@ def _get_queue() -> ExecutionQueue:
 
 
 async def start(
-    db_factory,
-    user_id: str,
-    payload: dict[str, Any],
-    idempotency_key: str | None = None,
+        db_factory,
+        user_id: str,
+        payload: dict[str, Any],
+        idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Start a ranking run and enqueue items for the worker.
 
@@ -55,128 +55,84 @@ async def start(
     Returns:
         Dict with job_id, status, total_jobs, accepted_jobs.
     """
-    queue = _get_queue()
-    re_rank = payload.get("re_rank", False)
-    max_jobs = payload.get("max_jobs")
+    with bind_context(pipeline_stage="rank"):
+        queue = _get_queue()
+        re_rank = payload.get("re_rank", False)
+        max_jobs = payload.get("max_jobs")
 
-    # ── All DB operations in a single session (7→1 consolidation) ──
-    async with db_factory() as db:
-        # 1. Idempotency check (early return if hit)
-        if idempotency_key:
-            existing = await db.execute(
-                select(ExecutionJob).where(
-                    ExecutionJob.idempotency_key == idempotency_key
+        # ── All DB operations in a single session (7→1 consolidation) ──
+        async with db_factory() as db:
+            # 1. Idempotency check (early return if hit)
+            if idempotency_key:
+                existing = await db.execute(
+                    select(ExecutionJob).where(
+                        ExecutionJob.idempotency_key == idempotency_key
+                    )
                 )
+                existing_job = existing.scalar_one_or_none()
+                if existing_job is not None:
+                    logger.info(
+                        "Idempotency key %s hit — returning existing job %s",
+                        idempotency_key, existing_job.id,
+                    )
+                    return {
+                        "job_id": existing_job.id,
+                        "status": existing_job.status,
+                        "total_jobs": 0,
+                        "accepted_jobs": 0,
+                        "message": "Idempotency hit — job already exists.",
+                    }
+
+            # 2. Load candidate profile + count unranked jobs
+            cand_result = await db.execute(
+                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
             )
-            existing_job = existing.scalar_one_or_none()
-            if existing_job is not None:
-                logger.info(
-                    "Idempotency key %s hit — returning existing job %s",
-                    idempotency_key, existing_job.id,
+            candidate = cand_result.scalar_one_or_none()
+            profile_snapshot = {
+                "skills": candidate.skills if candidate else {},
+                "experience": candidate.experience if candidate else [],
+                "location": candidate.location if candidate else None,
+                "constraints": candidate.constraints if candidate else None,
+                "job_target": candidate.job_target if candidate else {},
+            }
+
+            query = select(JobPosting).where(JobPosting.user_id == user_id)
+            if not re_rank:
+                query = query.where(
+                    or_(
+                        JobPosting.status == "new",
+                        JobPosting.rank_score.is_(None),
+                    )
                 )
+            query = query.order_by(JobPosting.created_at.desc())
+            if max_jobs is not None:
+                query = query.limit(max_jobs)
+            result = await db.execute(query)
+            jobs = list(result.scalars().all())
+            total_jobs = len(jobs)
+
+            if total_jobs == 0:
                 return {
-                    "job_id": existing_job.id,
-                    "status": existing_job.status,
+                    "job_id": None,
+                    "status": "skipped",
                     "total_jobs": 0,
                     "accepted_jobs": 0,
-                    "message": "Idempotency hit — job already exists.",
+                    "message": "No unranked jobs found.",
                 }
 
-        # 2. Load candidate profile + count unranked jobs
-        cand_result = await db.execute(
-            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-        )
-        candidate = cand_result.scalar_one_or_none()
-        profile_snapshot = {
-            "skills": candidate.skills if candidate else {},
-            "experience": candidate.experience if candidate else [],
-            "location": candidate.location if candidate else None,
-            "constraints": candidate.constraints if candidate else None,
-            "job_target": candidate.job_target if candidate else {},
-        }
-
-        query = select(JobPosting).where(JobPosting.user_id == user_id)
-        if not re_rank:
-            query = query.where(
-                or_(
-                    JobPosting.status == "new",
-                    JobPosting.rank_score.is_(None),
-                )
-            )
-        query = query.order_by(JobPosting.created_at.desc())
-        if max_jobs is not None:
-            query = query.limit(max_jobs)
-        result = await db.execute(query)
-        jobs = list(result.scalars().all())
-        total_jobs = len(jobs)
-
-        if total_jobs == 0:
-            return {
-                "job_id": None,
-                "status": "skipped",
-                "total_jobs": 0,
-                "accepted_jobs": 0,
-                "message": "No unranked jobs found.",
-            }
-
-        # 3. Verify no other active rank job exists
-        existing_active = await db.execute(
-            select(ExecutionJob).where(
-                ExecutionJob.user_id == user_id,
-                ExecutionJob.pipeline == "rank",
-                ExecutionJob.status.in_(["queued", "running"]),
-            )
-        )
-        active_job = existing_active.scalar_one_or_none()
-        if active_job is not None:
-            logger.info(
-                "Active rank job %s already exists for user %s — returning it",
-                active_job.id, user_id,
-            )
-            return {
-                "job_id": active_job.id,
-                "status": active_job.status,
-                "total_jobs": total_jobs,
-                "accepted_jobs": 0,
-                "message": f"Rank run already in progress (job {active_job.id}).",
-            }
-
-        # 4. Enqueue (creates ExecutionJob + commits internally)
-        try:
-            job_id, execution_job = await queue.enqueue(
-                db=db,
-                user_id=user_id,
-                pipeline="rank",
-                description=(
-                    f"Rank run: focus={payload.get('focus_area', 'all')}, "
-                    f"re_rank={re_rank}, jobs={total_jobs}"
-                ),
-                group_id=None,
-                messages=None,
-                output_schema="RankResult",
-                max_retries=1,
-                checkpoint_data={
-                    "payload": payload,
-                    "profile_snapshot": profile_snapshot,
-                    "algorithm_version": ALGORITHM_VERSION,
-                    "prompt_version": PROMPT_VERSION,
-                },
-            )
-        except IntegrityError:
-            # Race condition: another request snuck in an active job
-            await db.rollback()
-            recovered = await db.execute(
+            # 3. Verify no other active rank job exists
+            existing_active = await db.execute(
                 select(ExecutionJob).where(
                     ExecutionJob.user_id == user_id,
                     ExecutionJob.pipeline == "rank",
                     ExecutionJob.status.in_(["queued", "running"]),
                 )
             )
-            active_job = recovered.scalar_one_or_none()
+            active_job = existing_active.scalar_one_or_none()
             if active_job is not None:
                 logger.info(
-                    "Deduplicated concurrent rank job for user %s — returning existing %s",
-                    user_id, active_job.id,
+                    "Active rank job %s already exists for user %s — returning it",
+                    active_job.id, user_id,
                 )
                 return {
                     "job_id": active_job.id,
@@ -185,47 +141,92 @@ async def start(
                     "accepted_jobs": 0,
                     "message": f"Rank run already in progress (job {active_job.id}).",
                 }
-            raise
 
-        # 5. Set idempotency key + create items in a single new transaction
-        #    (enqueue already committed, so autobegin starts a new transaction)
-        if idempotency_key:
-            db_job = await db.get(ExecutionJob, job_id)
-            if db_job is not None:
-                db_job.idempotency_key = idempotency_key
+            # 4. Enqueue (creates ExecutionJob + commits internally)
+            try:
+                job_id, execution_job = await queue.enqueue(
+                    db=db,
+                    user_id=user_id,
+                    pipeline="rank",
+                    description=(
+                        f"Rank run: focus={payload.get('focus_area', 'all')}, "
+                        f"re_rank={re_rank}, jobs={total_jobs}"
+                    ),
+                    group_id=None,
+                    messages=None,
+                    output_schema="RankResult",
+                    max_retries=1,
+                    checkpoint_data={
+                        "payload": payload,
+                        "profile_snapshot": profile_snapshot,
+                        "algorithm_version": ALGORITHM_VERSION,
+                        "prompt_version": PROMPT_VERSION,
+                    },
+                )
+            except IntegrityError:
+                # Race condition: another request snuck in an active job
+                await db.rollback()
+                recovered = await db.execute(
+                    select(ExecutionJob).where(
+                        ExecutionJob.user_id == user_id,
+                        ExecutionJob.pipeline == "rank",
+                        ExecutionJob.status.in_(["queued", "running"]),
+                    )
+                )
+                active_job = recovered.scalar_one_or_none()
+                if active_job is not None:
+                    logger.info(
+                        "Deduplicated concurrent rank job for user %s — returning existing %s",
+                        user_id, active_job.id,
+                    )
+                    return {
+                        "job_id": active_job.id,
+                        "status": active_job.status,
+                        "total_jobs": total_jobs,
+                        "accepted_jobs": 0,
+                        "message": f"Rank run already in progress (job {active_job.id}).",
+                    }
+                raise
 
-        items = []
-        for job in jobs:
-            item = ExecutionJobItem(
-                execution_job_id=job_id,
-                job_posting_id=job.id,
-                user_id=user_id,
-                status="queued",
-                locked_until=None,
-            )
-            db.add(item)
-            items.append(item)
+            # 5. Set idempotency key + create items in a single new transaction
+            #    (enqueue already committed, so autobegin starts a new transaction)
+            if idempotency_key:
+                db_job = await db.get(ExecutionJob, job_id)
+                if db_job is not None:
+                    db_job.idempotency_key = idempotency_key
 
-        await db.commit()
+            items = []
+            for job in jobs:
+                item = ExecutionJobItem(
+                    execution_job_id=job_id,
+                    job_posting_id=job.id,
+                    user_id=user_id,
+                    status="queued",
+                    locked_until=None,
+                )
+                db.add(item)
+                items.append(item)
 
-        # 6. pg_notify (same session, best-effort)
-        try:
-            await db.execute(text("SELECT pg_notify('job_queued', '')"))
             await db.commit()
-        except Exception:
-            logger.debug("pg_notify failed (non-critical)")
 
-    logger.info(
-        "Rank job %s enqueued | %d items for %d total jobs",
-        job_id, len(items), total_jobs,
-    )
+            # 6. pg_notify (same session, best-effort)
+            try:
+                await db.execute(text("SELECT pg_notify('job_queued', '')"))
+                await db.commit()
+            except Exception:
+                logger.debug("pg_notify failed (non-critical)")
 
-    return {
-        "job_id": job_id,
-        "status": "queued",
-        "total_jobs": total_jobs,
-        "accepted_jobs": len(items),
-    }
+        logger.info(
+            "Rank job %s enqueued | %d items for %d total jobs",
+            job_id, len(items), total_jobs,
+        )
+
+        return {
+            "job_id": job_id,
+            "status": "queued",
+            "total_jobs": total_jobs,
+            "accepted_jobs": len(items),
+        }
 
 
 async def get(job_id: str, user_id: str | None = None) -> dict[str, Any] | None:

@@ -28,7 +28,7 @@ from app.schemas.ats_check import ATSResult
 if TYPE_CHECKING:
     from app.db.models import CandidateProfile, JobPosting
 
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 # ── Regular expressions ─────────────────────────────────────────────
@@ -297,80 +297,62 @@ async def check_ats_parseability(
     job_posting: JobPosting,
     candidate: CandidateProfile | None = None,
 ) -> ATSResult:
-    """Run full ATS parseability check on a compiled PDF.
+    """Run full ATS parseability check on a compiled PDF."""
+    with bind_context(pipeline_stage="ats_check"):
+        logger.info("Starting ATS check | pdf=%s", pdf_path)
+        # ── Step 1: Extract text ────────────────────────────────────────
+        raw_text = await _extract_pdf_text(pdf_path)
 
-    Performs the following checks in order:
-    1. Extract text via pdftotext -layout
-    2. Check for CID (cid:*) glyph markers
-    3. Verify email, phone, and name as extractable text
-    4. Check keyword coverage against job posting
-    5. Detect column scrambling in reading order
+        if raw_text is None:
+            return ATSResult(
+                raw_text=None,
+                has_cid_markers=False,
+                has_email=False,
+                has_phone=False,
+                has_candidate_name=False,
+                keyword_coverage=0.0,
+                found_keywords=[],
+                missing_keywords=[],
+                reading_order_ok=True,
+                pass_ats=False,
+            )
 
-    If pdftotext is not available, returns a result with ``pass_ats=False``
-    and a warning note in ``raw_text``. Does NOT raise or block the pipeline.
+        # ── Step 2: CID markers ─────────────────────────────────────────
+        has_cid = _check_cid_markers(raw_text)
 
-    Args:
-        pdf_path: Path to the compiled PDF file.
-        job_posting: The JobPosting ORM object (for keyword extraction).
-        candidate: Optional CandidateProfile (for email/phone/name checks).
+        # ── Step 3: Contact info as literal text ────────────────────────
+        candidate_email = candidate.email if candidate else None
+        candidate_phone = candidate.phone if candidate else None
+        candidate_name = candidate.full_name if candidate else None
 
-    Returns:
-        ATSResult with all check outcomes and overall verdict.
-    """
-    # ── Step 1: Extract text ────────────────────────────────────────
-    raw_text = await _extract_pdf_text(pdf_path)
+        has_email = _check_email(raw_text, candidate_email)
+        has_phone = _check_phone(raw_text, candidate_phone)
+        has_name = _check_candidate_name(raw_text, candidate_name)
 
-    if raw_text is None:
-        # pdftotext not available — return soft fail
+        # ── Step 4: Keyword coverage ────────────────────────────────────
+        coverage, found_keywords, missing_keywords = _check_keywords(raw_text, job_posting)
+
+        # ── Step 5: Reading order ───────────────────────────────────────
+        reading_order_ok = not _detect_column_scramble(raw_text)
+
+        # ── Step 6: Overall verdict ─────────────────────────────────────
+        critical_checks = [
+            not has_cid,
+            coverage >= _KEYWORD_COVERAGE_THRESHOLD,
+            has_email,
+            has_name,
+        ]
+        pass_ats = all(critical_checks)
+
         return ATSResult(
-            raw_text=None,
-            has_cid_markers=False,
-            has_email=False,
-            has_phone=False,
-            has_candidate_name=False,
-            keyword_coverage=0.0,
-            found_keywords=[],
-            missing_keywords=[],
-            reading_order_ok=True,
-            pass_ats=False,
+            raw_text=raw_text[:500],
+            has_cid_markers=has_cid,
+            has_email=has_email,
+            has_phone=has_phone,
+            has_candidate_name=has_name,
+            keyword_coverage=round(coverage, 2),
+            found_keywords=found_keywords[:30],
+            missing_keywords=missing_keywords[:30],
+            reading_order_ok=reading_order_ok,
+            pass_ats=pass_ats,
         )
-
-    # ── Step 2: CID markers ─────────────────────────────────────────
-    has_cid = _check_cid_markers(raw_text)
-
-    # ── Step 3: Contact info as literal text ────────────────────────
-    candidate_email = candidate.email if candidate else None
-    candidate_phone = candidate.phone if candidate else None
-    candidate_name = candidate.full_name if candidate else None
-
-    has_email = _check_email(raw_text, candidate_email)
-    has_phone = _check_phone(raw_text, candidate_phone)
-    has_name = _check_candidate_name(raw_text, candidate_name)
-
-    # ── Step 4: Keyword coverage ────────────────────────────────────
-    coverage, found_keywords, missing_keywords = _check_keywords(raw_text, job_posting)
-
-    # ── Step 5: Reading order ───────────────────────────────────────
-    reading_order_ok = not _detect_column_scramble(raw_text)
-
-    # ── Step 6: Overall verdict ─────────────────────────────────────
-    critical_checks = [
-        not has_cid,                # No CID markers
-        coverage >= _KEYWORD_COVERAGE_THRESHOLD,  # Sufficient keyword coverage
-        has_email,                   # Email is extractable
-        has_name,                    # Name is extractable
-    ]
-    pass_ats = all(critical_checks)
-
-    return ATSResult(
-        raw_text=raw_text[:500],  # Truncate to avoid bloating DB
-        has_cid_markers=has_cid,
-        has_email=has_email,
-        has_phone=has_phone,
-        has_candidate_name=has_name,
-        keyword_coverage=round(coverage, 2),
-        found_keywords=found_keywords[:30],
-        missing_keywords=missing_keywords[:30],
-        reading_order_ok=reading_order_ok,
-        pass_ats=pass_ats,
-    )

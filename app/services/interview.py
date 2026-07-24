@@ -31,7 +31,7 @@ from app.db.models import (
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.services.apply import compile_latex  # noqa: F401  — re-export for tests/callers
 from app.llm.adapter import llm_completion_structured
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 from app.schemas.interview import (
     CompanyResearchLLMOutput,
     CompanyResearchOut,
@@ -611,13 +611,13 @@ Return ONLY valid JSON matching LogisticsLLMOutput schema.
 
 
 async def execute_interview_prep(
-    db: AsyncSession,
-    user_id: str,
-    application_id: str,
-    stage: str,
-    interview_date: str | None = None,
-    interview_format: str | None = None,
-    interviewer_names: list[str] | None = None,
+        db: AsyncSession,
+        user_id: str,
+        application_id: str,
+        stage: str,
+        interview_date: str | None = None,
+        interview_format: str | None = None,
+        interviewer_names: list[str] | None = None,
 ) -> InterviewPrep:
     """Execute the full interview preparation workflow.
 
@@ -633,97 +633,98 @@ async def execute_interview_prep(
     Returns:
         The created InterviewPrep record
     """
-    # 1. Load application + related data
-    app_result = await db.execute(
-        select(Application)
-        .where(Application.id == application_id)
-        .where(Application.user_id == user_id)
-    )
-    application = app_result.scalar_one_or_none()
-    if application is None:
-        raise NotFoundError("Application not found.")
+    with bind_context(pipeline_stage="interview"):
+        # 1. Load application + related data
+        app_result = await db.execute(
+            select(Application)
+            .where(Application.id == application_id)
+            .where(Application.user_id == user_id)
+        )
+        application = app_result.scalar_one_or_none()
+        if application is None:
+            raise NotFoundError("Application not found.")
 
-    # 2. Load job posting
-    job_result = await db.execute(
-        select(JobPosting).where(JobPosting.id == application.job_posting_id)
-    )
-    job = job_result.scalar_one_or_none()
-    if job is None:
-        raise NotFoundError("Job posting not found.")
+        # 2. Load job posting
+        job_result = await db.execute(
+            select(JobPosting).where(JobPosting.id == application.job_posting_id)
+        )
+        job = job_result.scalar_one_or_none()
+        if job is None:
+            raise NotFoundError("Job posting not found.")
 
-    # 3. Load candidate profile
-    candidate_result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-    )
-    candidate = candidate_result.scalar_one_or_none()
-    if candidate is None:
-        raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
+        # 3. Load candidate profile
+        candidate_result = await db.execute(
+            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        )
+        candidate = candidate_result.scalar_one_or_none()
+        if candidate is None:
+            raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
-    # 4. Load rank evaluation
-    eval_result = await db.execute(
-        select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
-    )
-    evaluation = eval_result.scalar_one_or_none()
+        # 4. Load rank evaluation
+        eval_result = await db.execute(
+            select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
+        )
+        evaluation = eval_result.scalar_one_or_none()
 
-    # 5. Load STAR examples
-    star_result = await db.execute(
-        select(StarExample).where(StarExample.candidate_id == candidate.id)
-    )
-    star_examples = list(star_result.scalars().all())
+        # 5. Load STAR examples
+        star_result = await db.execute(
+            select(StarExample).where(StarExample.candidate_id == candidate.id)
+        )
+        star_examples = list(star_result.scalars().all())
 
-    # 6. Company research
-    company_research = await _do_company_research(candidate, job, application)
+        # 6. Company research
+        company_research = await _do_company_research(candidate, job, application)
 
-    # 7. Likely questions
-    likely_questions = await _do_likely_questions(candidate, job, application, evaluation, stage)
+        # 7. Likely questions
+        likely_questions = await _do_likely_questions(candidate, job, application, evaluation, stage)
 
-    # 8. STAR mapping
-    star_mapping = await _do_star_mapping(candidate, job, likely_questions, star_examples)
+        # 8. STAR mapping
+        star_mapping = await _do_star_mapping(candidate, job, likely_questions, star_examples)
 
-    # 9. New STAR drafts for unmapped questions
-    mapped_question_texts = {m["question"] for m in star_mapping}
-    unmapped = [q for q in likely_questions if q["question"] not in mapped_question_texts]
-    new_star_drafts = await _do_new_star_drafts(candidate, job, unmapped)
+        # 9. New STAR drafts for unmapped questions
+        mapped_question_texts = {m["question"] for m in star_mapping}
+        unmapped = [q for q in likely_questions if q["question"] not in mapped_question_texts]
+        new_star_drafts = await _do_new_star_drafts(candidate, job, unmapped)
 
-    # 10. Consistency brief
-    consistency_brief = await _do_consistency_brief(application)
+        # 10. Consistency brief
+        consistency_brief = await _do_consistency_brief(application)
 
-    # 11. Tough questions
-    tough_questions = await _do_tough_questions(candidate, job, evaluation, stage)
+        # 11. Tough questions
+        tough_questions = await _do_tough_questions(candidate, job, evaluation, stage)
 
-    # 12. Questions to ask
-    questions_to_ask = await _do_questions_to_ask(candidate, job, company_research, stage)
+        # 12. Questions to ask
+        questions_to_ask = await _do_questions_to_ask(candidate, job, company_research, stage)
 
-    # 13. Logistics
-    logistics = await _do_logistics(stage, interview_format, interview_date, interviewer_names)
+        # 13. Logistics
+        logistics = await _do_logistics(stage, interview_format, interview_date, interviewer_names)
 
-    # 14. Conversation hooks from company research
-    conversation_hooks = _extract_conversation_hooks(company_research)
+        # 14. Conversation hooks from company research
+        conversation_hooks = _extract_conversation_hooks(company_research)
 
-    # 15. Create InterviewPrep record
-    prep = InterviewPrep(
-        user_id=user_id,
-        application_id=application_id,
-        stage=stage,
-        interview_date=interview_date,
-        interview_format=interview_format,
-        interviewer_names=interviewer_names,
-        company_research=company_research,
-        conversation_hooks=conversation_hooks,
-        likely_questions=likely_questions,
-        star_mapping=star_mapping,
-        new_star_drafts=new_star_drafts,
-        consistency_brief=consistency_brief,
-        tough_questions=tough_questions,
-        questions_to_ask=questions_to_ask,
-        logistics=logistics,
-        raw_response={},
-    )
-    db.add(prep)
-    await db.commit()
-    await db.refresh(prep)
+        # 15. Create InterviewPrep record
+        prep = InterviewPrep(
+            user_id=user_id,
+            application_id=application_id,
+            stage=stage,
+            interview_date=interview_date,
+            interview_format=interview_format,
+            interviewer_names=interviewer_names,
+            company_research=company_research,
+            conversation_hooks=conversation_hooks,
+            likely_questions=likely_questions,
+            star_mapping=star_mapping,
+            new_star_drafts=new_star_drafts,
+            consistency_brief=consistency_brief,
+            tough_questions=tough_questions,
+            questions_to_ask=questions_to_ask,
+            logistics=logistics,
+            raw_response={},
+        )
+        db.add(prep)
+        await db.commit()
+        await db.refresh(prep)
 
-    return prep
+        return prep
 
 
 # ── Helper functions for each step ─────────────────────────────────

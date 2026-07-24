@@ -26,7 +26,7 @@ from app.schemas.rank import RankQualitativeOutput, RankResult, RankedJobOut
 from app.schemas.scrape import JobPostingSummary
 from app.services.provider_credentials import get_user_active_provider_config
 from app.services.salary import service as salary_service
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -231,156 +231,157 @@ async def execute_rank(
     3. SAVE — 1 sesión batch: upsert evaluations + job statuses
     ────────────────────────────────────────────────────────────
     """
-    # ── Phase 1: LOAD (single short session) ─────────────────
-    async with db_factory() as db:
-        candidate = await _get_candidate_profile(db, user_id)
-        provider_config = await get_user_active_provider_config(db, user_id)
+    with bind_context(pipeline_stage="rank"):
+        # ── Phase 1: LOAD (single short session) ─────────────────
+        async with db_factory() as db:
+            candidate = await _get_candidate_profile(db, user_id)
+            provider_config = await get_user_active_provider_config(db, user_id)
 
-        jobs = await _select_jobs_to_rank(db, user_id, focus_area, re_rank, max_jobs=max_jobs)
-        if not jobs:
+            jobs = await _select_jobs_to_rank(db, user_id, focus_area, re_rank, max_jobs=max_jobs)
+            if not jobs:
+                return RankResult(
+                    ranked_count=0, shortlist=[], below_threshold=0,
+                    expired_or_vetoed=0, message="No new jobs to rank.",
+                )
+
+            existing_evals = {
+                ev.job_posting_id: ev
+                for ev in (
+                    await db.execute(
+                        select(RankEvaluation).where(
+                            RankEvaluation.job_posting_id.in_([j.id for j in jobs])
+                        )
+                    )
+                ).scalars().all()
+            }
+
+        # ── Phase 2: RANK (pure computation + LLM, 0 DB queries) ──
+        ranked_results: list[dict[str, Any]] = []
+        failed_jobs = 0
+
+        for index, job in enumerate(jobs, start=1):
+            logger.info("Evaluating job %d/%d: %s", index, len(jobs), job.id)
+            try:
+                ev_data = await _rank_single_job(
+                    candidate=candidate,
+                    job=job,
+                    provider_config=provider_config,
+                    user_id=user_id,
+                    existing_evaluation=existing_evals.get(job.id),
+                )
+                ranked_results.append(ev_data)
+                logger.info("Finished job %d/%d: %s", index, len(jobs), job.id)
+            except LLMError as exc:
+                failed_jobs += 1
+                logger.warning("LLM ranking failed for job %s: %s", job.id, exc)
+                continue
+
+        if not ranked_results:
             return RankResult(
                 ranked_count=0, shortlist=[], below_threshold=0,
-                expired_or_vetoed=0, message="No new jobs to rank.",
+                expired_or_vetoed=0, message="All jobs failed.",
             )
 
-        existing_evals = {
-            ev.job_posting_id: ev
-            for ev in (
-                await db.execute(
-                    select(RankEvaluation).where(
-                        RankEvaluation.job_posting_id.in_([j.id for j in jobs])
-                    )
+        # ── Phase 3: SAVE (single batch session) ──────────────────
+        async with db_factory() as db:
+            saved_evaluations: list[tuple[JobPosting, RankEvaluation]] = []
+            for ev_data in ranked_results:
+                job = await db.get(JobPosting, ev_data["job_id"])
+                cand = await db.get(CandidateProfile, candidate.id)
+                evaluation = await _build_rank_evaluation(
+                    db=db, candidate=cand, job=job,
+                    user_id=user_id,
+                    quantitative=ev_data["quantitative"],
+                    llm_output=ev_data["llm_output"],
+                    provider_config=provider_config,
+                    existing_evaluation=ev_data.get("existing_evaluation"),
+                    technical_score=ev_data["technical_score"],
+                    experience_score=ev_data["experience_score"],
+                    behavioral_score=ev_data["behavioral_score"],
+                    career_score=ev_data["career_score"],
+                    overall=ev_data["overall"],
+                    verdict=ev_data["verdict"],
+                    location_status=ev_data["location_status"],
+                    deadline=ev_data.get("deadline"),
+                    deadline_urgent=ev_data["deadline_urgent"],
+                    strengths=ev_data.get("strengths"),
+                    gaps=ev_data.get("gaps"),
+                    missing_keywords=ev_data.get("missing_keywords"),
+                    red_flags=ev_data.get("red_flags"),
+                    language=ev_data.get("language") or job.language,
+                    technical_fit=ev_data.get("quantitative", {}).get("technical_fit"),
+                    relevant_experience=ev_data.get("quantitative", {}).get("relevant_experience"),
+                    constraints_fit=ev_data.get("quantitative", {}).get("constraints_fit"),
+                    career_alignment=ev_data.get("quantitative", {}).get("career_alignment"),
+                    behavioral_fit=ev_data.get("quantitative", {}).get("behavioral_fit"),
                 )
-            ).scalars().all()
-        }
+                job.status = "ranked"
+                job.rank_score = evaluation.overall_score
+                job.rank_verdict = evaluation.verdict
+                job.rank_date = datetime.now(timezone.utc)
+                saved_evaluations.append((job, evaluation))
 
-    # ── Phase 2: RANK (pure computation + LLM, 0 DB queries) ──
-    ranked_results: list[dict[str, Any]] = []
-    failed_jobs = 0
-
-    for index, job in enumerate(jobs, start=1):
-        logger.info("Evaluating job %d/%d: %s", index, len(jobs), job.id)
-        try:
-            ev_data = await _rank_single_job(
-                candidate=candidate,
-                job=job,
-                provider_config=provider_config,
-                user_id=user_id,
-                existing_evaluation=existing_evals.get(job.id),
+            # Sort for shortlist
+            saved_evaluations.sort(
+                key=lambda x: (x[1].overall_score, x[1].deadline_urgent),
+                reverse=True,
             )
-            ranked_results.append(ev_data)
-            logger.info("Finished job %d/%d: %s", index, len(jobs), job.id)
-        except LLMError as exc:
-            failed_jobs += 1
-            logger.warning("LLM ranking failed for job %s: %s", job.id, exc)
-            continue
 
-    if not ranked_results:
+            # Salary benchmarks
+            salary_available = False
+            salary_company_count = 0
+            salary_data = None
+            try:
+                salary_data = await salary_service.get_user_salary_data(db, user_id)
+                salary_available = salary_data is not None
+                salary_company_count = len(salary_data.get("companies", [])) if salary_data else 0
+            except Exception as exc:
+                logger.debug("Salary data unavailable for user %s: %s", user_id, exc)
+
+            shortlist = []
+            below_threshold = 0
+            expired_or_vetoed = 0
+            for job, eval_ in saved_evaluations:
+                salary_benchmark = None
+                if salary_available and job.company:
+                    try:
+                        salary_benchmark = await salary_service.benchmark_job(
+                            db=db, user_id=user_id,
+                            salary_data=salary_data,
+                            company_name=job.company,
+                            job_title=job.title,
+                            job_location=job.location,
+                        )
+                    except Exception as exc:
+                        logger.debug("Salary lookup failed for %s: %s", job.company, exc)
+
+                if eval_.location_status == "FAIL":
+                    expired_or_vetoed += 1
+                elif len(shortlist) < top_n:
+                    shortlist.append(
+                        RankedJobOut(
+                            job=JobPostingSummary.model_validate(job),
+                            evaluation=eval_,
+                            salary=salary_benchmark,
+                        )
+                    )
+                elif eval_.overall_score < 30:
+                    below_threshold += 1
+                else:
+                    expired_or_vetoed += 1
+
+            await db.commit()
+
+        logger.info("Successful: %d, failed: %d", len(ranked_results), failed_jobs)
         return RankResult(
-            ranked_count=0, shortlist=[], below_threshold=0,
-            expired_or_vetoed=0, message="All jobs failed.",
+            ranked_count=len(ranked_results),
+            shortlist=shortlist,
+            below_threshold=below_threshold,
+            expired_or_vetoed=expired_or_vetoed,
+            message=f"Ranked {len(ranked_results)} jobs. Top {len(shortlist)} in shortlist. {failed_jobs} failed.",
+            salary_data_available=salary_available,
+            salary_data_company_count=salary_company_count,
         )
-
-    # ── Phase 3: SAVE (single batch session) ──────────────────
-    async with db_factory() as db:
-        saved_evaluations: list[tuple[JobPosting, RankEvaluation]] = []
-        for ev_data in ranked_results:
-            job = await db.get(JobPosting, ev_data["job_id"])
-            cand = await db.get(CandidateProfile, candidate.id)
-            evaluation = await _build_rank_evaluation(
-                db=db, candidate=cand, job=job,
-                user_id=user_id,
-                quantitative=ev_data["quantitative"],
-                llm_output=ev_data["llm_output"],
-                provider_config=provider_config,
-                existing_evaluation=ev_data.get("existing_evaluation"),
-                technical_score=ev_data["technical_score"],
-                experience_score=ev_data["experience_score"],
-                behavioral_score=ev_data["behavioral_score"],
-                career_score=ev_data["career_score"],
-                overall=ev_data["overall"],
-                verdict=ev_data["verdict"],
-                location_status=ev_data["location_status"],
-                deadline=ev_data.get("deadline"),
-                deadline_urgent=ev_data["deadline_urgent"],
-                strengths=ev_data.get("strengths"),
-                gaps=ev_data.get("gaps"),
-                missing_keywords=ev_data.get("missing_keywords"),
-                red_flags=ev_data.get("red_flags"),
-                language=ev_data.get("language") or job.language,
-                technical_fit=ev_data.get("quantitative", {}).get("technical_fit"),
-                relevant_experience=ev_data.get("quantitative", {}).get("relevant_experience"),
-                constraints_fit=ev_data.get("quantitative", {}).get("constraints_fit"),
-                career_alignment=ev_data.get("quantitative", {}).get("career_alignment"),
-                behavioral_fit=ev_data.get("quantitative", {}).get("behavioral_fit"),
-            )
-            job.status = "ranked"
-            job.rank_score = evaluation.overall_score
-            job.rank_verdict = evaluation.verdict
-            job.rank_date = datetime.now(timezone.utc)
-            saved_evaluations.append((job, evaluation))
-
-        # Sort for shortlist
-        saved_evaluations.sort(
-            key=lambda x: (x[1].overall_score, x[1].deadline_urgent),
-            reverse=True,
-        )
-
-        # Salary benchmarks
-        salary_available = False
-        salary_company_count = 0
-        salary_data = None
-        try:
-            salary_data = await salary_service.get_user_salary_data(db, user_id)
-            salary_available = salary_data is not None
-            salary_company_count = len(salary_data.get("companies", [])) if salary_data else 0
-        except Exception as exc:
-            logger.debug("Salary data unavailable for user %s: %s", user_id, exc)
-
-        shortlist = []
-        below_threshold = 0
-        expired_or_vetoed = 0
-        for job, eval_ in saved_evaluations:
-            salary_benchmark = None
-            if salary_available and job.company:
-                try:
-                    salary_benchmark = await salary_service.benchmark_job(
-                        db=db, user_id=user_id,
-                        salary_data=salary_data,
-                        company_name=job.company,
-                        job_title=job.title,
-                        job_location=job.location,
-                    )
-                except Exception as exc:
-                    logger.debug("Salary lookup failed for %s: %s", job.company, exc)
-
-            if eval_.location_status == "FAIL":
-                expired_or_vetoed += 1
-            elif len(shortlist) < top_n:
-                shortlist.append(
-                    RankedJobOut(
-                        job=JobPostingSummary.model_validate(job),
-                        evaluation=eval_,
-                        salary=salary_benchmark,
-                    )
-                )
-            elif eval_.overall_score < 30:
-                below_threshold += 1
-            else:
-                expired_or_vetoed += 1
-
-        await db.commit()
-
-    logger.info("Successful: %d, failed: %d", len(ranked_results), failed_jobs)
-    return RankResult(
-        ranked_count=len(ranked_results),
-        shortlist=shortlist,
-        below_threshold=below_threshold,
-        expired_or_vetoed=expired_or_vetoed,
-        message=f"Ranked {len(ranked_results)} jobs. Top {len(shortlist)} in shortlist. {failed_jobs} failed.",
-        salary_data_available=salary_available,
-        salary_data_company_count=salary_company_count,
-    )
 
 
 async def _get_candidate_profile(db: AsyncSession, user_id: str) -> CandidateProfile:

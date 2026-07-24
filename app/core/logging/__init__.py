@@ -11,7 +11,7 @@ import logging
 
 from app.core.logging.config import LoggingConfig
 from app.core.logging.handlers import build_all_handlers
-from app.core.logging.context import bind_context, log_context
+from app.core.logging.context import bind_context
 
 _config: LoggingConfig | None = None
 

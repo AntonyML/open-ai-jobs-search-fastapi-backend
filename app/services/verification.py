@@ -30,7 +30,7 @@ from app.llm.adapter import llm_completion_structured, get_provider_kwargs
 from app.schemas.ats_check import ATSResult
 from app.schemas.verification import LlmContentCheckOutput, VerificationCheck, VerificationResult
 from app.services import ats_check
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 
 logger = get_logger(__name__)
 
@@ -39,13 +39,13 @@ logger = get_logger(__name__)
 
 
 async def run_verification_checklist(
-    application: Application,
-    candidate: CandidateProfile | None,
-    job_posting: JobPosting,
-    cv_latex: str | None = None,
-    cover_letter_latex: str | None = None,
-    cv_pdf_path: str | Path | None = None,
-    provider_config: dict | None = None,
+        application: Application,
+        candidate: CandidateProfile | None,
+        job_posting: JobPosting,
+        cv_latex: str | None = None,
+        cover_letter_latex: str | None = None,
+        cv_pdf_path: str | Path | None = None,
+        provider_config: dict | None = None,
 ) -> VerificationResult:
     """Run the complete verification checklist on generated documents.
 
@@ -62,119 +62,120 @@ async def run_verification_checklist(
         VerificationResult with ALL checks, their outcomes, and a
         summary. Never raises — all failures are captured in the result.
     """
-    # Resolve from DB if not provided
-    if cv_latex is None and application.draft_cv_tex:
-        cv_latex = application.draft_cv_tex
-    if cv_latex is None and application.cv_tex_path:
-        try:
-            cv_latex = Path(application.cv_tex_path).read_text(encoding="utf-8")
-        except Exception:
-            pass
+    with bind_context(pipeline_stage="verify"):
+        # Resolve from DB if not provided
+        if cv_latex is None and application.draft_cv_tex:
+            cv_latex = application.draft_cv_tex
+        if cv_latex is None and application.cv_tex_path:
+            try:
+                cv_latex = Path(application.cv_tex_path).read_text(encoding="utf-8")
+            except Exception:
+                pass
 
-    if cv_latex is None:
-        cv_latex = ""
-    if cover_letter_latex is None:
-        cover_letter_latex = ""
-    if cv_pdf_path is None and application.cv_pdf_path:
-        cv_pdf_path = application.cv_pdf_path
+        if cv_latex is None:
+            cv_latex = ""
+        if cover_letter_latex is None:
+            cover_letter_latex = ""
+        if cv_pdf_path is None and application.cv_pdf_path:
+            cv_pdf_path = application.cv_pdf_path
 
-    checks: list[VerificationCheck] = []
+        checks: list[VerificationCheck] = []
 
-    # ═══════════════════════════════════════════════════════════════
-    # PASS 1: Deterministic content checks (no LLM)
-    # ═══════════════════════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════════════
+        # PASS 1: Deterministic content checks (no LLM)
+        # ═══════════════════════════════════════════════════════════════
 
-    # Candidate-dependent checks (skip gracefully if no candidate)
-    candidate_name = candidate.full_name if candidate else None
-    candidate_email = candidate.email if candidate else None
-    candidate_profile_stmt = candidate.profile_statement if candidate else None
+        # Candidate-dependent checks (skip gracefully if no candidate)
+        candidate_name = candidate.full_name if candidate else None
+        candidate_email = candidate.email if candidate else None
+        candidate_profile_stmt = candidate.profile_statement if candidate else None
 
-    # 1. Candidate name in CV
-    checks.append(_check_name_in_cv(cv_latex, candidate_name))
+        # 1. Candidate name in CV
+        checks.append(_check_name_in_cv(cv_latex, candidate_name))
 
-    # 2. Email in CV
-    checks.append(_check_email_in_cv(cv_latex, candidate_email))
+        # 2. Email in CV
+        checks.append(_check_email_in_cv(cv_latex, candidate_email))
 
-    # 3. Job role in profile statement
-    checks.append(_check_role_in_profile(cv_latex, job_posting.title, candidate_profile_stmt))
+        # 3. Job role in profile statement
+        checks.append(_check_role_in_profile(cv_latex, job_posting.title, candidate_profile_stmt))
 
-    # 4. Company name in cover letter
-    checks.append(_check_company_in_cover(cover_letter_latex, job_posting.company))
+        # 4. Company name in cover letter
+        checks.append(_check_company_in_cover(cover_letter_latex, job_posting.company))
 
-    # 5. Consistent date format
-    checks.append(_check_date_format(cv_latex))
+        # 5. Consistent date format
+        checks.append(_check_date_format(cv_latex))
 
-    # 6. Balanced LaTeX braces
-    checks.append(_check_latex_balance(cv_latex))
+        # 6. Balanced LaTeX braces
+        checks.append(_check_latex_balance(cv_latex))
 
-    # 7. No placeholders
-    checks.append(_check_no_placeholders(cv_latex, cover_letter_latex))
+        # 7. No placeholders
+        checks.append(_check_no_placeholders(cv_latex, cover_letter_latex))
 
-    # ═══════════════════════════════════════════════════════════════
-    # PASS 2: ATS parseability check (delegates to ats_check service)
-    # ═══════════════════════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════════════
+        # PASS 2: ATS parseability check (delegates to ats_check service)
+        # ═══════════════════════════════════════════════════════════════
 
-    ats_result: ATSResult | None = None
-    pdf_path_obj = Path(cv_pdf_path) if isinstance(cv_pdf_path, str) else cv_pdf_path if isinstance(cv_pdf_path, Path) else None
-    if pdf_path_obj and pdf_path_obj.exists():
-        try:
-            ats_result = await ats_check.check_ats_parseability(
-                pdf_path=pdf_path_obj,
-                job_posting=job_posting,
-                candidate=candidate,
-            )
-        except Exception as e:
-            logger.warning(f"ATS check failed during verification: {e}")
+        ats_result: ATSResult | None = None
+        pdf_path_obj = Path(cv_pdf_path) if isinstance(cv_pdf_path, str) else cv_pdf_path if isinstance(cv_pdf_path, Path) else None
+        if pdf_path_obj and pdf_path_obj.exists():
+            try:
+                ats_result = await ats_check.check_ats_parseability(
+                    pdf_path=pdf_path_obj,
+                    job_posting=job_posting,
+                    candidate=candidate,
+                )
+            except Exception as e:
+                logger.warning(f"ATS check failed during verification: {e}")
 
-    # 8. No CID markers
-    checks.append(_check_cid_markers(ats_result))
+        # 8. No CID markers
+        checks.append(_check_cid_markers(ats_result))
 
-    # 9. Email and phone as literal text in PDF
-    checks.append(_check_ats_contact(ats_result))
+        # 9. Email and phone as literal text in PDF
+        checks.append(_check_ats_contact(ats_result))
 
-    # 10. Keyword coverage ≥ 70%
-    checks.append(_check_keyword_coverage(ats_result))
+        # 10. Keyword coverage ≥ 70%
+        checks.append(_check_keyword_coverage(ats_result))
 
-    # ═══════════════════════════════════════════════════════════════
-    # PASS 3: LLM content quality check (single call)
-    # ═══════════════════════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════════════
+        # PASS 3: LLM content quality check (single call)
+        # ═══════════════════════════════════════════════════════════════
 
-    llm_checks = await _run_llm_content_checks(
-        cv_latex, cover_letter_latex,
-        job_posting, candidate,
-        provider_config,
-    )
-    checks.extend(llm_checks)
+        llm_checks = await _run_llm_content_checks(
+            cv_latex, cover_letter_latex,
+            job_posting, candidate,
+            provider_config,
+        )
+        checks.extend(llm_checks)
 
-    # ═══════════════════════════════════════════════════════════════
-    # Aggregate result
-    # ═══════════════════════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════════════
+        # Aggregate result
+        # ═══════════════════════════════════════════════════════════════
 
-    passes = [c.name for c in checks if c.passed]
-    failures = [c.name for c in checks if not c.passed]
-    warnings_list = [c.name for c in checks if c.passed and c.suggestion]
+        passes = [c.name for c in checks if c.passed]
+        failures = [c.name for c in checks if not c.passed]
+        warnings_list = [c.name for c in checks if c.passed and c.suggestion]
 
-    overall_pass = len(failures) == 0
-    pass_count = len(passes)
-    total_count = len(checks)
+        overall_pass = len(failures) == 0
+        pass_count = len(passes)
+        total_count = len(checks)
 
-    summary = (
-        f"{pass_count}/{total_count} checks passed"
-        + (f", {len(failures)} failure(s)" if failures else " — all clear!")
-        + (f", {len(llm_checks)} LLM check(s)" if llm_checks else "")
-    )
+        summary = (
+            f"{pass_count}/{total_count} checks passed"
+            + (f", {len(failures)} failure(s)" if failures else " — all clear!")
+            + (f", {len(llm_checks)} LLM check(s)" if llm_checks else "")
+        )
 
-    return VerificationResult(
-        application_id=application.id,
-        checks=checks,
-        overall_pass=overall_pass,
-        passes=passes,
-        failures=failures,
-        warnings=warnings_list,
-        ats_score=ats_result.keyword_coverage if ats_result else None,
-        summary=summary,
-        checked_at=datetime.now(timezone.utc),
-    )
+        return VerificationResult(
+            application_id=application.id,
+            checks=checks,
+            overall_pass=overall_pass,
+            passes=passes,
+            failures=failures,
+            warnings=warnings_list,
+            ats_score=ats_result.keyword_coverage if ats_result else None,
+            summary=summary,
+            checked_at=datetime.now(timezone.utc),
+        )
 
 
 # ── Individual deterministic checks ─────────────────────────────────

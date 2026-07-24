@@ -98,7 +98,7 @@ def parse_sheet(ws, sheet_label=None):
             break
 
     if header_row is None:
-        print(f"Warning: Could not find header row in sheet '{ws.title}'. Skipping.", file=sys.stderr)
+        sys.stderr.write(f"Warning: Could not find header row in sheet '{ws.title}'. Skipping." + chr(10))
         return []
 
     # Read headers
@@ -117,7 +117,7 @@ def parse_sheet(ws, sheet_label=None):
             city_col = i
 
     if company_col is None:
-        print(f"Warning: Could not find company column in sheet '{ws.title}'.", file=sys.stderr)
+        sys.stderr.write(f"Warning: Could not find company column in sheet '{ws.title}'." + chr(10))
         return []
 
     # Identify data columns (everything that's not company/city)
@@ -245,21 +245,21 @@ def main():
 
     excel_path = Path(args.excel_file)
     if not excel_path.exists():
-        print(f"Error: File not found: {excel_path}", file=sys.stderr)
+        sys.stderr.write(f"Error: File not found: {excel_path}" + chr(10))
         sys.exit(1)
 
     if openpyxl is None:
-        print("Error: openpyxl is required. Install it with: pip install openpyxl", file=sys.stderr)
+        sys.stderr.write("Error: openpyxl is required. Install it with: pip install openpyxl" + chr(10))
         sys.exit(1)
 
     output_path = Path(args.output) if args.output else Path(__file__).parent.parent / "salary_data.json"
 
-    print(f"Reading: {excel_path}")
+    sys.stdout.write(f"Reading: {excel_path}" + chr(10))
     wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
 
     all_companies = []
     for sheet_name in wb.sheetnames:
-        print(f"  Parsing sheet: {sheet_name}")
+        sys.stdout.write(f"  Parsing sheet: {sheet_name}" + chr(10))
         ws = wb[sheet_name]
         companies = parse_sheet(ws, sheet_label=sheet_name)
         all_companies.extend(companies)
@@ -267,8 +267,8 @@ def main():
     wb.close()
 
     if not all_companies:
-        print("Error: No data could be parsed from the Excel file.", file=sys.stderr)
-        print("Make sure the Excel file has a header row with a 'Company'/'Firma' column.", file=sys.stderr)
+        sys.stderr.write("Error: No data could be parsed from the Excel file." + chr(10))
+        sys.stderr.write("Make sure the Excel file has a header row with a 'Company'/'Firma' column." + chr(10))
         sys.exit(1)
 
     # Build output
@@ -285,7 +285,7 @@ def main():
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
-    print(f"\nDone! Wrote {len(all_companies)} company entries to {output_path}")
+    sys.stdout.write(f"\nDone! Wrote {len(all_companies)} company entries to {output_path}" + chr(10))
 
 
 if __name__ == "__main__":

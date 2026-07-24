@@ -420,6 +420,7 @@ class LLMOrchestrator:
             api_base: Base URL from user config.
         """
         from app.llm.adapter import _build_kwargs
+        from app.core.logging.interceptors import LLMCallLogger
 
         # Resolution order: 1) parameter passed from config, 2) settings env var
         if api_key is None:
@@ -457,7 +458,9 @@ class LLMOrchestrator:
             }
 
         try:
-            response = await acompletion(messages=messages, **kwargs)
+            llm_logger = LLMCallLogger()
+            async with llm_logger.track(provider=provider, model=model, purpose=self.__class__.__name__):
+                response = await acompletion(messages=messages, **kwargs)
             message = response.choices[0].message
             content = message.content or getattr(message, "reasoning_content", None)
             if content is None:

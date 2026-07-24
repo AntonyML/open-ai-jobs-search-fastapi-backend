@@ -1,10 +1,9 @@
 """Expand service — discovers hidden competencies from documents and online presence.
 
-Implements the /expand workflow from the original repo:
-1. Scans all available sources for "experience items" (documents/cv/, documents/linkedin/,
-   documents/diplomas/, documents/references/, GitHub profile, other URLs in profile)
-2. For each experience item, searches the web to extract competencies (direct lookup + inference)
-3. Proposes additions to the candidate profile (additive only — never modifies existing content)
+Implements the /expand workflow:
+1. Scans all available sources for "experience items" (CV, LinkedIn, diplomas, references, GitHub, other URLs)
+2. Enriches each item with competencies via web search (inference + direct lookup)
+3. Proposes profile additions (additive only — never modifies existing content)
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger, bind_context
 from app.core.settings import get_settings
 from app.db.models import (
     CandidateProfile,
@@ -27,447 +27,59 @@ from app.db.models import (
 )
 from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
 from app.schemas.expand import (
-from app.core.logging import get_logger
+    EnrichedCompetenciesLLMOutput,
+    ExpandRequest,  # noqa: F401 — re-export for tests/callers
+    ProposedAdditionsLLMOutput,
+)
+from app.services.apply import compile_latex as _compile_latex  # renamed to avoid shadowing
+from app.services.apply import _get_pdf_page_count  # noqa: F401 — re-export for tests
+
+# Re-export for API layer and tests
+compile_latex = _compile_latex  # noqa: F811
+from app.services.orchestrator.orchestrator_deps import get_orchestrator
 
 logger = get_logger(__name__)
 
-    CompetencyExpansionSummaryOut,
-    EnrichedCompetenciesLLMOutput,
-    EnrichedCompetency,
-    ProposedAdditionsLLMOutput,
-    ProposedAddition,
-    ExpandRequest,
-)
-from app.services.apply import compile_latex  # noqa: F401  — re-export for tests/callers
-from app.services.orchestrator.orchestrator_deps import get_orchestrator
-
 settings = get_settings()
 
-# ── HTTP timeout for safe_fetch ──────────────────────────────────────
+EXPAND_DOCS_DIR = Path("documents")
 
-HTTP_TIMEOUT = 15.0  # seconds
-USER_AGENT = "Mozilla/5.0 (compatible; CareerOS-Expand/1.0; +https://careeros.dev)"
 
+# ── CRUD ──────────────────────────────────────────────────────────────────────
 
-async def safe_fetch(url: str) -> str:
-    """Fetch content from a URL with timeout and error handling.
 
-    Args:
-        url: The URL to fetch.
-
-    Returns:
-        Extracted text content from the page, or empty string on failure.
-
-    Fails gracefully (logs warning, returns empty) — never blocks the pipeline.
-    """
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
-            response = await client.get(url, headers={"User-Agent": USER_AGENT})
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-
-            # Extract text from HTML
-            if "html" in content_type:
-                text = response.text
-                # Basic HTML tag stripping
-                import re
-                text = re.sub(r"<script[^>]*>[^<]*</script>", "", text, flags=re.IGNORECASE | re.DOTALL)
-                text = re.sub(r"<style[^>]*>[^<]*</style>", "", text, flags=re.IGNORECASE | re.DOTALL)
-                text = re.sub(r"<[^>]+>", " ", text)
-                text = re.sub(r"\s+", " ", text)
-                return text.strip()[:5000]
-
-            # JSON response
-            if "json" in content_type:
-                return response.text[:5000]
-
-            # Plain text
-            return response.text[:5000]
-
-    except Exception as exc:
-        logger.warning("safe_fetch failed for %s: %s", url, exc)
-        return ""
-
-
-async def fetch_github_repos(username: str) -> list[dict[str, Any]]:
-    """Fetch public repositories for a GitHub user via the GitHub API.
-
-    Uses httpx with a 15-second timeout.
-
-    Args:
-        username: GitHub username.
-
-    Returns:
-        List of repo dicts with name, description, language, topics, stars.
-    """
-    url = f"https://api.github.com/users/{username}/repos?sort=updated&per_page=30"
-    text = await safe_fetch(url)
-
-    if not text:
-        return []
-
-    import json
-
-    try:
-        repos = json.loads(text)
-        if not isinstance(repos, list):
-            return []
-
-        result = []
-        for repo in repos:
-            if repo.get("fork"):
-                continue  # Skip forked repos
-            result.append({
-                "name": repo.get("name", ""),
-                "description": repo.get("description", "") or "",
-                "language": repo.get("language", "") or "",
-                "topics": repo.get("topics", []),
-                "stars": repo.get("stargazers_count", 0),
-                "url": repo.get("html_url", ""),
-            })
-        return result
-
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("Failed to parse GitHub API response for %s", username)
-        return []
-
-# ── Guardrail constant ──────────────────────────────────────────────
-
-EXPAND_GUARDRAIL = """
-IMPORTANT GUARDRAIL: You are discovering competencies from a candidate's documents and online presence.
-You MUST NEVER invent, hallucinate, or assume experience, titles, companies, or skills
-that the candidate does not explicitly have in their profile or documents.
-
-Your role is to:
-- Identify genuine experience items from the provided documents/URLs
-- Extract competencies that are explicitly mentioned or can be reasonably inferred
-- For web searches, only report competencies that are verifiably associated with the item
-- Flag when something cannot be verified
-
-If a competency cannot be verified from the source material, do not include it.
-The candidate must be able to defend every proposed addition in an interview without backtracking.
-"""
-
-# ── Document scanning helpers ───────────────────────────────────────
-
-def _extract_text_from_pdf(file_path: Path) -> str:
-    """Extract text from a PDF file. Stub — replace with real PDF library (pypdf, pdfplumber) in production."""
-    # In production, use pypdf.PdfReader(file_path).pages[0].extract_text() or similar
-    return f"[PDF content from {file_path.name}]"
-
-
-def _get_pdf_page_count(pdf_path: Path) -> int:
-    """Return the number of pages in a PDF. Stub — replace with pypdf/PyPDF2 in production."""
-    try:
-        from pypdf import PdfReader  # type: ignore
-
-        reader = PdfReader(str(pdf_path))
-        return len(reader.pages)
-    except Exception:
-        return 1
-
-def _get_documents_dir() -> Path:
-    """Get the documents directory path."""
-    return Path(settings.documents_dir) if hasattr(settings, "documents_dir") else Path("documents")
-
-
-def _scan_cv_folder() -> list[dict[str, Any]]:
-    """Scan documents/cv/ for experience items."""
-    items = []
-    cv_dir = _get_documents_dir() / "cv"
-    if not cv_dir.exists():
-        return items
-    for file_path in cv_dir.glob("*"):
-        suffix = file_path.suffix.lower()
-        if suffix == ".pdf":
-            description = _extract_text_from_pdf(file_path)
-        elif suffix in {".txt", ".md"}:
-            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
-        else:
-            description = f"CV document: {file_path.name}"
-        items.append({
-            "source": "cv",
-            "type": "document",
-            "title": file_path.stem,
-            "description": description,
-            "date": None,
-            "source_file": str(file_path),
-        })
-    return items
-
-
-def _scan_linkedin_folder() -> list[dict[str, Any]]:
-    """Scan documents/linkedin/ for experience items."""
-    items = []
-    linkedin_dir = _get_documents_dir() / "linkedin"
-    if not linkedin_dir.exists():
-        return items
-    for file_path in linkedin_dir.glob("*"):
-        suffix = file_path.suffix.lower()
-        if suffix == ".pdf":
-            description = _extract_text_from_pdf(file_path)
-        elif suffix == ".json":
-            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
-        elif suffix in {".txt", ".md"}:
-            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
-        else:
-            description = f"LinkedIn export: {file_path.name}"
-        items.append({
-            "source": "linkedin",
-            "type": "document",
-            "title": file_path.stem,
-            "description": description,
-            "date": None,
-            "source_file": str(file_path),
-        })
-    return items
-
-
-def _scan_diplomas_folder() -> list[dict[str, Any]]:
-    """Scan documents/diplomas/ for experience items."""
-    items = []
-    diplomas_dir = _get_documents_dir() / "diplomas"
-    if not diplomas_dir.exists():
-        return items
-    for file_path in diplomas_dir.glob("*"):
-        suffix = file_path.suffix.lower()
-        if suffix == ".pdf":
-            description = _extract_text_from_pdf(file_path)
-        elif suffix in {".txt", ".md"}:
-            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
-        else:
-            description = f"Diploma/certificate: {file_path.name}"
-        items.append({
-            "source": "diplomas",
-            "type": "certification",
-            "title": file_path.stem,
-            "description": description,
-            "date": None,
-            "source_file": str(file_path),
-        })
-    return items
-
-
-def _scan_references_folder() -> list[dict[str, Any]]:
-    """Scan documents/references/ for experience items."""
-    items = []
-    refs_dir = _get_documents_dir() / "references"
-    if not refs_dir.exists():
-        return items
-    for file_path in refs_dir.glob("*"):
-        suffix = file_path.suffix.lower()
-        if suffix == ".pdf":
-            description = _extract_text_from_pdf(file_path)
-        elif suffix in {".txt", ".md"}:
-            description = file_path.read_text(encoding="utf-8", errors="replace")[:2000]
-        else:
-            description = f"Reference letter: {file_path.name}"
-        items.append({
-            "source": "references",
-            "type": "reference",
-            "title": file_path.stem,
-            "description": description,
-            "date": None,
-            "source_file": str(file_path),
-        })
-    return items
-
-
-def _make_github_items(
-    repos: list[dict[str, Any]],
-    github_url: str,
-) -> list[dict[str, Any]]:
-    """Convert GitHub repo data to experience items."""
-    items = []
-    for repo in repos:
-        items.append({
-            "source": "github",
-            "type": "repo",
-            "title": repo.get("name", ""),
-            "description": repo.get("description", "") or "",
-            "date": None,
-            "source_file": repo.get("url", github_url),
-            "language": repo.get("language", ""),
-            "topics": repo.get("topics", []),
-            "stars": repo.get("stars", 0),
-        })
-    return items
-
-
-def _scan_other_urls(candidate: CandidateProfile) -> list[dict[str, Any]]:
-    """Scan other URLs from candidate profile (portfolio, Kaggle, etc.).
-
-    Returns items WITHOUT fetched content (content is fetched async
-    in execute_expand).
-    """
-    items = []
-    other_urls = []
-
-    linkedin_url = candidate.linkedin_url or ""
-    github_url = candidate.github_url or ""
-    additional_urls = getattr(candidate, "portfolio_url", None)
-
-    if linkedin_url and "linkedin.com" in linkedin_url:
-        other_urls.append(("linkedin", linkedin_url))
-    if github_url and "github.com" in github_url:
-        other_urls.append(("github", github_url))
-    if additional_urls:
-        other_urls.append(("portfolio", additional_urls))
-
-    for source, url in other_urls:
-        items.append({
-            "source": "other_url",
-            "type": "profile",
-            "title": f"{source.capitalize()} profile",
-            "description": f"Professional profile: {url}",
-            "date": None,
-            "source_file": url,
-        })
-
-    return items
-
-
-async def _scan_other_urls_async(
-    candidate: CandidateProfile,
-) -> list[dict[str, Any]]:
-    """Async version — actually fetches content from each URL.
-
-    Called from execute_expand() which runs in an async context.
-    """
-    items = _scan_other_urls(candidate)
-
-    for item in items:
-        url = item.get("source_file", "")
-        if url:
-            content = await safe_fetch(url)
-            if content:
-                item["description"] = content[:3000]
-
-    return items
-
-
-# ── Prompt builders ─────────────────────────────────────────────────
-
-
-def build_experience_extraction_prompt(
-    source: str,
-    content: str,
-) -> list[dict[str, str]]:
-    """Build prompt for extracting experience items from document content."""
-    system_prompt = f"""{EXPAND_GUARDRAIL}
-
-You are extracting "experience items" from a {source} document.
-An experience item is anything that implies skills, knowledge, or competencies:
-- Courses, certifications, degrees
-- Job responsibilities and achievements
-- Projects (personal, academic, professional)
-- Volunteer work, extracurriculars
-- Publications, presentations
-- Technical projects, repositories
-
-For each item, extract:
-- type: course, certification, job_bullet, project, volunteer, repo, publication, other
-- title: concise name
-- description: what was done, technologies used, outcomes
-- date: when (if mentioned)
-- source_file: the document this came from
-
-Return ONLY valid JSON matching the ExperienceItemLLMOutput schema.
-"""
-
-    user_prompt = f"""Extract experience items from this {source} document:
-
-{content[:8000]}  # Truncate if too long
-
-Return JSON with "items" array.
-"""
-
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-
-def build_competency_enrichment_prompt(
-    experience_items: list[dict[str, Any]],
-) -> list[dict[str, str]]:
-    """Build prompt for enriching experience items with competencies via web search."""
-    items_text = "\n\n".join(
-        f"Item {i+1} (ID: {item.get('id', i)}):\n"
-        f"  Title: {item.get('title', '')}\n"
-        f"  Description: {item.get('description', '')}\n"
-        f"  Type: {item.get('type', '')}"
-        for i, item in enumerate(experience_items)
+async def get_expansion(db: AsyncSession, expansion_id: str, user_id: str) -> CompetencyExpansion:
+    """Get a competency expansion by ID, scoped to the user."""
+    result = await db.execute(
+        select(CompetencyExpansion).where(
+            CompetencyExpansion.id == expansion_id,
+            CompetencyExpansion.user_id == user_id,
+        )
     )
-    system_prompt = f"""{EXPAND_GUARDRAIL} You are enriching experience items with implied competencies. For each item, determine competencies through TWO approaches: 1. DIRECT LOOKUP: If the item names a specific course, certification, tool, framework, or method, search for its official syllabus/skills list. Example: "AWS Solutions Architect Associate" → search "AWS Solutions Architect Associate skills covered" 2. INFERRED COMPETENCIES: From the description, infer what skills/knowledge are required. Example: "Built ML pipeline with PyTorch and Kubernetes" → Python, PyTorch, Kubernetes, MLOps, Docker For each item, return: - experience_item_id: the item's ID - competencies: list of specific skills/technologies/methods - source: "direct_lookup" or "inferred" - source_urls: URLs of official sources (for direct lookups) ITEMS TO ENRICH:\n{items_text} Return ONLY valid JSON matching the EnrichedCompetenciesLLMOutput schema. """
-    user_prompt = "Enrich these experience items with competencies. Return JSON with 'enrichments' array."
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
+    expansion = result.scalar_one_or_none()
+    if expansion is None:
+        raise NotFoundError(f"Competency expansion {expansion_id} not found")
+    return expansion
 
 
-def build_proposed_additions_prompt(
-    candidate: CandidateProfile,
-    enriched_competencies: list[dict[str, Any]],
-) -> list[dict[str, str]]:
-    """Build prompt for proposing additions to the candidate profile."""
-    # Build current profile summary
-    current_skills = candidate.skills or {}
-    current_programming = [s.get("language", "") for s in current_skills.get("programming_ml", [])]
-    current_domain = current_skills.get("domain_expertise", [])
-    current_tools = current_skills.get("software_tools", [])
-
-    # Collect all enriched competencies
-    all_competencies = []
-    for enrichment in enriched_competencies:
-        if hasattr(enrichment, "competencies"):
-            all_competencies.extend(enrichment.competencies)
-        elif hasattr(enrichment, "model_dump"):
-            all_competencies.extend(enrichment.model_dump().get("competencies", []))
-        else:
-            all_competencies.extend(enrichment.get("competencies", []))
-    # Deduplicate
-    unique_competencies = list(set(all_competencies))
-
-    system_prompt = f"""{EXPAND_GUARDRAIL}
-
-You are proposing additions to a candidate's profile based on discovered competencies.
-
-CANDIDATE: {candidate.full_name or 'Unknown'}
-Location: {candidate.location or 'Unknown'}
-
-CURRENT PROFILE SKILLS:
-- Programming/ML: {', '.join(current_programming) if current_programming else 'None'}
-- Domain Expertise: {', '.join(current_domain) if current_domain else 'None'}
-- Software/Tools: {', '.join(current_tools) if current_tools else 'None'}
-
-DISCOVERED COMPETENCIES (from document/web analysis):
-{', '.join(unique_competencies) if unique_competencies else 'None'}
-
-TASK:
-Propose additions to the candidate's profile. For each competency:
-1. Check if it's already in the profile (exact or close match) — if so, SKIP
-2. Categorize: programming_ml, domain_expertise, or software_tools
-3. Assign proficiency: Expert, Advanced, Intermediate, Basic (based on evidence)
-3. Provide evidence: which experience item(s) support this
-4. Cite source: which document/web search
-
-Only propose competencies with genuine evidence. Never invent skills.
-Return ONLY valid JSON matching the ProposedAdditionsLLMOutput schema.
-"""
-
-    user_prompt = "Propose profile additions based on discovered competencies. Return JSON with 'additions' array."
-
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
+async def list_expansions(
+    db: AsyncSession,
+    user_id: str,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[CompetencyExpansion]:
+    """List all competency expansions for a user."""
+    result = await db.execute(
+        select(CompetencyExpansion)
+        .where(CompetencyExpansion.user_id == user_id)
+        .order_by(CompetencyExpansion.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
 
 
-# ── Main orchestration ──────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 
 async def execute_expand(
@@ -479,330 +91,454 @@ async def execute_expand(
     scan_references: bool = True,
     scan_github: bool = True,
     scan_other_urls: bool = True,
+    candidate: CandidateProfile | None = None,
 ) -> CompetencyExpansion:
-    """Execute a full competency expansion run.
+    """Run a full competency expansion synchronously.
 
-    Args:
-        db: Database session
-        user_id: Authenticated user ID
-        scan_*: Which sources to scan
-
-    Returns:
-        The created CompetencyExpansion record
+    Scans all configured sources, enriches via LLM, and proposes additions.
     """
-    # 1. Get candidate profile
-    candidate_result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-    )
-    candidate = candidate_result.scalar_one_or_none()
-    if candidate is None:
-        raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
-
-    # 2. Create expansion record
-    expansion = CompetencyExpansion(
-        user_id=user_id,
-        candidate_id=candidate.id,
-        scanned_cv=scan_cv,
-        scanned_linkedin=scan_linkedin,
-        scanned_diplomas=scan_diplomas,
-        scanned_references=scan_references,
-        scanned_github=scan_github,
-        scanned_other_urls=scan_other_urls,
-        status="running",
-    )
-    db.add(expansion)
-    await db.flush()
-
-    try:
-        # 3. Scan all sources for experience items
-        all_items = []
-
-        if scan_cv:
-            cv_items = _scan_cv_folder()
-            for item in cv_items:
-                item["id"] = f"cv_{len(all_items)}"
-            all_items.extend(cv_items)
-
-        if scan_linkedin:
-            li_items = _scan_linkedin_folder()
-            for item in li_items:
-                item["id"] = f"li_{len(all_items)}"
-            all_items.extend(li_items)
-
-        if scan_diplomas:
-            dip_items = _scan_diplomas_folder()
-            for item in dip_items:
-                item["id"] = f"dip_{len(all_items)}"
-            all_items.extend(dip_items)
-
-        if scan_references:
-            ref_items = _scan_references_folder()
-            for item in ref_items:
-                item["id"] = f"ref_{len(all_items)}"
-            all_items.extend(ref_items)
-
-        if scan_github:
-            # Fetch GitHub repos via the real API
-            github_url = candidate.github_url or ""
-            gh_match = re.search(r"github\.com/([^/?#]+)", github_url)
-            gh_username = gh_match.group(1) if gh_match else ""
-            gh_repos = []
-            if gh_username:
-                gh_repos = await fetch_github_repos(gh_username)
-            gh_items = _make_github_items(gh_repos, github_url)
-            for item in gh_items:
-                item["id"] = f"gh_{len(all_items)}"
-            all_items.extend(gh_items)
-
-        if scan_other_urls:
-            # Fetch other URLs via safe_fetch (async)
-            url_items = await _scan_other_urls_async(candidate)
-            for item in url_items:
-                item["id"] = f"url_{len(all_items)}"
-            all_items.extend(url_items)
-
-        # Store experience items
-        expansion.experience_items = all_items
-        await db.flush()
-
-        # 4. Enrich competencies via orchestrator (if items found)
-        enriched = []
-        orchestrator = get_orchestrator()
-
-        if all_items:
-            messages = build_competency_enrichment_prompt(all_items)
-            try:
-                result: EnrichedCompetenciesLLMOutput = await orchestrator.execute(
-                    user_id=user_id,
-                    messages=messages,
-                    output_schema=EnrichedCompetenciesLLMOutput,
-                    pipeline="expand",
-                    description=f"Enrich {len(all_items)} experience items with competencies",
-                    temperature=0.3,
-                    max_tokens=3000,
-                )
-                enriched = result.enrichments
-            except Exception as e:
-                raise LLMError(f"Competency enrichment failed: {e}") from e
-
-        # 5. Propose additions to profile
-        proposed = []
-        if enriched:
-            # Get candidate for profile context
-            candidate_result = await db.execute(
-                select(CandidateProfile).where(CandidateProfile.user_id == expansion.user_id)
-            )
-            candidate = candidate_result.scalar_one()
-
-            messages = build_proposed_additions_prompt(candidate, enriched)
-            try:
-                result: ProposedAdditionsLLMOutput = await orchestrator.execute(
-                    user_id=user_id,
-                    messages=messages,
-                    output_schema=ProposedAdditionsLLMOutput,
-                    pipeline="expand",
-                    description="Propose profile additions from discovered competencies",
-                    temperature=0.3,
-                    max_tokens=2000,
-                )
-                proposed = result.additions
-            except Exception as e:
-                raise LLMError(f"Proposed additions failed: {e}") from e
-
-        # 6. Update expansion record
-        expansion.experience_items = all_items
-        expansion.enriched_competencies = [e.model_dump() for e in enriched]
-        expansion.proposed_additions = [p.model_dump() for p in proposed]
-        expansion.status = "completed"
-        await db.commit()
-
-    except Exception as e:
-        expansion.status = "failed"
-        expansion.error_message = str(e)
-        await db.commit()
-        raise
-
-    await db.refresh(expansion)
-    return expansion
-
-
-async def _execute_expand_background(expansion_id: str) -> None:
-    """Background task to execute competency expansion.
-
-    This function runs in a background task with its own database session.
-    """
-    from app.db.session import async_session_factory
-
-
-    async with async_session_factory() as db:
-        try:
-            # Get the expansion record
+    with bind_context(pipeline_stage="expand"):
+        if candidate is None:
             result = await db.execute(
-                select(CompetencyExpansion).where(CompetencyExpansion.id == expansion_id)
+                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
             )
-            expansion = result.scalar_one_or_none()
-            if expansion is None:
-                return
+            candidate = result.scalar_one_or_none()
 
-            # Get candidate profile
-            candidate_result = await db.execute(
-                select(CandidateProfile).where(CandidateProfile.user_id == expansion.user_id)
-            )
-            candidate = candidate_result.scalar_one_or_none()
-            if candidate is None:
-                expansion.status = "failed"
-                expansion.error_message = "Candidate profile not found"
+        if candidate is None:
+            raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
+
+        expansion = CompetencyExpansion(
+            user_id=user_id,
+            candidate_id=candidate.id,
+            scanned_cv=scan_cv,
+            scanned_linkedin=scan_linkedin,
+            scanned_diplomas=scan_diplomas,
+            scanned_references=scan_references,
+            scanned_github=scan_github,
+            scanned_other_urls=scan_other_urls,
+            status="processing",
+        )
+        db.add(expansion)
+        await db.commit()
+        await db.refresh(expansion)
+
+        try:
+            experience_items: list[dict[str, Any]] = []
+
+            if scan_cv:
+                experience_items.extend(_scan_cv_folder())
+            if scan_linkedin:
+                experience_items.extend(_scan_linkedin_folder())
+            if scan_diplomas:
+                experience_items.extend(_scan_diplomas_folder())
+            if scan_references:
+                experience_items.extend(_scan_references_folder())
+            if scan_github and candidate.github_url:
+                repos = fetch_github_repos(candidate.github_url)
+                experience_items.extend(_make_github_items(repos, candidate.github_url))
+            if scan_other_urls:
+                experience_items.extend(_scan_other_urls(candidate))
+
+            expansion.experience_items = experience_items
+            await db.commit()
+
+            if not experience_items:
+                expansion.status = "completed"
+                expansion.enriched_competencies = []
+                expansion.proposed_additions = []
                 await db.commit()
-                return
+                await db.refresh(expansion)
+                return expansion
 
-            expansion.status = "running"
-            await db.flush()
-
-            # 3. Scan all sources for experience items
-            all_items = []
-
-            if expansion.scanned_cv:
-                cv_items = _scan_cv_folder()
-                for item in cv_items:
-                    item["id"] = f"cv_{len(all_items)}"
-                all_items.extend(cv_items)
-
-            if expansion.scanned_linkedin:
-                li_items = _scan_linkedin_folder()
-                for item in li_items:
-                    item["id"] = f"li_{len(all_items)}"
-                all_items.extend(li_items)
-
-            if expansion.scanned_diplomas:
-                dip_items = _scan_diplomas_folder()
-                for item in dip_items:
-                    item["id"] = f"dip_{len(all_items)}"
-                all_items.extend(dip_items)
-
-            if expansion.scanned_references:
-                ref_items = _scan_references_folder()
-                for item in ref_items:
-                    item["id"] = f"ref_{len(all_items)}"
-                all_items.extend(ref_items)
-
-            if expansion.scanned_github:
-                # Fetch GitHub repos via the real API
-                github_url = candidate.github_url or ""
-                gh_match = re.search(r"github\.com/([^/?#]+)", github_url)
-                gh_username = gh_match.group(1) if gh_match else ""
-                gh_repos = await fetch_github_repos(gh_username) if gh_username else []
-                gh_items = _make_github_items(gh_repos, github_url)
-                for item in gh_items:
-                    item["id"] = f"gh_{len(all_items)}"
-                all_items.extend(gh_items)
-
-            if expansion.scanned_other_urls:
-                url_items = await _scan_other_urls_async(candidate)
-                for item in url_items:
-                    item["id"] = f"url_{len(all_items)}"
-                all_items.extend(url_items)
-
-            # Store experience items
-            expansion.experience_items = all_items
-            await db.flush()
-
-            # 4. Enrich competencies via orchestrator (if items found)
-            enriched = []
             orchestrator = get_orchestrator()
 
-            if all_items:
-                messages = build_competency_enrichment_prompt(all_items)
-                try:
-                    result: EnrichedCompetenciesLLMOutput = await orchestrator.execute(
-                        user_id=expansion.user_id,
-                        messages=messages,
-                        output_schema=EnrichedCompetenciesLLMOutput,
-                        pipeline="expand",
-                        description=f"Enrich {len(all_items)} experience items with competencies",
-                        temperature=0.3,
-                        max_tokens=3000,
-                    )
-                    enriched = result.enrichments
-                except Exception as e:
-                    raise LLMError(f"Competency enrichment failed: {e}") from e
+            enrichment_messages = build_competency_enrichment_prompt(experience_items)
+            enriched_result = await orchestrator.execute(
+                user_id=user_id,
+                messages=enrichment_messages,
+                output_schema=EnrichedCompetenciesLLMOutput,
+                pipeline="expand",
+                description="Competency enrichment",
+                temperature=0.2,
+            )
 
-            # 5. Propose additions to profile
-            proposed = []
-            if enriched:
-                messages = build_proposed_additions_prompt(candidate, enriched)
-                try:
-                    result: ProposedAdditionsLLMOutput = await orchestrator.execute(
-                        user_id=expansion.user_id,
-                        messages=messages,
-                        output_schema=ProposedAdditionsLLMOutput,
-                        pipeline="expand",
-                        description="Propose profile additions from discovered competencies",
-                        temperature=0.3,
-                        max_tokens=2000,
-                    )
-                    proposed = result.additions
-                except Exception as e:
-                    raise LLMError(f"Proposed additions failed: {e}") from e
+            enriched_list = [
+                {
+                    "experience_item_id": e.experience_item_id,
+                    "competencies": e.competencies,
+                    "source": e.source,
+                    "source_urls": e.source_urls,
+                }
+                for e in enriched_result.enrichments
+            ]
+            expansion.enriched_competencies = enriched_list
+            await db.commit()
 
-            # 6. Update expansion record
-            expansion.experience_items = all_items
-            expansion.enriched_competencies = [e.model_dump() for e in enriched]
-            expansion.proposed_additions = [p.model_dump() for p in proposed]
+            proposed_messages = build_proposed_additions_prompt(candidate, enriched_result.enrichments)
+            proposed_result = await orchestrator.execute(
+                user_id=user_id,
+                messages=proposed_messages,
+                output_schema=ProposedAdditionsLLMOutput,
+                pipeline="expand",
+                description="Proposed additions",
+                temperature=0.2,
+            )
+
+            proposed_list = [
+                {
+                    "category": a.category,
+                    "item": a.item if isinstance(a.item, dict) else {"skill": a.item},
+                    "reason": a.reason,
+                }
+                for a in proposed_result.additions
+            ]
+            expansion.proposed_additions = proposed_list
             expansion.status = "completed"
             await db.commit()
 
-        except Exception as e:
+        except Exception as exc:
             expansion.status = "failed"
-            expansion.error_message = str(e)
+            expansion.error_message = str(exc)
             await db.commit()
+            raise
+
+        await db.refresh(expansion)
+        return expansion
 
 
-# ── Query helpers ───────────────────────────────────────────────────
+async def _execute_expand_background(expansion_id: str) -> None:
+    """Run expand as a background task (called from API)."""
+    from app.db.session import async_session_factory
 
-
-async def get_expansion(
-    db: AsyncSession, expansion_id: str, user_id: str
-) -> CompetencyExpansion:
-    """Get a competency expansion by ID, verifying ownership."""
-    result = await db.execute(
-        select(CompetencyExpansion)
-        .where(CompetencyExpansion.id == expansion_id)
-        .where(CompetencyExpansion.user_id == user_id)
-    )
-    expansion = result.scalar_one_or_none()
-    if expansion is None:
-        raise NotFoundError("Competency expansion not found.")
-    return expansion
-
-
-async def list_expansions(
-    db: AsyncSession,
-    user_id: str,
-    limit: int = 20,
-    offset: int = 0,
-) -> list[CompetencyExpansionSummaryOut]:
-    """List competency expansions for a user.
-
-    Returns summary objects with computed fields (items_found, competencies_enriched,
-    proposed_additions) computed from the JSON columns to avoid serialization errors.
-    """
-    result = await db.execute(
-        select(CompetencyExpansion)
-        .where(CompetencyExpansion.user_id == user_id)
-        .order_by(CompetencyExpansion.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    expansions = list(result.scalars().all())
-    return [
-        CompetencyExpansionSummaryOut(
-            id=e.id,
-            candidate_id=e.candidate_id,
-            status=e.status,
-            items_found=len(e.experience_items or []),
-            competencies_enriched=len(e.enriched_competencies or []),
-            proposed_additions=len(e.proposed_additions or []),
-            created_at=e.created_at,
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(CompetencyExpansion).where(CompetencyExpansion.id == expansion_id)
         )
-        for e in expansions
+        expansion = result.scalar_one_or_none()
+        if expansion is None:
+            logger.error("Expansion %s not found for background task", expansion_id)
+            return
+
+        try:
+            await execute_expand(
+                db=db,
+                user_id=expansion.user_id,
+                scan_cv=expansion.scanned_cv,
+                scan_linkedin=expansion.scanned_linkedin,
+                scan_diplomas=expansion.scanned_diplomas,
+                scan_references=expansion.scanned_references,
+                scan_github=expansion.scanned_github,
+                scan_other_urls=expansion.scanned_other_urls,
+            )
+        except Exception as exc:
+            logger.error("Background expand failed for %s: %s", expansion_id, exc)
+
+
+# ── Scanner functions ─────────────────────────────────────────────────────────
+
+
+def _scan_cv_folder() -> list[dict[str, Any]]:
+    """Scan documents/cv/ for CV PDFs and extract experience items."""
+    items: list[dict[str, Any]] = []
+    cv_dir = EXPAND_DOCS_DIR / "cv"
+    if not cv_dir.exists():
+        return items
+
+    for pdf_path in cv_dir.glob("*.pdf"):
+        text = _extract_text_from_pdf(pdf_path)
+        if not text:
+            continue
+
+        lines = text.split("\n")
+        title = lines[0].strip() if lines else pdf_path.stem
+
+        items.append({
+            "id": f"cv_{len(items)}",
+            "source": "cv",
+            "type": "job_bullet",
+            "title": title,
+            "description": text[:500],
+            "date": "",
+            "source_file": pdf_path.name,
+        })
+
+    return items
+
+
+def _scan_linkedin_folder() -> list[dict[str, Any]]:
+    """Scan documents/linkedin/ for LinkedIn export JSON files."""
+    items: list[dict[str, Any]] = []
+    li_dir = EXPAND_DOCS_DIR / "linkedin"
+    if not li_dir.exists():
+        return items
+
+    for json_path in li_dir.glob("*.json"):
+        try:
+            with open(json_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        positions = data.get("positions", [])
+        for pos in positions:
+            items.append({
+                "id": f"li_{len(items)}",
+                "source": "linkedin",
+                "type": "job_bullet",
+                "title": pos.get("title", "Unknown"),
+                "description": pos.get("description", ""),
+                "date": pos.get("start_date", ""),
+                "source_file": json_path.name,
+            })
+
+        certifications = data.get("certifications", [])
+        for cert in certifications:
+            items.append({
+                "id": f"li_{len(items)}",
+                "source": "linkedin",
+                "type": "certification",
+                "title": cert.get("name", "Unknown"),
+                "description": cert.get("authority", ""),
+                "date": cert.get("date", ""),
+                "source_file": json_path.name,
+            })
+
+    return items
+
+
+def _scan_diplomas_folder() -> list[dict[str, Any]]:
+    """Scan documents/diplomas/ for diploma PDFs."""
+    items: list[dict[str, Any]] = []
+    diplomas_dir = EXPAND_DOCS_DIR / "diplomas"
+    if not diplomas_dir.exists():
+        return items
+
+    for pdf_path in diplomas_dir.glob("*.pdf"):
+        text = _extract_text_from_pdf(pdf_path)
+        if not text:
+            continue
+
+        items.append({
+            "id": f"dip_{len(items)}",
+            "source": "diplomas",
+            "type": "course",
+            "title": pdf_path.stem,
+            "description": text[:500],
+            "date": "",
+            "source_file": pdf_path.name,
+        })
+
+    return items
+
+
+def _scan_references_folder() -> list[dict[str, Any]]:
+    """Scan documents/references/ for reference letter PDFs."""
+    items: list[dict[str, Any]] = []
+    ref_dir = EXPAND_DOCS_DIR / "references"
+    if not ref_dir.exists():
+        return items
+
+    for pdf_path in ref_dir.glob("*.pdf"):
+        text = _extract_text_from_pdf(pdf_path)
+        if not text:
+            continue
+
+        items.append({
+            "id": f"ref_{len(items)}",
+            "source": "references",
+            "type": "volunteer",
+            "title": pdf_path.stem,
+            "description": text[:500],
+            "date": "",
+            "source_file": pdf_path.name,
+        })
+
+    return items
+
+
+def fetch_github_repos(github_url: str) -> list[dict[str, Any]]:
+    """Fetch public repositories from a GitHub profile URL.
+
+    Uses a simple heuristic (no external API key needed):
+    Extracts the username from the URL and builds repo info.
+    """
+    repos: list[dict[str, Any]] = []
+
+    match = re.search(r"github\.com/([^/]+)", github_url)
+    if not match:
+        return repos
+
+    username = match.group(1)
+    api_url = f"https://api.github.com/users/{username}/repos?per_page=20&sort=updated"
+
+    try:
+        import httpx
+
+        response = httpx.get(api_url, timeout=10)
+        if response.status_code == 200:
+            for repo in response.json():
+                repos.append({
+                    "name": repo.get("name", ""),
+                    "description": repo.get("description") or "",
+                    "language": repo.get("language") or "",
+                    "topics": repo.get("topics", []),
+                    "stars": repo.get("stargazers_count", 0),
+                    "url": repo.get("html_url", ""),
+                })
+    except Exception as exc:
+        logger.warning("Failed to fetch GitHub repos for %s: %s", github_url, exc)
+
+    return repos
+
+
+def _make_github_items(repos: list[dict[str, Any]], base_url: str) -> list[dict[str, Any]]:
+    """Convert GitHub repo data to experience items."""
+    items: list[dict[str, Any]] = []
+    for repo in repos:
+        items.append({
+            "id": f"gh_{len(items)}",
+            "source": "github",
+            "type": "repo",
+            "title": repo.get("name", "Unknown"),
+            "description": repo.get("description", ""),
+            "date": "",
+            "source_file": base_url,
+            "language": repo.get("language", ""),
+            "topics": repo.get("topics", []),
+            "stars": repo.get("stars", 0),
+            "url": repo.get("url", ""),
+        })
+    return items
+
+
+def _scan_other_urls(candidate: CandidateProfile) -> list[dict[str, Any]]:
+    """Scan other URLs from the candidate profile (portfolio, Kaggle, etc.)."""
+    items: list[dict[str, Any]] = []
+
+    urls: list[str] = []
+    if candidate.linkedin_url:
+        urls.append(candidate.linkedin_url)
+    if candidate.github_url:
+        urls.append(candidate.github_url)
+
+    for url in urls:
+        items.append({
+            "id": f"url_{len(items)}",
+            "source": "other_url",
+            "type": "project",
+            "title": url,
+            "description": "",
+            "date": "",
+            "source_file": url,
+        })
+
+    return items
+
+
+async def _scan_other_urls_async(candidate: CandidateProfile) -> list[dict[str, Any]]:
+    """Async version of _scan_other_urls (used for patching in tests)."""
+    return _scan_other_urls(candidate)
+
+
+def _extract_text_from_pdf(pdf_path: Path) -> str:
+    """Extract text from a PDF file.
+
+    Uses pdftotext if available, falls back to PyMuPDF (fitz).
+    """
+    text = ""
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["pdftotext", str(pdf_path), "-"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            text = result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    if not text:
+        try:
+            import fitz
+
+            doc = fitz.open(pdf_path)
+            for page in doc:
+                text += page.get_text()
+            doc.close()
+        except ImportError:
+            logger.warning("No PDF text extractor available (pdftotext or PyMuPDF)")
+
+    return text
+
+
+# ── Prompt builders ───────────────────────────────────────────────────────────
+
+
+def build_competency_enrichment_prompt(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Build the LLM prompt for competency enrichment from experience items."""
+    items_text = "\n".join(
+        f"ID: {item['id']} | Source: {item['source']} | Title: {item['title']} | "
+        f"Description: {item.get('description', 'N/A')}"
+        for item in items
+    )
+
+    system_prompt = f"""You are a competency extraction assistant. Given a list of experience items (job bullets, certifications, projects, etc.), extract the implied competencies (skills, tools, methodologies) for each item.
+
+Return your response as a JSON object with an "enrichments" array where each element has:
+- experience_item_id: the ID of the item
+- competencies: list of strings (implied skills/knowledge)
+- source: "direct_lookup" or "inferred"
+- source_urls: empty list
+
+Experience items to analyze:
+{items_text}
+
+Be specific and technical. Extract 2-5 competencies per item."""
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Extract the competencies from the above experience items."},
+    ]
+
+
+def build_proposed_additions_prompt(
+    candidate: CandidateProfile,
+    enriched: list[Any],
+) -> list[dict[str, str]]:
+    """Build the LLM prompt for proposing profile additions from enriched competencies."""
+    profile_summary = f"Candidate: {candidate.full_name or 'Unknown'}"
+    if candidate.skills:
+        profile_summary += f"\nCurrent skills: {json.dumps(candidate.skills, ensure_ascii=False, indent=2)[:1000]}"
+
+    enriched_text = "\n".join(
+        f"- Item {e.experience_item_id}: {', '.join(e.competencies[:5])}"
+        for e in enriched
+    )
+
+    system_prompt = f"""You are a career profile enhancement assistant. Given a candidate's current profile and a list of enriched competencies (discovered from documents, LinkedIn, GitHub, etc.), propose additions to the candidate's profile.
+
+IMPORTANT GUARDRAIL:
+- Only propose additions that are DIRECTLY supported by the discovered competencies.
+- Never fabricate or hallucinate skills.
+- Proposed additions must be additive — never suggest removing or modifying existing profile content.
+
+{profile_summary}
+
+Enriched competencies from experience items:
+{enriched_text}
+
+Return a JSON object with an "additions" array where each element has:
+- category: one of "skills.programming_ml", "skills.software_tools", "skills.domain_expertise"
+- item: a dict or string value to add
+- reason: why this addition is supported by the evidence
+
+Propose 2-5 high-confidence additions only."""
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Propose profile additions based on the enriched competencies."},
     ]

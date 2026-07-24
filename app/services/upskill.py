@@ -22,6 +22,7 @@ from app.db.models import (
     Upskill,
 )
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
+from app.core.logging import get_logger, bind_context
 from app.llm.adapter import llm_completion_structured
 from app.schemas.upskill import (
     GapHeatmapLLMOutput,
@@ -31,6 +32,7 @@ from app.schemas.upskill import (
     UpskillSummaryOut,
 )
 
+logger = get_logger(__name__)
 settings = get_settings()
 
 # ── Guardrail constant ──────────────────────────────────────────────
@@ -276,11 +278,11 @@ Return JSON with "plan" array.
 
 
 async def execute_upskill(
-    db: AsyncSession,
-    user_id: str,
-    mode: str = "aggregate",
-    target_job_url: str | None = None,
-    target_job_posting_id: str | None = None,
+        db: AsyncSession,
+        user_id: str,
+        mode: str = "aggregate",
+        target_job_url: str | None = None,
+        target_job_posting_id: str | None = None,
 ) -> Upskill:
     """Execute a full upskill analysis run.
 
@@ -294,100 +296,101 @@ async def execute_upskill(
     Returns:
         The created Upskill record with full analysis
     """
-    # 1. Get candidate profile
-    candidate_result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-    )
-    candidate = candidate_result.scalar_one_or_none()
-    if candidate is None:
-        raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
-
-    # 2. Get candidate skills
-    candidate_skills = _extract_skills_from_profile(candidate)
-
-    # 3. Select jobs to analyze
-    if mode == "targeted" and target_job_posting_id:
-        job_result = await db.execute(
-            select(JobPosting).where(
-                JobPosting.id == target_job_posting_id,
-                JobPosting.user_id == user_id,
-            )
+    with bind_context(pipeline_stage="upskill"):
+        # 1. Get candidate profile
+        candidate_result = await db.execute(
+            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
         )
-        jobs = [job_result.scalar_one_or_none()]
-        if not jobs[0]:
-            raise NotFoundError("Target job posting not found.")
-    else:
-        # Aggregate mode: all ranked jobs for this user
-        job_result = await db.execute(
-            select(JobPosting)
-            .where(JobPosting.user_id == user_id)
-            .where(JobPosting.status == "ranked")
-            .order_by(JobPosting.rank_score.desc().nullslast())
-        )
-        jobs = list(job_result.scalars().all())
+        candidate = candidate_result.scalar_one_or_none()
+        if candidate is None:
+            raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
-    if not jobs:
-        raise NotFoundError("No ranked jobs found. Run /scrape and /rank first.")
+        # 2. Get candidate skills
+        candidate_skills = _extract_skills_from_profile(candidate)
 
-    # 4. Create upskill record
-    upskill = Upskill(
-        user_id=user_id,
-        candidate_id=candidate.id,
-        mode=mode,
-        target_job_posting_id=target_job_posting_id,
-        target_job_url=target_job_url,
-        status="running",
-    )
-    db.add(upskill)
-    await db.flush()
-
-    try:
-        # 5. Pass 1: Hard skill diff
-        job_requirements = []
-        for job in jobs:
-            eval_result = await db.execute(
-                select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
+        # 3. Select jobs to analyze
+        if mode == "targeted" and target_job_posting_id:
+            job_result = await db.execute(
+                select(JobPosting).where(
+                    JobPosting.id == target_job_posting_id,
+                    JobPosting.user_id == user_id,
+                )
             )
-            evaluation = eval_result.scalar_one_or_none()
-            fit_rating = evaluation.overall_score if evaluation else 50
+            jobs = [job_result.scalar_one_or_none()]
+            if not jobs[0]:
+                raise NotFoundError("Target job posting not found.")
+        else:
+            # Aggregate mode: all ranked jobs for this user
+            job_result = await db.execute(
+                select(JobPosting)
+                .where(JobPosting.user_id == user_id)
+                .where(JobPosting.status == "ranked")
+                .order_by(JobPosting.rank_score.desc().nullslast())
+            )
+            jobs = list(job_result.scalars().all())
 
-            job_requirements.append({
-                "id": job.id,
-                "company": job.company,
-                "title": job.title,
-                "requirements": _extract_requirements_from_job(job),
-                "fit_rating": fit_rating,
-            })
+        if not jobs:
+            raise NotFoundError("No ranked jobs found. Run /scrape and /rank first.")
 
-        hard_gaps = await _run_pass1(db, candidate_skills, job_requirements)
-        upskill.hard_skill_gaps = hard_gaps
+        # 4. Create upskill record
+        upskill = Upskill(
+            user_id=user_id,
+            candidate_id=candidate.id,
+            mode=mode,
+            target_job_posting_id=target_job_posting_id,
+            target_job_url=target_job_url,
+            status="running",
+        )
+        db.add(upskill)
         await db.flush()
 
-        # 6. Pass 2: LLM synthesis
-        job_context = "\n".join(f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements)
-        synthesized_gaps = await _run_pass2(db, candidate_skills, hard_gaps, job_context)
-        upskill.synthesized_gaps = synthesized_gaps
-        await db.flush()
+        try:
+            # 5. Pass 1: Hard skill diff
+            job_requirements = []
+            for job in jobs:
+                eval_result = await db.execute(
+                    select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
+                )
+                evaluation = eval_result.scalar_one_or_none()
+                fit_rating = evaluation.overall_score if evaluation else 50
 
-        # 7. Pass 3: Heatmap
-        heatmap = await _run_heatmap(db, hard_gaps, synthesized_gaps)
-        upskill.gap_heatmap = heatmap
-        await db.flush()
+                job_requirements.append({
+                    "id": job.id,
+                    "company": job.company,
+                    "title": job.title,
+                    "requirements": _extract_requirements_from_job(job),
+                    "fit_rating": fit_rating,
+                })
 
-        # 8. Pass 4: Learning plan
-        learning_plan = await _run_learning_plan(db, candidate, heatmap)
-        upskill.learning_plan = learning_plan
-        upskill.status = "completed"
-        await db.commit()
-        await db.refresh(upskill)
+            hard_gaps = await _run_pass1(db, candidate_skills, job_requirements)
+            upskill.hard_skill_gaps = hard_gaps
+            await db.flush()
 
-    except Exception as e:
-        upskill.status = "failed"
-        upskill.error_message = str(e)
-        await db.commit()
-        raise
+            # 6. Pass 2: LLM synthesis
+            job_context = "\n".join(f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements)
+            synthesized_gaps = await _run_pass2(db, candidate_skills, hard_gaps, job_context)
+            upskill.synthesized_gaps = synthesized_gaps
+            await db.flush()
 
-    return upskill
+            # 7. Pass 3: Heatmap
+            heatmap = await _run_heatmap(db, hard_gaps, synthesized_gaps)
+            upskill.gap_heatmap = heatmap
+            await db.flush()
+
+            # 8. Pass 4: Learning plan
+            learning_plan = await _run_learning_plan(db, candidate, heatmap)
+            upskill.learning_plan = learning_plan
+            upskill.status = "completed"
+            await db.commit()
+            await db.refresh(upskill)
+
+        except Exception as e:
+            upskill.status = "failed"
+            upskill.error_message = str(e)
+            await db.commit()
+            raise
+
+        return upskill
 
 
 async def _run_pass1(
@@ -481,9 +484,6 @@ async def _execute_upskill_background(upskill_id: str) -> None:
     This function runs in a background task with its own database session.
     """
     from app.db.session import async_session_factory
-from app.core.logging import get_logger
-
-logger = get_logger(__name__)
 
     async with async_session_factory() as db:
         try:

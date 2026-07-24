@@ -29,7 +29,7 @@ from app.schemas.outcome import (
     FunnelMetrics,
 )
 
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 # ── Status classification ───────────────────────────────────────────
@@ -57,44 +57,30 @@ async def generate_calibration_report(
     db: AsyncSession,
     user_id: str,
 ) -> CalibrationReport:
-    """Generate a full calibration report for the user.
+    """Generate a full calibration report for the user."""
+    with bind_context(pipeline_stage="calibration"):
+        logger.info("Generating calibration report | user=%s", user_id)
+        # 1. Load all outcomes with their related application + job posting + rank evaluation
+        outcomes = await _load_outcomes_with_relations(db, user_id)
+        if not outcomes:
+            raise NotFoundError("No outcomes found. Record some application outcomes first.")
 
-    Analyzes all resolved outcomes to:
-    1. Compute funnel metrics (conversion rates)
-    2. Correlate job keywords with success
-    3. Generate actionable insights
+        # 2. Compute funnel metrics
+        funnel = _compute_funnel(outcomes)
 
-    Args:
-        db: Database session
-        user_id: Authenticated user ID
+        # 3. Extract keywords from job postings and correlate with outcomes
+        top_keywords, bottom_keywords = _analyze_keywords(outcomes)
 
-    Returns:
-        CalibrationReport with funnel, keyword analysis, and insights
+        # 4. Generate insights
+        insights = _generate_insights(funnel, top_keywords, bottom_keywords, outcomes)
 
-    Raises:
-        NotFoundError: If no outcomes exist for the user
-    """
-    # 1. Load all outcomes with their related application + job posting + rank evaluation
-    outcomes = await _load_outcomes_with_relations(db, user_id)
-    if not outcomes:
-        raise NotFoundError("No outcomes found. Record some application outcomes first.")
-
-    # 2. Compute funnel metrics
-    funnel = _compute_funnel(outcomes)
-
-    # 3. Extract keywords from job postings and correlate with outcomes
-    top_keywords, bottom_keywords = _analyze_keywords(outcomes)
-
-    # 4. Generate insights
-    insights = _generate_insights(funnel, top_keywords, bottom_keywords, outcomes)
-
-    return CalibrationReport(
-        funnel=funnel,
-        top_keywords=top_keywords[:10],  # Top 10
-        bottom_keywords=bottom_keywords[:10],  # Bottom 10
-        insights=insights,
-        data_points=len(outcomes),
-    )
+        return CalibrationReport(
+            funnel=funnel,
+            top_keywords=top_keywords[:10],
+            bottom_keywords=bottom_keywords[:10],
+            insights=insights,
+            data_points=len(outcomes),
+        )
 
 
 # ── Data loading ────────────────────────────────────────────────────

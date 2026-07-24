@@ -48,7 +48,7 @@ from sqlalchemy import select, text, update, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
-from app.core.logging import get_logger, setup_logging
+from app.core.logging import get_logger, setup_logging, bind_context
 from app.core.settings import get_settings
 from app.db.models import (
     ExecutionJob,
@@ -346,82 +346,83 @@ async def _call_llm(
 
 async def _process_item(item: ExecutionJobItem) -> None:
     """Process a single ExecutionJobItem end-to-end with short sessions."""
-    # Phase 1: Load data (short session)
-    async with _worker_session_factory() as db:
-        candidate, job, provider_config, existing_eval = await _load_item_data(db, item)
+    with bind_context(worker_id=WORKER_ID, pipeline_stage="rank", job_id=str(item.job_posting_id)):
+        # Phase 1: Load data (short session)
+        async with _worker_session_factory() as db:
+            candidate, job, provider_config, existing_eval = await _load_item_data(db, item)
 
-    provider = provider_config.get("provider")
-    model = provider_config.get("model")
+        provider = provider_config.get("provider")
+        model = provider_config.get("model")
 
-    if not provider or not model:
-        raise ValueError(f"User {item.user_id} has no active LLM provider configured")
+        if not provider or not model:
+            raise ValueError(f"User {item.user_id} has no active LLM provider configured")
 
-    # Phase 2: Rank (pure computation + LLM via shared _rank_single_job)
-    async def _worker_llm(messages, output_schema, _provider_config):
-        api_key = _provider_config.get("api_key")
-        api_base = _provider_config.get("api_base")
+        # Phase 2: Rank (pure computation + LLM via shared _rank_single_job)
+        async def _worker_llm(messages, output_schema, _provider_config):
+            api_key = _provider_config.get("api_key")
+            api_base = _provider_config.get("api_base")
+            start = time_module.monotonic()
+            raw = await _call_llm(
+                messages=messages,
+                output_schema=output_schema,
+                provider=_provider_config["provider"],
+                model=_provider_config["model"],
+                api_key=api_key,
+                api_base=api_base,
+            )
+            return raw
+
         start = time_module.monotonic()
-        raw = await _call_llm(
-            messages=messages,
-            output_schema=output_schema,
-            provider=_provider_config["provider"],
-            model=_provider_config["model"],
-            api_key=api_key,
-            api_base=api_base,
-        )
-        return raw
-
-    start = time_module.monotonic()
-    ev_data = await _rank_single_job(
-        candidate=candidate,
-        job=job,
-        provider_config=provider_config,
-        user_id=item.user_id,
-        existing_evaluation=existing_eval,
-        llm_call_override=_worker_llm,
-    )
-    latency_ms = int((time_module.monotonic() - start) * 1000)
-
-    # Phase 3: Save result (short session)
-    async with _worker_session_factory() as db:
-        c = await db.merge(candidate)
-        j = await db.merge(job)
-        evaluation = await _build_rank_evaluation(
-            db=db, candidate=c, job=j,
-            user_id=item.user_id,
-            quantitative=ev_data["quantitative"],
-            llm_output=ev_data["llm_output"],
+        ev_data = await _rank_single_job(
+            candidate=candidate,
+            job=job,
             provider_config=provider_config,
-            existing_evaluation=ev_data["existing_evaluation"],
-            technical_score=ev_data["technical_score"],
-            experience_score=ev_data["experience_score"],
-            behavioral_score=ev_data["behavioral_score"],
-            career_score=ev_data["career_score"],
-            overall=ev_data["overall"],
-            verdict=ev_data["verdict"],
-            location_status=ev_data["location_status"],
-            deadline=ev_data.get("deadline"),
-            deadline_urgent=ev_data["deadline_urgent"],
-            strengths=ev_data.get("strengths"),
-            gaps=ev_data.get("gaps"),
-            missing_keywords=ev_data.get("missing_keywords"),
-            red_flags=ev_data.get("red_flags"),
-            language=ev_data.get("language") or j.language,
-            technical_fit=ev_data.get("quantitative", {}).get("technical_fit"),
-            relevant_experience=ev_data.get("quantitative", {}).get("relevant_experience"),
-            constraints_fit=ev_data.get("quantitative", {}).get("constraints_fit"),
-            career_alignment=ev_data.get("quantitative", {}).get("career_alignment"),
-            behavioral_fit=ev_data.get("quantitative", {}).get("behavioral_fit"),
+            user_id=item.user_id,
+            existing_evaluation=existing_eval,
+            llm_call_override=_worker_llm,
         )
-        await _save_result(
-            db, item, c, j, evaluation, ev_data["llm_output"],
-            provider, model, latency_ms,
-        )
+        latency_ms = int((time_module.monotonic() - start) * 1000)
 
-    logger.info(
-        "Item %s completed | job=%s score=%d verdict=%s latency=%dms",
-        item.id, job.title, ev_data["overall"], ev_data["verdict"], latency_ms,
-    )
+        # Phase 3: Save result (short session)
+        async with _worker_session_factory() as db:
+            c = await db.merge(candidate)
+            j = await db.merge(job)
+            evaluation = await _build_rank_evaluation(
+                db=db, candidate=c, job=j,
+                user_id=item.user_id,
+                quantitative=ev_data["quantitative"],
+                llm_output=ev_data["llm_output"],
+                provider_config=provider_config,
+                existing_evaluation=ev_data["existing_evaluation"],
+                technical_score=ev_data["technical_score"],
+                experience_score=ev_data["experience_score"],
+                behavioral_score=ev_data["behavioral_score"],
+                career_score=ev_data["career_score"],
+                overall=ev_data["overall"],
+                verdict=ev_data["verdict"],
+                location_status=ev_data["location_status"],
+                deadline=ev_data.get("deadline"),
+                deadline_urgent=ev_data["deadline_urgent"],
+                strengths=ev_data.get("strengths"),
+                gaps=ev_data.get("gaps"),
+                missing_keywords=ev_data.get("missing_keywords"),
+                red_flags=ev_data.get("red_flags"),
+                language=ev_data.get("language") or j.language,
+                technical_fit=ev_data.get("quantitative", {}).get("technical_fit"),
+                relevant_experience=ev_data.get("quantitative", {}).get("relevant_experience"),
+                constraints_fit=ev_data.get("quantitative", {}).get("constraints_fit"),
+                career_alignment=ev_data.get("quantitative", {}).get("career_alignment"),
+                behavioral_fit=ev_data.get("quantitative", {}).get("behavioral_fit"),
+            )
+            await _save_result(
+                db, item, c, j, evaluation, ev_data["llm_output"],
+                provider, model, latency_ms,
+            )
+
+        logger.info(
+            "Item %s completed | job=%s score=%d verdict=%s latency=%dms",
+            item.id, job.title, ev_data["overall"], ev_data["verdict"], latency_ms,
+        )
 
 
 # ── Worker loop ───────────────────────────────────────────────────────

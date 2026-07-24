@@ -28,7 +28,7 @@ from app.core.settings import get_settings
 from app.db.models import CandidateProfile, JobPosting, ScrapeRun
 from app.exceptions import ScraperError
 from app.schemas.scrape import ScraperOutput, ScraperResultItem
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 
 logger = get_logger(__name__)
 
@@ -248,19 +248,19 @@ async def _get_existing_posting_keys(
 
 
 async def execute_scrape(
-    db: AsyncSession,
-    user_id: str,
-    focus_area: str | None = None,
-    keywords: list[str] | None = None,
-    target_titles: list[str] | None = None,
-    seniority: str | None = None,
-    location: str | None = None,
-    remote: str | None = None,
-    broad: bool = False,
-    portals: list[str] | None = None,
-    jobage_days: int = 14,
-    limit_per_portal: int = 20,
-    triggered_by: str = "manual",
+        db: AsyncSession,
+        user_id: str,
+        focus_area: str | None = None,
+        keywords: list[str] | None = None,
+        target_titles: list[str] | None = None,
+        seniority: str | None = None,
+        location: str | None = None,
+        remote: str | None = None,
+        broad: bool = False,
+        portals: list[str] | None = None,
+        jobage_days: int = 14,
+        limit_per_portal: int = 20,
+        triggered_by: str = "manual",
 ) -> ScrapeRun:
     """Execute a full scrape run using the multi-source orchestrator.
 
@@ -271,130 +271,131 @@ async def execute_scrape(
     Portal results are persisted to ``job_postings``; collector results
     are stored ephemerally on the ``ScrapeRun`` record.
     """
-    # ── Enrich with profile data ───────────────────────────────
-    location_extra = location
-    remote_flag = remote
-    search_radius_km = None
-    try:
-        result = await db.execute(
-            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+    with bind_context(pipeline_stage="scrape"):
+        # ── Enrich with profile data ───────────────────────────────
+        location_extra = location
+        remote_flag = remote
+        search_radius_km = None
+        try:
+            result = await db.execute(
+                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+            )
+            profile = result.scalar_one_or_none()
+            if profile and profile.job_target:
+                jt = profile.job_target
+                if not location_extra and jt.get("search_locations"):
+                    location_extra = jt["search_locations"][0]
+                if not remote and jt.get("work_mode"):
+                    modes = jt["work_mode"]
+                    if isinstance(modes, list) and "remote" in modes:
+                        remote_flag = "remote"
+                if not search_radius_km and jt.get("search_radius_km"):
+                    search_radius_km = jt["search_radius_km"]
+        except Exception:
+            pass
+
+        # ── Decide sources via orchestrator ────────────────────────
+        from app.services.source_router import decide_sources, execute_plan
+
+        plan = decide_sources(
+            target_titles=target_titles,
+            keywords=keywords,
+            focus_area=focus_area,
+            broad=broad,
+            portals=portals,
         )
-        profile = result.scalar_one_or_none()
-        if profile and profile.job_target:
-            jt = profile.job_target
-            if not location_extra and jt.get("search_locations"):
-                location_extra = jt["search_locations"][0]
-            if not remote and jt.get("work_mode"):
-                modes = jt["work_mode"]
-                if isinstance(modes, list) and "remote" in modes:
-                    remote_flag = "remote"
-            if not search_radius_km and jt.get("search_radius_km"):
-                search_radius_km = jt["search_radius_km"]
-    except Exception:
-        pass
 
-    # ── Decide sources via orchestrator ────────────────────────
-    from app.services.source_router import decide_sources, execute_plan
+        if not plan:
+            raise ScraperError("No sources selected. Install a scraper with /add-portal.")
 
-    plan = decide_sources(
-        target_titles=target_titles,
-        keywords=keywords,
-        focus_area=focus_area,
-        broad=broad,
-        portals=portals,
-    )
-
-    if not plan:
-        raise ScraperError("No sources selected. Install a scraper with /add-portal.")
-
-    # ── Create scrape run record ───────────────────────────────
-    portal_names = sorted(
-        {p.source.name for p in plan if p.source.type == "portal"}
-    )
-    collector_names = sorted(
-        {p.source.name for p in plan if p.source.type == "collector"}
-    )
-    all_sources = portal_names + collector_names
-
-    run = ScrapeRun(
-        user_id=user_id,
-        triggered_by=triggered_by,
-        focus_area=focus_area,
-        broad=broad,
-        portals_queried=portal_names or all_sources,
-        status="running",
-        started_at=datetime.now(timezone.utc),
-    )
-    db.add(run)
-    await db.flush()
-
-    # ── Check bun availability (if any portal in plan) ─────────
-    if portal_names and not await check_bun_available():
-        run.status = "failed"
-        run.error_message = (
-            "bun is not installed or not on PATH. "
-            "Install it with: npm install -g bun"
+        # ── Create scrape run record ───────────────────────────────
+        portal_names = sorted(
+            {p.source.name for p in plan if p.source.type == "portal"}
         )
+        collector_names = sorted(
+            {p.source.name for p in plan if p.source.type == "collector"}
+        )
+        all_sources = portal_names + collector_names
+
+        run = ScrapeRun(
+            user_id=user_id,
+            triggered_by=triggered_by,
+            focus_area=focus_area,
+            broad=broad,
+            portals_queried=portal_names or all_sources,
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(run)
+        await db.flush()
+
+        # ── Check bun availability (if any portal in plan) ─────────
+        if portal_names and not await check_bun_available():
+            run.status = "failed"
+            run.error_message = (
+                "bun is not installed or not on PATH. "
+                "Install it with: npm install -g bun"
+            )
+            run.completed_at = datetime.now(timezone.utc)
+            await db.flush()
+            await db.commit()
+            raise ScraperError(
+                "bun is not installed or not on PATH. "
+                "Install it with: npm install -g bun"
+            )
+
+        # ── Execute the plan ───────────────────────────────────────
+        existing_keys = await _get_existing_posting_keys(db, user_id)
+
+        portal_results, collector_results, error_messages = await execute_plan(
+            db=db,
+            user_id=user_id,
+            plan=plan,
+            location_extra=location_extra,
+            remote_flag=remote_flag,
+            search_radius_km=search_radius_km,
+            jobage_days=jobage_days,
+            limit_per_source=limit_per_portal,
+            existing_keys=existing_keys,
+        )
+
+        # ── Persist portal results ─────────────────────────────────
+        total_found = len(portal_results) + len(collector_results)
+        total_new = 0
+        total_errors = len(error_messages)
+
+        for item in portal_results:
+            posting = JobPosting(
+                user_id=user_id,
+                portal=item["source"],
+                external_id=item.get("id") or item.get("url") or item["title"],
+                title=item["title"],
+                company=item.get("company"),
+                location=item.get("location"),
+                url=item.get("url"),
+                posting_date=item.get("date"),
+                status="new",
+                raw_data=item,
+            )
+            db.add(posting)
+            total_new += 1
+
+        # ── Update run record ──────────────────────────────────────
+        run.jobs_found = total_found
+        run.jobs_new = total_new
+        run.jobs_expired = 0
+        run.external_sources = collector_names or None
+        run.external_results = collector_results if collector_results else None
+        run.status = "completed" if total_errors == 0 else "completed_with_errors"
+        if error_messages:
+            run.error_message = "; ".join(error_messages)
         run.completed_at = datetime.now(timezone.utc)
+
         await db.flush()
         await db.commit()
-        raise ScraperError(
-            "bun is not installed or not on PATH. "
-            "Install it with: npm install -g bun"
-        )
+        await db.refresh(run)
 
-    # ── Execute the plan ───────────────────────────────────────
-    existing_keys = await _get_existing_posting_keys(db, user_id)
-
-    portal_results, collector_results, error_messages = await execute_plan(
-        db=db,
-        user_id=user_id,
-        plan=plan,
-        location_extra=location_extra,
-        remote_flag=remote_flag,
-        search_radius_km=search_radius_km,
-        jobage_days=jobage_days,
-        limit_per_source=limit_per_portal,
-        existing_keys=existing_keys,
-    )
-
-    # ── Persist portal results ─────────────────────────────────
-    total_found = len(portal_results) + len(collector_results)
-    total_new = 0
-    total_errors = len(error_messages)
-
-    for item in portal_results:
-        posting = JobPosting(
-            user_id=user_id,
-            portal=item["source"],
-            external_id=item.get("id") or item.get("url") or item["title"],
-            title=item["title"],
-            company=item.get("company"),
-            location=item.get("location"),
-            url=item.get("url"),
-            posting_date=item.get("date"),
-            status="new",
-            raw_data=item,
-        )
-        db.add(posting)
-        total_new += 1
-
-    # ── Update run record ──────────────────────────────────────
-    run.jobs_found = total_found
-    run.jobs_new = total_new
-    run.jobs_expired = 0
-    run.external_sources = collector_names or None
-    run.external_results = collector_results if collector_results else None
-    run.status = "completed" if total_errors == 0 else "completed_with_errors"
-    if error_messages:
-        run.error_message = "; ".join(error_messages)
-    run.completed_at = datetime.now(timezone.utc)
-
-    await db.flush()
-    await db.commit()
-    await db.refresh(run)
-
-    return run
+        return run
 
 
 # ── Query job postings ─────────────────────────────────────────────

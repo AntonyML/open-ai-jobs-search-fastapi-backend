@@ -22,7 +22,7 @@ from app.core.settings import get_settings
 from app.db.models import Application, Outcome
 from app.exceptions import NotFoundError
 from app.schemas.outcome import OutcomeCreate, OutcomeUpdate, TrackerRowOut
-from app.core.logging import get_logger
+from app.core.logging import get_logger, bind_context
 
 logger = get_logger(__name__)
 
@@ -99,9 +99,9 @@ def _get_tracker_fieldnames() -> list[str]:
 
 
 async def execute_outcome(
-    db: AsyncSession,
-    user_id: str,
-    payload: OutcomeCreate,
+        db: AsyncSession,
+        user_id: str,
+        payload: OutcomeCreate,
 ) -> Outcome:
     """Execute the outcome workflow.
 
@@ -113,77 +113,78 @@ async def execute_outcome(
     Returns:
         The created/updated Outcome record
     """
-    # 1. Validate status
-    _validate_status(payload.status)
+    with bind_context(pipeline_stage="outcome"):
+        # 1. Validate status
+        _validate_status(payload.status)
 
-    # 2. Load application with job_posting eagerly, verify ownership
-    app_result = await db.execute(
-        select(Application)
-        .options(selectinload(Application.job_posting))
-        .where(Application.id == payload.application_id)
-        .where(Application.user_id == user_id)
-    )
-    application = app_result.scalar_one_or_none()
-    if application is None or application.job_posting is None:
-        raise NotFoundError("Application not found.")
+        # 2. Load application with job_posting eagerly, verify ownership
+        app_result = await db.execute(
+            select(Application)
+            .options(selectinload(Application.job_posting))
+            .where(Application.id == payload.application_id)
+            .where(Application.user_id == user_id)
+        )
+        application = app_result.scalar_one_or_none()
+        if application is None or application.job_posting is None:
+            raise NotFoundError("Application not found.")
 
-    # 3. Always create a new outcome record (one per status change / progress update)
-    outcome = Outcome(
-        user_id=user_id,
-        application_id=payload.application_id,
-        status=payload.status,
-    )
-    db.add(outcome)
+        # 3. Always create a new outcome record (one per status change / progress update)
+        outcome = Outcome(
+            user_id=user_id,
+            application_id=payload.application_id,
+            status=payload.status,
+        )
+        db.add(outcome)
 
-    # 4. Update fields from payload
-    if payload.date_resolved:
-        outcome.date_resolved = payload.date_resolved
-    if payload.phone_screen_date:
-        outcome.phone_screen_date = payload.phone_screen_date
-    if payload.technical_date:
-        outcome.technical_date = payload.technical_date
-    if payload.case_date:
-        outcome.case_date = payload.case_date
-    if payload.final_round_date:
-        outcome.final_round_date = payload.final_round_date
-    if payload.offer_received_date:
-        outcome.offer_received_date = payload.offer_received_date
-    if payload.notes is not None:
-        # Store notes exactly as received, no timestamp prefix
-        outcome.notes = payload.notes
-    if payload.lessons_learned is not None:
-        outcome.lessons_learned = payload.lessons_learned
-    if payload.valued_signals is not None:
-        outcome.valued_signals = payload.valued_signals
+        # 4. Update fields from payload
+        if payload.date_resolved:
+            outcome.date_resolved = payload.date_resolved
+        if payload.phone_screen_date:
+            outcome.phone_screen_date = payload.phone_screen_date
+        if payload.technical_date:
+            outcome.technical_date = payload.technical_date
+        if payload.case_date:
+            outcome.case_date = payload.case_date
+        if payload.final_round_date:
+            outcome.final_round_date = payload.final_round_date
+        if payload.offer_received_date:
+            outcome.offer_received_date = payload.offer_received_date
+        if payload.notes is not None:
+            # Store notes exactly as received, no timestamp prefix
+            outcome.notes = payload.notes
+        if payload.lessons_learned is not None:
+            outcome.lessons_learned = payload.lessons_learned
+        if payload.valued_signals is not None:
+            outcome.valued_signals = payload.valued_signals
 
-    # 5. Set date_resolved if this is a resolution status
-    if _is_resolution(payload.status) and not outcome.date_resolved:
-        outcome.date_resolved = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # 5. Set date_resolved if this is a resolution status
+        if _is_resolution(payload.status) and not outcome.date_resolved:
+            outcome.date_resolved = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # 6. Update interview stage dates
-    if payload.phone_screen_date:
-        outcome.phone_screen_date = payload.phone_screen_date
-    if payload.technical_date:
-        outcome.technical_date = payload.technical_date
-    if payload.case_date:
-        outcome.case_date = payload.case_date
-    if payload.final_round_date:
-        outcome.final_round_date = payload.final_round_date
-    if payload.offer_received_date:
-        outcome.offer_received_date = payload.offer_received_date
+        # 6. Update interview stage dates
+        if payload.phone_screen_date:
+            outcome.phone_screen_date = payload.phone_screen_date
+        if payload.technical_date:
+            outcome.technical_date = payload.technical_date
+        if payload.case_date:
+            outcome.case_date = payload.case_date
+        if payload.final_round_date:
+            outcome.final_round_date = payload.final_round_date
+        if payload.offer_received_date:
+            outcome.offer_received_date = payload.offer_received_date
 
-    await db.flush()
-    await db.refresh(outcome)
+        await db.flush()
+        await db.refresh(outcome)
 
-    # 7. Update job_search_tracker.csv
-    await _update_tracker_csv(db, application, payload.status)
+        # 7. Update job_search_tracker.csv
+        await _update_tracker_csv(db, application, payload.status)
 
-    # 8. Archive outcome.md in documents/applications/
-    await _archive_outcome_md(application, outcome)
+        # 8. Archive outcome.md in documents/applications/
+        await _archive_outcome_md(application, outcome)
 
-    # 9. Update job posting status
-    application.job_posting.status = _map_outcome_to_job_status(payload.status)
-    return outcome
+        # 9. Update job posting status
+        application.job_posting.status = _map_outcome_to_job_status(payload.status)
+        return outcome
 
 
 async def update_outcome(

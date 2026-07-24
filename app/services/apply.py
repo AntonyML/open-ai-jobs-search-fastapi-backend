@@ -1213,437 +1213,439 @@ async def execute_apply(
     If ``application`` is provided, the pipeline updates it in-place
     (used by background task). Otherwise a new Application is created.
     """
-    # 1. Load all dependencies sequentially (async session does not support
-    #    concurrent execute() on the same session — the greenlet-based
-    #    provisioning would conflict).
-    job_res = await db.execute(
-        select(JobPosting).where(
-            JobPosting.id == job_posting_id,
-            JobPosting.user_id == user_id,
-        )
-    )
-    job = job_res.scalar_one_or_none()
-    if job is None:
-        raise NotFoundError("Job posting not found.")
+    with bind_context(pipeline_stage="apply", job_id=job_posting_id):
 
-    if rank_evaluation_id:
-        eval_res = await db.execute(
-            select(RankEvaluation).where(
-                RankEvaluation.id == rank_evaluation_id,
-                RankEvaluation.job_posting_id == job_posting_id,
+        # 1. Load all dependencies sequentially (async session does not support
+        #    concurrent execute() on the same session — the greenlet-based
+        #    provisioning would conflict).
+        job_res = await db.execute(
+            select(JobPosting).where(
+                JobPosting.id == job_posting_id,
+                JobPosting.user_id == user_id,
             )
         )
-    else:
-        eval_res = await db.execute(
-            select(RankEvaluation)
-            .where(RankEvaluation.job_posting_id == job_posting_id)
-            .order_by(RankEvaluation.created_at.desc())
-        )
-    evaluation = eval_res.scalar_one_or_none()
-    if evaluation is None:
-        raise NotFoundError("Rank evaluation not found. Run /rank first.")
+        job = job_res.scalar_one_or_none()
+        if job is None:
+            raise NotFoundError("Job posting not found.")
 
-    cand_res = await db.execute(
-        select(CandidateProfile)
-        .options(selectinload(CandidateProfile.user))
-        .where(CandidateProfile.user_id == user_id)
-    )
-    candidate = cand_res.scalar_one_or_none()
-    if candidate is None:
-        raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
+        if rank_evaluation_id:
+            eval_res = await db.execute(
+                select(RankEvaluation).where(
+                    RankEvaluation.id == rank_evaluation_id,
+                    RankEvaluation.job_posting_id == job_posting_id,
+                )
+            )
+        else:
+            eval_res = await db.execute(
+                select(RankEvaluation)
+                .where(RankEvaluation.job_posting_id == job_posting_id)
+                .order_by(RankEvaluation.created_at.desc())
+            )
+        evaluation = eval_res.scalar_one_or_none()
+        if evaluation is None:
+            raise NotFoundError("Rank evaluation not found. Run /rank first.")
 
-    # ═══════════════════════════════════════════════════════════════
-    # Create or initialize Application record for stage tracking
-    # ═══════════════════════════════════════════════════════════════
-    if application is None:
-        application = Application(
-            user_id=user_id,
-            job_posting_id=job_posting_id,
-            rank_evaluation_id=evaluation.id,
-            cv_template=cv_template,
-            cover_letter_template=cover_letter_template,
-            language=job.language or "en",
-            pipeline_stage="draft",
+        cand_res = await db.execute(
+            select(CandidateProfile)
+            .options(selectinload(CandidateProfile.user))
+            .where(CandidateProfile.user_id == user_id)
         )
-        db.add(application)
-        await db.commit()
-        await db.refresh(application)
-    else:
-        application.rank_evaluation_id = evaluation.id
-        application.cv_template = cv_template
-        application.cover_letter_template = cover_letter_template
-        application.language = job.language or "en"
+        candidate = cand_res.scalar_one_or_none()
+        if candidate is None:
+            raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
+
+        # ═══════════════════════════════════════════════════════════════
+        # Create or initialize Application record for stage tracking
+        # ═══════════════════════════════════════════════════════════════
+        if application is None:
+            application = Application(
+                user_id=user_id,
+                job_posting_id=job_posting_id,
+                rank_evaluation_id=evaluation.id,
+                cv_template=cv_template,
+                cover_letter_template=cover_letter_template,
+                language=job.language or "en",
+                pipeline_stage="draft",
+            )
+            db.add(application)
+            await db.commit()
+            await db.refresh(application)
+        else:
+            application.rank_evaluation_id = evaluation.id
+            application.cv_template = cv_template
+            application.cover_letter_template = cover_letter_template
+            application.language = job.language or "en"
+            application.pipeline_stage = "draft"
+            await db.commit()
+
+        # ═══════════════════════════════════════════════════════════════
+        # STAGE 1: DRAFT — Generate tailored experience + cover letter
+        # ═══════════════════════════════════════════════════════════════
+
+        tailored_experience = await _generate_tailored_experience(
+            candidate, job, evaluation, provider_config
+        )
+
+        cover_letter_content = await _generate_cover_letter(
+            candidate, job, evaluation, tailored_experience, provider_config
+        )
+
+        # ═══════════════════════════════════════════════════════════════
+        # STAGE 2: RENDER DRAFT — Produce LaTeX from draft content
+        # Save draft LaTeX for audit trail (pre-review content).
+        # ═══════════════════════════════════════════════════════════════
+
+        draft_cv_tex = render_cv_latex(candidate, tailored_experience, job)
+        draft_cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
+
+        # Persist draft for audit trail and update stage
         application.pipeline_stage = "draft"
+        application.draft_cv_tex = draft_cv_tex
+        application.draft_cover_letter_tex = draft_cover_tex
         await db.commit()
 
-    # ═══════════════════════════════════════════════════════════════
-    # STAGE 1: DRAFT — Generate tailored experience + cover letter
-    # ═══════════════════════════════════════════════════════════════
+        # ── Company research ──────────────────────────────────────────
+        # Fetch basic company info so the reviewer can verify cover letter
+        # claims about the target company.
+        company_research = await _fetch_company_info(job, provider_config)
 
-    tailored_experience = await _generate_tailored_experience(
-        candidate, job, evaluation, provider_config
-    )
+        # ═══════════════════════════════════════════════════════════════
+        # STAGE 3: REVIEW — Second agent critiques the draft
+        # ═══════════════════════════════════════════════════════════════
 
-    cover_letter_content = await _generate_cover_letter(
-        candidate, job, evaluation, tailored_experience, provider_config
-    )
-
-    # ═══════════════════════════════════════════════════════════════
-    # STAGE 2: RENDER DRAFT — Produce LaTeX from draft content
-    # Save draft LaTeX for audit trail (pre-review content).
-    # ═══════════════════════════════════════════════════════════════
-
-    draft_cv_tex = render_cv_latex(candidate, tailored_experience, job)
-    draft_cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
-
-    # Persist draft for audit trail and update stage
-    application.pipeline_stage = "draft"
-    application.draft_cv_tex = draft_cv_tex
-    application.draft_cover_letter_tex = draft_cover_tex
-    await db.commit()
-
-    # ── Company research ──────────────────────────────────────────
-    # Fetch basic company info so the reviewer can verify cover letter
-    # claims about the target company.
-    company_research = await _fetch_company_info(job, provider_config)
-
-    # ═══════════════════════════════════════════════════════════════
-    # STAGE 3: REVIEW — Second agent critiques the draft
-    # ═══════════════════════════════════════════════════════════════
-
-    review_feedback = await _generate_review(
-        candidate, job, evaluation,
-        draft_cv_tex, draft_cover_tex,
-        tailored_experience, cover_letter_content,
-        provider_config,
-        company_research=company_research,
-    )
-
-    # Persist review feedback and update stage
-    application.pipeline_stage = "reviewed"
-    application.review_feedback = review_feedback.model_dump()
-    application.review_issues = [i.model_dump() for i in review_feedback.issues]
-    await db.commit()
-
-    # ═══════════════════════════════════════════════════════════════
-    # STAGE 4: REVISE — Apply feedback and regenerate
-    # ═══════════════════════════════════════════════════════════════
-
-    revised_experience, revise_result = await _generate_revision(
-        candidate, job, evaluation,
-        tailored_experience, cover_letter_content,
-        review_feedback, provider_config,
-    )
-
-    # ═══════════════════════════════════════════════════════════════
-    # STAGE 4b: REVISE COVER LETTER — Always regenerate cover letter
-    # using the revised experience section. This ensures the cover letter
-    # stays aligned with the CV after revision, even if the reviewer found
-    # no specific cover letter issues. Falls back to original on LLM error.
-    # ═══════════════════════════════════════════════════════════════
-
-    try:
-        revised_cover_letter = await _generate_cover_letter(
-            candidate, job, evaluation, revised_experience, provider_config
+        review_feedback = await _generate_review(
+            candidate, job, evaluation,
+            draft_cv_tex, draft_cover_tex,
+            tailored_experience, cover_letter_content,
+            provider_config,
+            company_research=company_research,
         )
-        logger.info("Cover letter regenerated with revised experience")
-    except Exception as e:
-        logger.warning(f"Cover letter revision failed — keeping original: {e}")
-        revised_cover_letter = cover_letter_content
 
-    # Persist revised stage
-    application.pipeline_stage = "revised"
-    await db.commit()
+        # Persist review feedback and update stage
+        application.pipeline_stage = "reviewed"
+        application.review_feedback = review_feedback.model_dump()
+        application.review_issues = [i.model_dump() for i in review_feedback.issues]
+        await db.commit()
 
-    # ═══════════════════════════════════════════════════════════════
-    # STAGE 5: RENDER FINAL — Produce final LaTeX from revised content
-    # ═══════════════════════════════════════════════════════════════
+        # ═══════════════════════════════════════════════════════════════
+        # STAGE 4: REVISE — Apply feedback and regenerate
+        # ═══════════════════════════════════════════════════════════════
 
-    final_cv_tex = render_cv_latex(candidate, revised_experience, job)
-    final_cover_tex = render_cover_letter_latex(candidate, job, revised_cover_letter)
+        revised_experience, revise_result = await _generate_revision(
+            candidate, job, evaluation,
+            tailored_experience, cover_letter_content,
+            review_feedback, provider_config,
+        )
 
-    # ═══════════════════════════════════════════════════════════════
-    # STAGE 6: COMPILE — LaTeX compilation + page count verification
-    # ═══════════════════════════════════════════════════════════════
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-
-        fonts_dest = tmpdir_path / "OpenFonts"
-        if OPENFONTS_DIR.exists():
-            shutil.copytree(OPENFONTS_DIR, fonts_dest)
-
-        if COVER_CLS.exists():
-            shutil.copy2(COVER_CLS, tmpdir_path / "cover.cls")
-
-        # ═══════════════════════════════════════════════════════════
-        # STAGE 6a: COMPILE CV — with auto-trim if over page limit
-        # ═══════════════════════════════════════════════════════════
-        # First, try to compile with expected page count. If the CV
-        # exceeds 2 pages, the CV cutter will remove the lowest-scoring
-        # bullets iteratively until the CV fits (or all bullets are
-        # protected at minimum 1 per entry).
-
-        cv_trim_result = None
-        cv_trimmed_experience = revised_experience
-        cv_compile_success = False
+        # ═══════════════════════════════════════════════════════════════
+        # STAGE 4b: REVISE COVER LETTER — Always regenerate cover letter
+        # using the revised experience section. This ensures the cover letter
+        # stays aligned with the CV after revision, even if the reviewer found
+        # no specific cover letter issues. Falls back to original on LLM error.
+        # ═══════════════════════════════════════════════════════════════
 
         try:
-            cv_pdf, cv_pages = await compile_latex(
-                final_cv_tex, tmpdir_path,
-                f"cv_{job.company}_{job.title}", "lualatex", 2,
+            revised_cover_letter = await _generate_cover_letter(
+                candidate, job, evaluation, revised_experience, provider_config
             )
-            cv_compile_success = True
-        except LatexCompileError as e:
-            # Check if the error is due to wrong page count (CV > 2)
-            if "Wrong page count" in str(e) and "expected 2" in str(e):
-                logger.info(
-                    f"CV for {job.company}/{job.title} exceeds 2 pages — "
-                    f"running relevance-weighted trim..."
-                )
-                try:
-                    # Define a render wrapper that uses the still-available
-                    # final_cover_tex for cover letter reference scoring
-                    def _make_render_fn(candidate, job):
-                        def _render(exp):
-                            return render_cv_latex(candidate, exp, job)
-                        return _render
+            logger.info("Cover letter regenerated with revised experience")
+        except Exception as e:
+            logger.warning(f"Cover letter revision failed — keeping original: {e}")
+            revised_cover_letter = cover_letter_content
 
-                    # Define a compile wrapper that returns page count
-                    # WITHOUT raising on wrong count.
-                    # Uses compile_latex_get_pages() which always returns
-                    # actual page count without checking expected_pages.
-                    async def _compile_no_raise(tex, out_dir, name):
-                        """Compile and return (path, pages) without raising on wrong count."""
-                        return await compile_latex_get_pages(
-                            tex, out_dir, name, "lualatex",
+        # Persist revised stage
+        application.pipeline_stage = "revised"
+        await db.commit()
+
+        # ═══════════════════════════════════════════════════════════════
+        # STAGE 5: RENDER FINAL — Produce final LaTeX from revised content
+        # ═══════════════════════════════════════════════════════════════
+
+        final_cv_tex = render_cv_latex(candidate, revised_experience, job)
+        final_cover_tex = render_cover_letter_latex(candidate, job, revised_cover_letter)
+
+        # ═══════════════════════════════════════════════════════════════
+        # STAGE 6: COMPILE — LaTeX compilation + page count verification
+        # ═══════════════════════════════════════════════════════════════
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+
+            fonts_dest = tmpdir_path / "OpenFonts"
+            if OPENFONTS_DIR.exists():
+                shutil.copytree(OPENFONTS_DIR, fonts_dest)
+
+            if COVER_CLS.exists():
+                shutil.copy2(COVER_CLS, tmpdir_path / "cover.cls")
+
+            # ═══════════════════════════════════════════════════════════
+            # STAGE 6a: COMPILE CV — with auto-trim if over page limit
+            # ═══════════════════════════════════════════════════════════
+            # First, try to compile with expected page count. If the CV
+            # exceeds 2 pages, the CV cutter will remove the lowest-scoring
+            # bullets iteratively until the CV fits (or all bullets are
+            # protected at minimum 1 per entry).
+
+            cv_trim_result = None
+            cv_trimmed_experience = revised_experience
+            cv_compile_success = False
+
+            try:
+                cv_pdf, cv_pages = await compile_latex(
+                    final_cv_tex, tmpdir_path,
+                    f"cv_{job.company}_{job.title}", "lualatex", 2,
+                )
+                cv_compile_success = True
+            except LatexCompileError as e:
+                # Check if the error is due to wrong page count (CV > 2)
+                if "Wrong page count" in str(e) and "expected 2" in str(e):
+                    logger.info(
+                        f"CV for {job.company}/{job.title} exceeds 2 pages — "
+                        f"running relevance-weighted trim..."
+                    )
+                    try:
+                        # Define a render wrapper that uses the still-available
+                        # final_cover_tex for cover letter reference scoring
+                        def _make_render_fn(candidate, job):
+                            def _render(exp):
+                                return render_cv_latex(candidate, exp, job)
+                            return _render
+
+                        # Define a compile wrapper that returns page count
+                        # WITHOUT raising on wrong count.
+                        # Uses compile_latex_get_pages() which always returns
+                        # actual page count without checking expected_pages.
+                        async def _compile_no_raise(tex, out_dir, name):
+                            """Compile and return (path, pages) without raising on wrong count."""
+                            return await compile_latex_get_pages(
+                                tex, out_dir, name, "lualatex",
+                            )
+
+                        # Run the CV cutter
+                        cv_trimmed_experience, cv_trim_result = await cv_cutter.trim_cv_to_page_limit(
+                            experience=revised_experience,
+                            job_posting=job,
+                            cover_letter_latex=final_cover_tex,
+                            render_fn=_make_render_fn(candidate, job),
+                            compile_fn=_compile_no_raise,
+                            output_dir=tmpdir_path,
+                            job_name=f"cv_{job.company}_{job.title}",
+                            max_pages=2,
                         )
 
-                    # Run the CV cutter
-                    cv_trimmed_experience, cv_trim_result = await cv_cutter.trim_cv_to_page_limit(
-                        experience=revised_experience,
-                        job_posting=job,
+                        # Re-render final LaTeX with trimmed experience
+                        final_cv_tex = render_cv_latex(candidate, cv_trimmed_experience, job)
+
+                        # Final compile
+                        cv_pdf, cv_pages = await compile_latex(
+                            final_cv_tex, tmpdir_path,
+                            f"cv_{job.company}_{job.title}", "lualatex", 2,
+                        )
+                        cv_compile_success = True
+                        logger.info(
+                            f"CV trim successful: {cv_trim_result.bullets_removed} "
+                            f"bullet(s) removed, final {cv_pages} page(s)."
+                        )
+                    except LatexCompileError as trim_error:
+                        # CV cutter couldn't get it to fit — re-raise the original
+                        raise e from trim_error
+                else:
+                    # Real compilation error — re-raise
+                    raise
+
+            # Update revised_experience if trimming occurred
+            if cv_trim_result and cv_trim_result.was_trimmed:
+                revised_experience = cv_trimmed_experience
+
+            # ═══════════════════════════════════════════════════════════
+            # STAGE 6b: COMPILE COVER LETTER
+            # ═══════════════════════════════════════════════════════════
+            cover_pdf, cover_pages = await compile_latex(
+                final_cover_tex, tmpdir_path,
+                f"cover_{job.company}_{job.title}", "xelatex", 1,
+            )
+
+            generated_dir = Path("generated") / user_id / job_posting_id
+            generated_dir.mkdir(parents=True, exist_ok=True)
+
+            cv_pdf_final = generated_dir / f"cv_{job.company}_{job.title}.pdf"
+            cover_pdf_final = generated_dir / f"cover_{job.company}_{job.title}.pdf"
+            cv_tex_final = generated_dir / f"cv_{job.company}_{job.title}.tex"
+            cover_tex_final = generated_dir / f"cover_{job.company}_{job.title}.tex"
+
+            shutil.copy2(cv_pdf, cv_pdf_final)
+            shutil.copy2(cover_pdf, cover_pdf_final)
+            cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
+            cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
+
+            # ═══════════════════════════════════════════════════════════
+            # STAGE 6c: COMPILATION VERIFICATION LOOP
+            # ═══════════════════════════════════════════════════════════
+            # Runs the iterative verification loop: checks for orphaned
+            # \cventry entries, cover letter signature presence, and
+            # applies \needspace{}/\enlargethispage{} fixes as needed.
+            # Only runs if LaTeX compilation succeeded. Non-blocking:
+            # if verification fails, the pipeline continues with warnings.
+
+            if cv_compile_success:
+                try:
+                    # Create compile wrappers that don't raise on page count
+                    from app.services.apply import compile_latex_get_pages
+
+                    async def _verify_compile_cv(tex, out_dir, name):
+                        return await compile_latex_get_pages(
+                            tex, out_dir, name, "lualatex"
+                        )
+
+                    async def _verify_compile_cover(tex, out_dir, name):
+                        return await compile_latex_get_pages(
+                            tex, out_dir, name, "xelatex"
+                        )
+
+                    # Optional ATS check function for the verification loop
+                    async def _verify_ats(pdf):
+                        return await ats_check.check_ats_parseability(
+                            pdf_path=pdf, job_posting=job, candidate=candidate
+                        )
+
+                    verify_result = await pdf_compiler.compile_with_verification(
+                        cv_latex=final_cv_tex,
                         cover_letter_latex=final_cover_tex,
-                        render_fn=_make_render_fn(candidate, job),
-                        compile_fn=_compile_no_raise,
+                        cv_name=f"cv_{job.company}_{job.title}",
+                        cover_name=f"cover_{job.company}_{job.title}",
+                        candidate_name=candidate.full_name,
                         output_dir=tmpdir_path,
-                        job_name=f"cv_{job.company}_{job.title}",
-                        max_pages=2,
+                        compile_cv_fn=_verify_compile_cv,
+                        compile_cover_fn=_verify_compile_cover,
+                        ats_check_fn=_verify_ats,
                     )
 
-                    # Re-render final LaTeX with trimmed experience
-                    final_cv_tex = render_cv_latex(candidate, cv_trimmed_experience, job)
+                    if verify_result.total_iterations > 1:
+                        logger.info(
+                            f"Compilation verification: {verify_result.total_iterations} "
+                            f"iteration(s), {len(verify_result.final_issues)} "
+                            f"remaining issue(s)."
+                        )
 
-                    # Final compile
-                    cv_pdf, cv_pages = await compile_latex(
-                        final_cv_tex, tmpdir_path,
-                        f"cv_{job.company}_{job.title}", "lualatex", 2,
-                    )
-                    cv_compile_success = True
-                    logger.info(
-                        f"CV trim successful: {cv_trim_result.bullets_removed} "
-                        f"bullet(s) removed, final {cv_pages} page(s)."
-                    )
-                except LatexCompileError as trim_error:
-                    # CV cutter couldn't get it to fit — re-raise the original
-                    raise e from trim_error
-            else:
-                # Real compilation error — re-raise
-                raise
+                    # If verification applied fixes and recompiled, update
+                    # the final generated files
+                    if verify_result.cv_pdf_path and str(verify_result.cv_pdf_path) != str(cv_pdf_final):
+                        cv_pdf = Path(verify_result.cv_pdf_path)
+                        if cv_pdf.exists():
+                            shutil.copy2(cv_pdf, cv_pdf_final)
+                    if verify_result.cover_pdf_path and str(verify_result.cover_pdf_path) != str(cover_pdf_final):
+                        cover_pdf = Path(verify_result.cover_pdf_path)
+                        if cover_pdf.exists():
+                            shutil.copy2(cover_pdf, cover_pdf_final)
 
-        # Update revised_experience if trimming occurred
-        if cv_trim_result and cv_trim_result.was_trimmed:
-            revised_experience = cv_trimmed_experience
+                    # Update final LaTeX if verification modified it
+                    if verify_result.cv_latex and verify_result.cv_latex != final_cv_tex:
+                        final_cv_tex = verify_result.cv_latex
+                        cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
+                    if verify_result.cover_latex and verify_result.cover_latex != final_cover_tex:
+                        final_cover_tex = verify_result.cover_latex
+                        cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
 
-        # ═══════════════════════════════════════════════════════════
-        # STAGE 6b: COMPILE COVER LETTER
-        # ═══════════════════════════════════════════════════════════
-        cover_pdf, cover_pages = await compile_latex(
-            final_cover_tex, tmpdir_path,
-            f"cover_{job.company}_{job.title}", "xelatex", 1,
-        )
+                    # Log any unresolved issues
+                    for issue in verify_result.final_issues:
+                        logger.warning(
+                            f"Compilation issue ({issue.category.value}): {issue.description}"
+                        )
 
-        generated_dir = Path("generated") / user_id / job_posting_id
-        generated_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    # Compilation verification should never block the pipeline
+                    logger.warning(f"Compilation verification loop failed (non-blocking): {e}")
 
-        cv_pdf_final = generated_dir / f"cv_{job.company}_{job.title}.pdf"
-        cover_pdf_final = generated_dir / f"cover_{job.company}_{job.title}.pdf"
-        cv_tex_final = generated_dir / f"cv_{job.company}_{job.title}.tex"
-        cover_tex_final = generated_dir / f"cover_{job.company}_{job.title}.tex"
-
-        shutil.copy2(cv_pdf, cv_pdf_final)
-        shutil.copy2(cover_pdf, cover_pdf_final)
-        cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
-        cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
-
-        # ═══════════════════════════════════════════════════════════
-        # STAGE 6c: COMPILATION VERIFICATION LOOP
-        # ═══════════════════════════════════════════════════════════
-        # Runs the iterative verification loop: checks for orphaned
-        # \cventry entries, cover letter signature presence, and
-        # applies \needspace{}/\enlargethispage{} fixes as needed.
-        # Only runs if LaTeX compilation succeeded. Non-blocking:
-        # if verification fails, the pipeline continues with warnings.
-
-        if cv_compile_success:
+            # ═══════════════════════════════════════════════════════════
+            # STAGE 7: ATS CHECK (inside tempdir, cv_pdf still exists)
+            # ═══════════════════════════════════════════════════════════
+            # Runs a 100% deterministic ATS parseability check on the
+            # compiled CV PDF. Checks: CID markers, keyword coverage,
+            # email/phone/name as extractable text, reading order.
+            # Non-blocking — if pdftotext is not available, the check
+            # is skipped gracefully. Must run INSIDE the temp directory
+            # block because cv_pdf points to a temp file that will be
+            # deleted when the block exits.
+            ats_result = None
             try:
-                # Create compile wrappers that don't raise on page count
-                from app.services.apply import compile_latex_get_pages
-
-                async def _verify_compile_cv(tex, out_dir, name):
-                    return await compile_latex_get_pages(
-                        tex, out_dir, name, "lualatex"
-                    )
-
-                async def _verify_compile_cover(tex, out_dir, name):
-                    return await compile_latex_get_pages(
-                        tex, out_dir, name, "xelatex"
-                    )
-
-                # Optional ATS check function for the verification loop
-                async def _verify_ats(pdf):
-                    return await ats_check.check_ats_parseability(
-                        pdf_path=pdf, job_posting=job, candidate=candidate
-                    )
-
-                verify_result = await pdf_compiler.compile_with_verification(
-                    cv_latex=final_cv_tex,
-                    cover_letter_latex=final_cover_tex,
-                    cv_name=f"cv_{job.company}_{job.title}",
-                    cover_name=f"cover_{job.company}_{job.title}",
-                    candidate_name=candidate.full_name,
-                    output_dir=tmpdir_path,
-                    compile_cv_fn=_verify_compile_cv,
-                    compile_cover_fn=_verify_compile_cover,
-                    ats_check_fn=_verify_ats,
+                ats_result = await ats_check.check_ats_parseability(
+                    pdf_path=cv_pdf,
+                    job_posting=job,
+                    candidate=candidate,
                 )
-
-                if verify_result.total_iterations > 1:
-                    logger.info(
-                        f"Compilation verification: {verify_result.total_iterations} "
-                        f"iteration(s), {len(verify_result.final_issues)} "
-                        f"remaining issue(s)."
-                    )
-
-                # If verification applied fixes and recompiled, update
-                # the final generated files
-                if verify_result.cv_pdf_path and str(verify_result.cv_pdf_path) != str(cv_pdf_final):
-                    cv_pdf = Path(verify_result.cv_pdf_path)
-                    if cv_pdf.exists():
-                        shutil.copy2(cv_pdf, cv_pdf_final)
-                if verify_result.cover_pdf_path and str(verify_result.cover_pdf_path) != str(cover_pdf_final):
-                    cover_pdf = Path(verify_result.cover_pdf_path)
-                    if cover_pdf.exists():
-                        shutil.copy2(cover_pdf, cover_pdf_final)
-
-                # Update final LaTeX if verification modified it
-                if verify_result.cv_latex and verify_result.cv_latex != final_cv_tex:
-                    final_cv_tex = verify_result.cv_latex
-                    cv_tex_final.write_text(final_cv_tex, encoding="utf-8")
-                if verify_result.cover_latex and verify_result.cover_latex != final_cover_tex:
-                    final_cover_tex = verify_result.cover_latex
-                    cover_tex_final.write_text(final_cover_tex, encoding="utf-8")
-
-                # Log any unresolved issues
-                for issue in verify_result.final_issues:
-                    logger.warning(
-                        f"Compilation issue ({issue.category.value}): {issue.description}"
-                    )
-
+                logger.info(
+                    f"ATS check for {job.company}/{job.title}: "
+                    f"pass={ats_result.pass_ats}, "
+                    f"keyword_coverage={ats_result.keyword_coverage:.0%}, "
+                    f"cid_markers={ats_result.has_cid_markers}, "
+                    f"email_found={ats_result.has_email}, "
+                    f"name_found={ats_result.has_candidate_name}"
+                )
             except Exception as e:
-                # Compilation verification should never block the pipeline
-                logger.warning(f"Compilation verification loop failed (non-blocking): {e}")
+                # ATS check should never block the pipeline
+                logger.warning(f"ATS check failed (non-blocking): {e}")
 
-        # ═══════════════════════════════════════════════════════════
-        # STAGE 7: ATS CHECK (inside tempdir, cv_pdf still exists)
-        # ═══════════════════════════════════════════════════════════
-        # Runs a 100% deterministic ATS parseability check on the
-        # compiled CV PDF. Checks: CID markers, keyword coverage,
-        # email/phone/name as extractable text, reading order.
-        # Non-blocking — if pdftotext is not available, the check
-        # is skipped gracefully. Must run INSIDE the temp directory
-        # block because cv_pdf points to a temp file that will be
-        # deleted when the block exits.
-        ats_result = None
-        try:
-            ats_result = await ats_check.check_ats_parseability(
-                pdf_path=cv_pdf,
-                job_posting=job,
-                candidate=candidate,
-            )
-            logger.info(
-                f"ATS check for {job.company}/{job.title}: "
-                f"pass={ats_result.pass_ats}, "
-                f"keyword_coverage={ats_result.keyword_coverage:.0%}, "
-                f"cid_markers={ats_result.has_cid_markers}, "
-                f"email_found={ats_result.has_email}, "
-                f"name_found={ats_result.has_candidate_name}"
-            )
-        except Exception as e:
-            # ATS check should never block the pipeline
-            logger.warning(f"ATS check failed (non-blocking): {e}")
+        # 8. Extract incorporated keywords and addressed red flags
+        incorporated_keywords = _extract_incorporated_keywords(revised_experience, evaluation.missing_keywords or [])
+        addressed_red_flags = _extract_addressed_red_flags(revised_experience, evaluation.red_flags or [])
 
-    # 8. Extract incorporated keywords and addressed red flags
-    incorporated_keywords = _extract_incorporated_keywords(revised_experience, evaluation.missing_keywords or [])
-    addressed_red_flags = _extract_addressed_red_flags(revised_experience, evaluation.red_flags or [])
+        # 9. Update Application record with final generated content
+        application.tailored_experience = [exp.model_dump() for exp in revised_experience]
+        application.incorporated_keywords = [k.model_dump() for k in incorporated_keywords]
+        application.addressed_red_flags = [r.model_dump() for r in addressed_red_flags]
+        application.cv_tex_path = str(cv_tex_final)
+        application.cv_pdf_path = str(cv_pdf_final)
+        application.cover_letter_tex_path = str(cover_tex_final)
+        application.cover_letter_pdf_path = str(cover_pdf_final)
+        application.cv_compiled = True
+        application.cv_pages = cv_pages
+        application.cover_letter_compiled = True
+        application.cover_letter_pages = cover_pages
+        application.pipeline_stage = "verified" if (ats_result and ats_result.pass_ats) else "compiled"
+        application.ats_score = ats_result.keyword_coverage if ats_result else None
+        application.ats_missing_keywords = ats_result.missing_keywords if ats_result else None
+        application.ats_pass = ats_result.pass_ats if ats_result else None
+        application.ats_checked_at = datetime.now(timezone.utc) if ats_result else None
 
-    # 9. Update Application record with final generated content
-    application.tailored_experience = [exp.model_dump() for exp in revised_experience]
-    application.incorporated_keywords = [k.model_dump() for k in incorporated_keywords]
-    application.addressed_red_flags = [r.model_dump() for r in addressed_red_flags]
-    application.cv_tex_path = str(cv_tex_final)
-    application.cv_pdf_path = str(cv_pdf_final)
-    application.cover_letter_tex_path = str(cover_tex_final)
-    application.cover_letter_pdf_path = str(cover_pdf_final)
-    application.cv_compiled = True
-    application.cv_pages = cv_pages
-    application.cover_letter_compiled = True
-    application.cover_letter_pages = cover_pages
-    application.pipeline_stage = "verified" if (ats_result and ats_result.pass_ats) else "compiled"
-    application.ats_score = ats_result.keyword_coverage if ats_result else None
-    application.ats_missing_keywords = ats_result.missing_keywords if ats_result else None
-    application.ats_pass = ats_result.pass_ats if ats_result else None
-    application.ats_checked_at = datetime.now(timezone.utc) if ats_result else None
+        # 10. Update job posting status
+        job.status = "applied"
 
-    # 10. Update job posting status
-    job.status = "applied"
+        await db.commit()
+        await db.refresh(application)
 
-    await db.commit()
-    await db.refresh(application)
+        # Build a comprehensive result message including review + ATS insights
+        issues_summary = ""
+        if review_feedback.issues:
+            high_severity = [i for i in review_feedback.issues if i.severity == "high"]
+            medium_severity = [i for i in review_feedback.issues if i.severity == "medium"]
+            if high_severity:
+                issues_summary = f" {len(high_severity)} high-severity, "
+                issues_summary += f"{len(medium_severity)} medium-severity issues found and addressed."
+            else:
+                issues_summary = f" {len(review_feedback.issues)} issue(s) addressed."
 
-    # Build a comprehensive result message including review + ATS insights
-    issues_summary = ""
-    if review_feedback.issues:
-        high_severity = [i for i in review_feedback.issues if i.severity == "high"]
-        medium_severity = [i for i in review_feedback.issues if i.severity == "medium"]
-        if high_severity:
-            issues_summary = f" {len(high_severity)} high-severity, "
-            issues_summary += f"{len(medium_severity)} medium-severity issues found and addressed."
-        else:
-            issues_summary = f" {len(review_feedback.issues)} issue(s) addressed."
+        ats_summary = ""
+        if ats_result is not None:
+            if ats_result.pass_ats:
+                ats_summary = f" ATS check passed ({ats_result.keyword_coverage:.0%} keyword coverage)."
+            else:
+                ats_summary = f" ATS check flagged {len(ats_result.missing_keywords)} missing keywords."
 
-    ats_summary = ""
-    if ats_result is not None:
-        if ats_result.pass_ats:
-            ats_summary = f" ATS check passed ({ats_result.keyword_coverage:.0%} keyword coverage)."
-        else:
-            ats_summary = f" ATS check flagged {len(ats_result.missing_keywords)} missing keywords."
+        final_stage = "compiled"
+        if ats_result and ats_result.pass_ats:
+            final_stage = "verified"
 
-    final_stage = "compiled"
-    if ats_result and ats_result.pass_ats:
-        final_stage = "verified"
-
-    return ApplyResult(
-        application_id=application.id,
-        cv_compiled=True,
-        cv_pages=cv_pages,
-        cover_letter_compiled=True,
-        cover_letter_pages=cover_pages,
-        message=f"Application generated with Drafter-Reviewer pipeline: "
-                f"CV ({cv_pages} pages), Cover Letter ({cover_pages} page)."
-                f"{issues_summary}{ats_summary}"
-                f" Pipeline stages: draft → reviewed → revised → compiled → ats_check.",
-    )
+        return ApplyResult(
+            application_id=application.id,
+            cv_compiled=True,
+            cv_pages=cv_pages,
+            cover_letter_compiled=True,
+            cover_letter_pages=cover_pages,
+            message=f"Application generated with Drafter-Reviewer pipeline: "
+                    f"CV ({cv_pages} pages), Cover Letter ({cover_pages} page)."
+                    f"{issues_summary}{ats_summary}"
+                    f" Pipeline stages: draft → reviewed → revised → compiled → ats_check.",
+        )
 
 
 async def execute_apply_background(
