@@ -907,18 +907,18 @@ async def _compile_latex_raw(
 
     engine_bin = _resolve_latex_binary(engine)
     for _ in range(2):
-        proc = await asyncio.create_subprocess_exec(
-            str(engine_bin),
-            "-interaction=nonstopmode",
-            "-output-directory",
-            str(output_dir),
-            str(tex_file),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                [str(engine_bin), "-interaction=nonstopmode", "-output-directory", str(output_dir), str(tex_file)],
+                capture_output=True,
+                timeout=120,
+            ),
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = result.stdout, result.stderr
 
-        if proc.returncode != 0:
+        if result.returncode != 0:
             error_output = stderr.decode("utf-8", errors="replace")
             raise LatexCompileError(
                 f"{engine} compilation failed for {job_name}: {error_output}"
@@ -1002,13 +1002,13 @@ async def _get_pdf_page_count(pdf_path: Path) -> int:
     pdftotext_bin = _resolve_latex_binary("pdftotext")
     for cmd in [[str(pdfinfo_bin), str(pdf_path)], [str(pdftotext_bin), str(pdf_path), "-"]]:
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda c=cmd: subprocess.run(c, capture_output=True, timeout=120),
             )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode == 0:
+            stdout, stderr = result.stdout, result.stderr
+            if result.returncode == 0:
                 output = stdout.decode("utf-8", errors="replace")
                 match = re.search(r"Pages:\s+(\d+)", output)
                 if match:

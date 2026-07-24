@@ -86,25 +86,28 @@ WORKER_ID: str = ""
 
 # ── Engine & session factory (small pool — worker never holds long sessions) ──
 
-def _create_worker_engine():
-    settings = get_settings()
-    return create_async_engine(
-        settings.database_url,
+_worker_engine: Any = None
+_worker_session_factory: Any = None
+
+
+def _init_worker_db():
+    """Initialize the worker's engine + session factory (lazy, called after setup_logging)."""
+    global _worker_engine, _worker_session_factory
+    s = get_settings()
+    _worker_engine = create_async_engine(
+        s.database_url,
         pool_size=2,
         max_overflow=1,
         pool_pre_ping=True,
         pool_recycle=300,
         pool_timeout=30,
-        echo=settings.app_env == "development",
+        echo=False,
     )
-
-
-_worker_engine = _create_worker_engine()
-_worker_session_factory = async_sessionmaker(
-    _worker_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+    _worker_session_factory = async_sessionmaker(
+        _worker_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
 
 # ── Database helpers ──────────────────────────────────────────────────
@@ -578,6 +581,7 @@ async def _worker_main():
 def main():
     """Entry point — ``python -m app.worker``."""
     setup_logging()
+    _init_worker_db()
 
     global WORKER_ID
     import uuid

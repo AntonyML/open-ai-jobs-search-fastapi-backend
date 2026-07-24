@@ -14,6 +14,7 @@ import asyncio
 import json
 import re
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -103,13 +104,13 @@ async def _get_pdf_page_count(pdf_path: Path) -> int:
     """Get page count of a PDF using pdfinfo or pdftotext."""
     for cmd in [["pdfinfo", str(pdf_path)], ["pdftotext", str(pdf_path), "-"]]:
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda c=cmd: subprocess.run(c, capture_output=True, timeout=30),
             )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode == 0:
+            stdout, stderr = result.stdout, result.stderr
+            if result.returncode == 0:
                 output = stdout.decode("utf-8", errors="replace")
                 match = re.search(r"Pages:\s+(\d+)", output)
                 if match:
@@ -244,18 +245,18 @@ async def execute_add_template(
     try:
         # Compile twice to resolve page counts/references
         for _ in range(2):
-            proc = await asyncio.create_subprocess_exec(
-                req.engine,
-                "-interaction=nonstopmode",
-                "-output-directory",
-                str(template_dir),
-                str(scratch_tex),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    [req.engine, "-interaction=nonstopmode", "-output-directory", str(template_dir), str(scratch_tex)],
+                    capture_output=True,
+                    timeout=120,
+                ),
             )
-            stdout, stderr = await proc.communicate()
+            stdout, stderr = result.stdout, result.stderr
 
-            if proc.returncode != 0:
+            if result.returncode != 0:
                 error_output = (stdout + stderr).decode("utf-8", errors="replace")
                 raise LatexCompileError(
                     f"Template test compilation failed with {req.engine}: {error_output}"

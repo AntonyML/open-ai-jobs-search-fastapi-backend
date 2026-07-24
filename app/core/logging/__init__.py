@@ -32,7 +32,10 @@ def setup_logging(config: LoggingConfig | None = None) -> None:
 
     # Suppress noisy libraries
     for logger_name, level in _config.suppressed_loggers.items():
-        logging.getLogger(logger_name).setLevel(getattr(logging, level.upper()))
+        lib_logger = logging.getLogger(logger_name)
+        lib_logger.handlers.clear()
+        lib_logger.propagate = True
+        lib_logger.setLevel(getattr(logging, level.upper()))
 
     # Sentry (production only)
     if _config.sentry_dsn and _config.is_production:

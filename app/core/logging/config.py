@@ -45,10 +45,15 @@ class LoggingConfig:
         "httpcore": "WARNING",
         "asyncpg": "WARNING",
         "litellm": "WARNING",
+        "LiteLLM": "WARNING",
         "uvicorn.access": "WARNING",
         "apscheduler": "WARNING",
         "hpack": "WARNING",
         "charset_normalizer": "WARNING",
+        "sqlalchemy.engine": "WARNING",
+        "sqlalchemy.pool": "WARNING",
+        "sqlalchemy.dialects": "WARNING",
+        "sqlalchemy.orm": "WARNING",
     })
 
     sentry_dsn: str | None = os.getenv("SENTRY_DSN")

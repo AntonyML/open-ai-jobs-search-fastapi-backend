@@ -18,6 +18,7 @@ with ``pass_ats`` = None and does NOT block the pipeline.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 
 import re
 from pathlib import Path
@@ -86,17 +87,18 @@ async def _extract_pdf_text(pdf_path: Path) -> str | None:
     pdftotext_bin = _resolve_binary("pdftotext")
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            str(pdftotext_bin),
-            "-layout",
-            str(pdf_path),
-            "-",  # Output to stdout
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                [str(pdftotext_bin), "-layout", str(pdf_path), "-"],
+                capture_output=True,
+                timeout=30,
+            ),
         )
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = result.stdout, result.stderr
 
-        if proc.returncode == 0:
+        if result.returncode == 0:
             return stdout.decode("utf-8", errors="replace")
 
         logger.warning(f"pdftotext failed for {pdf_path}: {stderr.decode()}")

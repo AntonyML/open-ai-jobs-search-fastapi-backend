@@ -272,36 +272,32 @@ async def _test_skill(skill_name: str, test_query: str) -> dict[str, Any]:
 
     try:
         # Install dev dependencies
-        install_proc = await asyncio.create_subprocess_exec(
-            "bun", "install",
-            cwd=str(skill_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        loop = asyncio.get_running_loop()
+        install_result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(["bun", "install"], cwd=str(skill_dir), capture_output=True, timeout=120),
         )
-        await install_proc.communicate()
 
-        if install_proc.returncode != 0:
+        if install_result.returncode != 0:
             return {"success": False, "error": "bun install failed"}
 
         # Typecheck
-        typecheck_proc = await asyncio.create_subprocess_exec(
-            "bun", "run", "typecheck",
-            cwd=str(skill_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        typecheck_result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(["bun", "run", "typecheck"], cwd=str(skill_dir), capture_output=True, timeout=120),
         )
-        await typecheck_proc.communicate()
 
         # Run search with test query
-        search_proc = await asyncio.create_subprocess_exec(
-            "bun", "run", "src/cli.ts", "search", "-q", test_query, "--limit", "3", "--format", "json",
-            cwd=str(skill_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        search_result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["bun", "run", "src/cli.ts", "search", "-q", test_query, "--limit", "3", "--format", "json"],
+                cwd=str(skill_dir), capture_output=True, timeout=120,
+            ),
         )
-        stdout, stderr = await search_proc.communicate()
+        stdout, stderr = search_result.stdout, search_result.stderr
 
-        if search_proc.returncode != 0:
+        if search_result.returncode != 0:
             return {
                 "success": False,
                 "error": stderr.decode("utf-8", errors="replace"),
