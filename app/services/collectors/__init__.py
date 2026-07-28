@@ -7,7 +7,18 @@ This allows the scrape orchestrator to treat all sources uniformly.
 
 from __future__ import annotations
 
-from app.schemas.scrape import ScraperResultItem
+from pydantic import BaseModel
+
+
+class ScraperResultItem(BaseModel):
+    """A single result item from a scraper CLI's JSON output."""
+
+    id: str | None = None
+    title: str
+    company: str | None = None
+    location: str | None = None
+    url: str | None = None
+    date: str | None = None
 
 
 class BaseCollector:

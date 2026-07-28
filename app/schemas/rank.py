@@ -9,8 +9,26 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+from pydantic import HttpUrl
 
 from app.schemas.salary import SalaryBenchmark
+
+
+class JobPostingSummary(BaseModel):
+    """Lightweight job posting for list views."""
+
+    id: str
+    portal: str
+    title: str
+    company: str | None
+    location: str | None
+    url: HttpUrl | None
+    posting_date: str | None
+    status: str
+    rank_score: float | None
+    rank_verdict: str | None
+
+    model_config = {"from_attributes": True}
 
 
 # ── Dimension score (Fase 4) ─────────────────────────────────────────
@@ -164,8 +182,5 @@ class RankLLMOutput(BaseModel):
     language: str | None = None
     confidence: str = Field(default="medium", pattern="^(low|medium|high)$")
 
-
-# Forward reference resolution
-from app.schemas.scrape import JobPostingSummary
 
 RankedJobOut.model_rebuild()

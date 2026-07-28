@@ -34,19 +34,12 @@ from app.exceptions import AppError, app_error_handler, validation_error_handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown logic for the app."""
-    # Startup: start APScheduler for periodic scraping
-    from app.core.scheduler import scheduler_lifespan
-
-    async with scheduler_lifespan():
-        yield
+    yield
     # Shutdown: wait for background tasks, then dispose engine
     from app.core.task_manager import background_tasks
 
     await background_tasks.shutdown()
 
-    from app.core.scheduler import shutdown_scheduler
-
-    shutdown_scheduler()
     from app.db.session import engine
 
     await engine.dispose()

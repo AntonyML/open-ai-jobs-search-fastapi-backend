@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -1115,3 +1115,56 @@ class RankEvaluationVersion(Base, TimestampMixin):
     input_hash: Mapped[str | None] = mapped_column(String(64))
     token_usage: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
     latency_ms: Mapped[int | None] = mapped_column()
+
+
+# ── Microservice Ingesta Models ─────────────────────────────────────
+# Estos modelos leen las tablas que el microservicio de ingesta crea y
+# alimenta. La API principal SOLO hace SELECT. El microservicio INSERTA.
+# Las tablas se crean via alembic del microservicio (alembic_version_ingest).
+
+
+class IngestedJob(Base):
+    """Job posting ingested by the microservice (reads from Telegram)."""
+
+    __tablename__ = "ingested_jobs"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    company: Mapped[str | None] = mapped_column(String(200))
+    location: Mapped[str | None] = mapped_column(String(200))
+    url: Mapped[str | None] = mapped_column(String(500))
+    description: Mapped[str | None] = mapped_column(Text)
+    salary: Mapped[str | None] = mapped_column(String(100))
+    portal: Mapped[str | None] = mapped_column(String(50))
+    category_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_channel: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    dedup_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    ingested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+
+class IngestJob(Base):
+    """Ingest job queue (microservice writes, API reads status)."""
+
+    __tablename__ = "ingest_jobs"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    category_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    keywords: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    result_count: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )

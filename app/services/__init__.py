@@ -17,7 +17,6 @@ from app.services import (
     provider_models,
     rank,
     reset,
-    scrape,
     setup,
     upskill,
 )
@@ -39,7 +38,6 @@ __all__ = [
     "provider_models",
     "rank",
     "reset",
-    "scrape",
     "setup",
     "upskill",
 ]

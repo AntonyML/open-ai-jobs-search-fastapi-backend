@@ -23,12 +23,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Supabase / PostgreSQL ──────────────────────────────────
+    # -- Supabase / PostgreSQL ----------------------------------
     database_url: str = (
         "postgresql+asyncpg://postgres:password@localhost:5432/postgres"
     )
 
-    # ── LiteLLM / LLM Providers ───────────────────────────────
+    # -- LiteLLM / LLM Providers -------------------------------
     llm_default_provider: str = "anthropic"
     llm_timeout: int = 180
     anthropic_api_key: str | None = None
@@ -36,30 +36,33 @@ class Settings(BaseSettings):
     nvidia_nim_api_key: str | None = None
     lm_studio_api_base: str = "http://localhost:1234/v1"
 
-    # ── Auth / JWT ────────────────────────────────────────────
+    # -- Auth / JWT --------------------------------------------
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440
 
-    # ── APScheduler ───────────────────────────────────────────
+    # -- APScheduler -------------------------------------------
     scrape_interval_hours: int = 6
 
-    # ── Resend (Email) ────────────────────────────────────────
+    # -- Resend (Email) ----------------------------------------
     resend_api_key: str | None = None
     resend_from_email: str = "onboarding@resend.dev"
     admin_email: str = "admin@openajobs.com"
 
-    # ── Rate Limiting ─────────────────────────────────────────
+    # -- Rate Limiting -----------------------------------------
     rate_limit_attempts: int = 5
     rate_limit_window_seconds: int = 900  # 15 minutes
 
-    # ── i18n ──────────────────────────────────────────────────
+    # -- i18n --------------------------------------------------
     default_language: str = "en"
 
-    # ── Sentry ────────────────────────────────────────────────
+    # -- Microservice Ingesta ----------------------------------
+    ingest_service_url: str = "http://localhost:8001"
+
+    # -- Sentry ------------------------------------------------
     sentry_dsn: str | None = None
 
-    # ── App ───────────────────────────────────────────────────
+    # -- App ---------------------------------------------------
     app_env: str = "development"
     log_level: str = "INFO"
     cors_origins: list[str] = [
@@ -68,15 +71,15 @@ class Settings(BaseSettings):
         if o.strip()
     ]
 
-    # ── Paths ─────────────────────────────────────────────────
+    # -- Paths -------------------------------------------------
     documents_dir: str = "documents"
     tracker_path: str = "documents/tracker.json"
 
-    # ── Orchestrator ───────────────────────────────────────────
+    # -- Orchestrator -------------------------------------------
     # Max concurrent LLM workers in the execution queue
     orchestrator_max_concurrency: int = 4
 
-    # ── LaTeX ─────────────────────────────────────────────────
+    # -- LaTeX -------------------------------------------------
     # Directorio con los binarios de LaTeX (lualatex, xelatex, pdfinfo, pdftotext).
     # Si es None, usa los binarios del PATH del sistema.
     # Para MiKTeX Portable: app/external/latex/miktex-portable/miktex/bin/x64

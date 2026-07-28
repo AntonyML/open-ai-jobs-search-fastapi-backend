@@ -23,7 +23,7 @@ from app.services.rank_analyzer import compute_quantitative_scores
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.orchestrator.llm_response_sanitizer import default_field_constraints
 from app.schemas.rank import RankQualitativeOutput, RankResult, RankedJobOut
-from app.schemas.scrape import JobPostingSummary
+from app.schemas.rank import JobPostingSummary
 from app.services.provider_credentials import get_user_active_provider_config
 from app.services.salary import service as salary_service
 from app.core.logging import get_logger, bind_context

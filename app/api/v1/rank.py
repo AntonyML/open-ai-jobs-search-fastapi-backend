@@ -17,7 +17,7 @@ from app.db.models import ExecutionJob
 from app.db.session import get_db as _get_db
 from app.schemas.rank import RankRequest, RankResult
 from app.schemas.rank import RankEvaluationOut as RankEvaluationOutSchema
-from app.schemas.scrape import JobPostingSummary
+from app.schemas.rank import JobPostingSummary
 from app.services import rank
 from app.services import rank_jobs
 from app.db.session import async_session_factory

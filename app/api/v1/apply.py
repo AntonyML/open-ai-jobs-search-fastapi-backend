@@ -11,7 +11,7 @@ from app.core.i18n.locale import t
 from app.db.models import Application, JobPosting, RankEvaluation
 from app.db.session import get_db as _get_db
 from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
-from app.schemas.scrape import JobPostingSummary
+from app.schemas.rank import JobPostingSummary
 from app.services import apply
 from app.services.tiers import get_tier_limits
 

@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.setup import router as setup_router
-from app.api.v1.scrape import router as scrape_router
 from app.api.v1.rank import router as rank_router
 from app.api.v1.apply import router as apply_router
 from app.api.v1.interview import router as interview_router
@@ -22,6 +21,7 @@ from app.api.v1.verification import router as verification_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.dashboard import analytics_router
 from app.api.v1.users import router as users_router
+from app.api.v1.jobs import router as jobs_router
 
 router = APIRouter()
 
@@ -43,7 +43,6 @@ router.include_router(orchestrator_router)
 
 # ── Skill routers ──────────────────────────────────────────────────
 router.include_router(setup_router)
-router.include_router(scrape_router)
 router.include_router(rank_router)
 router.include_router(apply_router)
 router.include_router(interview_router)
@@ -67,3 +66,6 @@ router.include_router(analytics_router)
 
 # ── Users ────────────────────────────────────────────────────────────
 router.include_router(users_router)
+
+# ── Jobs (microservice ingesta) ──────────────────────────────────────
+router.include_router(jobs_router)
