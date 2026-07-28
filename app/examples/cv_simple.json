@@ -1,0 +1,94 @@
+{
+  "first_name": "Alice",
+  "last_name": "Johnson",
+  "email": "alice@example.com",
+  "phone": "+45 12 34 56 78",
+  "linkedin": "https://linkedin.com/in/alicejohnson",
+  "github": "https://github.com/alicej",
+  "address": "Copenhagen, Denmark",
+  "location": null,
+  "profile_statement": "ML Engineer with 5+ years building production ML systems...",
+  "core_competencies": [
+    "Machine Learning",
+    "Python",
+    "TensorFlow",
+    "AWS",
+    "PySpark"
+  ],
+  "skills": {
+    "programming_ml": [
+      {
+        "name": "Python",
+        "proficiency": "expert",
+        "frameworks": null
+      },
+      {
+        "name": "TensorFlow",
+        "proficiency": "advanced",
+        "frameworks": null
+      }
+    ],
+    "domain_expertise": [
+      "Natural Language Processing",
+      "Computer Vision"
+    ],
+    "software_tools": [
+      "Docker",
+      "Kubernetes",
+      "Git"
+    ],
+    "languages": null
+  },
+  "experience": [
+    {
+      "title": "Senior ML Engineer",
+      "company": "TechCorp",
+      "location": "Copenhagen, Denmark",
+      "date_range": {
+        "start": "2021-03",
+        "end": "Present"
+      },
+      "bullets": [
+        "Reduced model inference latency by 40% by implementing TensorRT optimization",
+        "Led migration of batch pipeline to real-time serving, handling 10k requests/sec"
+      ]
+    },
+    {
+      "title": "ML Engineer",
+      "company": "StartupCo",
+      "location": "Aarhus, Denmark",
+      "date_range": {
+        "start": "2018-01",
+        "end": "2021-02"
+      },
+      "bullets": [
+        "Built NLP pipeline processing 1M documents/day with 95% accuracy"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "M.Sc. in Computer Science",
+      "institution": "DTU",
+      "period": "2016–2018",
+      "key_topics": [
+        "Machine Learning",
+        "NLP"
+      ]
+    }
+  ],
+  "publications": null,
+  "awards": null,
+  "references": null,
+  "cover_letter": {
+    "opening_paragraph": "Dear Hiring Manager,",
+    "body_paragraphs": [
+      "As an ML Engineer with deep experience in production systems..."
+    ],
+    "company_connection_paragraph": "I have followed TechCorp's work on...",
+    "personal_fit_paragraph": null,
+    "closing_paragraph": "I look forward to discussing how I can contribute."
+  },
+  "incorporated_keywords": null,
+  "addressed_red_flags": null
+}

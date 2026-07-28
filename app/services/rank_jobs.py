@@ -143,20 +143,20 @@ async def start(
                     }
                 # Skip standard query — we only use the imported jobs
             else:
-                query = select(JobPosting).where(JobPosting.user_id == user_id)
-                if not re_rank:
-                    query = query.where(
-                        or_(
-                            JobPosting.status == "new",
-                            JobPosting.rank_score.is_(None),
-                        )
+                # C3: Fallback reads from ingested_jobs (shared pool), NEVER from job_postings.
+                now = datetime.now(timezone.utc)
+                ingest_query = select(IngestedJob).where(
+                    or_(
+                        IngestedJob.expires_at.is_(None),
+                        IngestedJob.expires_at > now,
                     )
-                query = query.order_by(JobPosting.created_at.desc())
+                )
+                ingest_query = ingest_query.order_by(IngestedJob.ingested_at.desc())
                 if max_jobs is not None:
-                    query = query.limit(max_jobs)
-                result = await db.execute(query)
-                jobs = list(result.scalars().all())
-                total_jobs = len(jobs)
+                    ingest_query = ingest_query.limit(max_jobs)
+                ingest_result = await db.execute(ingest_query)
+                ingested_list = list(ingest_result.scalars().all())
+                total_jobs = len(ingested_list)
 
                 if total_jobs == 0:
                     return {
@@ -164,8 +164,32 @@ async def start(
                         "status": "skipped",
                         "total_jobs": 0,
                         "accepted_jobs": 0,
-                        "message": "No unranked jobs found.",
+                        "message": "No ingested jobs found.",
                     }
+
+                # Convert to JobPosting (same adapter as the job_ids path)
+                jobs = []
+                for ij in ingested_list:
+                    existing = await db.get(JobPosting, ij.id)
+                    if existing is None:
+                        jp = JobPosting(
+                            id=ij.id,
+                            user_id=user_id,
+                            portal=ij.portal or "web",
+                            external_id=f"ij_{ij.id}",
+                            title=ij.title,
+                            company=ij.company,
+                            location=ij.location,
+                            url=ij.url,
+                            description=ij.description,
+                            salary=ij.salary,
+                            status="new",
+                        )
+                        db.add(jp)
+                        jobs.append(jp)
+                    else:
+                        jobs.append(existing)
+                await db.flush()
 
             # 3. Verify no other active rank job exists
             existing_active = await db.execute(
