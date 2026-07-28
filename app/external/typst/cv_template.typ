@@ -62,10 +62,9 @@
 }
 
 #let _entry-line(left-content, right-content) = {
-  // Inline right-alignment with fixed spacing — preserves ATS reading order
-  left-content
-  h(1fr, weak: true)
-  text(fill: rgb("#444"), size: 9.5pt, right-content)
+  // Inline right-alignment — put both on same line in content stream order
+  // so ATS parsers extract company + location, role + dates in correct sequence.
+  [#left-content #h(1fr) #text(fill: rgb("#444"), size: 9.5pt, right-content)]
   linebreak()
 }
 
@@ -121,7 +120,7 @@
 
   // ── Profile Statement (compact, optional) ───────────────────
   if profile != none and profile != "" {
-    v(0.1em)
+    linebreak()
     text(size: 10pt, fill: muted, profile)
     v(0.05em)
   }

@@ -2,7 +2,6 @@
 
 from app.services import (
     add_portal,
-    add_template,
     apply,
     ats_check,
     auth,
@@ -21,7 +20,6 @@ from app.services import (
 
 __all__ = [
     "add_portal",
-    "add_template",
     "apply",
     "ats_check",
     "auth",
