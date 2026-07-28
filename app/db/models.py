@@ -155,11 +155,33 @@ class CandidateProfile(Base, TimestampMixin):
     # read identity fields transparently from the User relationship.
     @property
     def full_name(self) -> str | None:
-        return self.user.full_name if self.user else None
+        if self.user is not None:
+            return self.user.full_name
+        try:
+            return object.__getattribute__(self, "_fn")
+        except AttributeError:
+            return None
+
+    @full_name.setter
+    def full_name(self, value: str | None) -> None:
+        if self.user is not None:
+            self.user.full_name = value
+        object.__setattr__(self, "_fn", value)
 
     @property
     def email(self) -> str | None:
-        return self.user.email if self.user else None
+        if self.user is not None:
+            return self.user.email
+        try:
+            return object.__getattribute__(self, "_em")
+        except AttributeError:
+            return None
+
+    @email.setter
+    def email(self, value: str | None) -> None:
+        if self.user is not None:
+            self.user.email = value
+        object.__setattr__(self, "_em", value)
 
     location: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(50))

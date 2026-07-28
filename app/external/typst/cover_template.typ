@@ -8,30 +8,11 @@
 
   set page(
     paper: "a4",
-    margin: (top: 2.3cm, bottom: 2.3cm, left: 2.3cm, right: 2.3cm),
+    margin: (top: 1in, bottom: 1in, left: 1in, right: 1in),
     numbering: none,
   )
-  set text(font: "Libertinus Serif", size: 10.5pt)
-  set par(leading: 0.6em, justify: false)
-
-  let accent = rgb("#1a1a2e")
-  let muted = rgb("#666666")
-
-  set align(center)
-  text(weight: "bold", size: 14pt, fill: accent, first + " " + last)
-  v(0.1em)
-
-  let contact_parts = ()
-  if location != none { contact_parts.push(location) }
-  if email != "" { contact_parts.push(email) }
-  if phone != none { contact_parts.push(phone) }
-  if contact_parts.len() > 0 {
-    text(fill: muted, size: 9pt, contact_parts.join("  |  "))
-  }
-
-  line(length: 100%, stroke: 0.3pt + rgb("#cccccc"))
-  v(0.6em)
-  set align(left)
+  set text(font: "Latin Modern Roman", size: 10.5pt)
+  set par(leading: 0.55em, justify: false)
 
   if cl == none {
     text("No cover letter provided.")
@@ -43,28 +24,46 @@
   let company = cl.at("company_connection_paragraph", default: none)
   let closing = cl.at("closing_paragraph", default: "")
 
+  // ── Sender info ────────────────────────────────────────────
+  if location != none { text(location) }
+  if phone != none { text(phone) }
+  text(email)
+  v(0.3em)
+
+  // ── Date ───────────────────────────────────────────────────
+  let now = datetime.today()
+  text(now.display("[day] [month repr:long] [year]"))
+  v(0.6em)
+
+  // ── Recipient ──────────────────────────────────────────────
+  text("Hiring Manager")
+  v(0.6em)
+
+  // ── Salutation ─────────────────────────────────────────────
   if opening != "" {
     text(opening)
-    v(0.4em)
+    v(0.3em)
   }
 
+  // ── Body ───────────────────────────────────────────────────
   for para in body {
     text(para)
-    v(0.4em)
+    v(0.3em)
   }
 
   if company != none and company != "" {
     text(company)
-    v(0.4em)
+    v(0.3em)
   }
 
+  // ── Closing ────────────────────────────────────────────────
   if closing != "" {
-    v(0.2em)
+    v(0.15em)
     text(closing)
   }
 
-  v(1em)
+  v(0.6em)
   text("Sincerely,")
-  v(0.8em)
+  v(0.6em)
   text(weight: "bold", first + " " + last)
 }

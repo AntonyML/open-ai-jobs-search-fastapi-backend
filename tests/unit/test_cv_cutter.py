@@ -375,7 +375,7 @@ async def test_execute_apply_with_cv_cutter_flow(db_session):
                 (Path("/tmp/cv_final.pdf"), 2),
             ]
             with patch("app.services.cv_cutter.trim_cv_to_page_limit") as mock_cutter:
-                trimmed = mock_tailored_experience().experience
+                trimmed = mock_tailored_experience().tailored_experience
                 mock_cutter.return_value = (trimmed, CVTrimResult(
                     entries_before=2, bullets_before=3, bullets_removed=1,
                     pages_achieved=2, removed_bullet_texts=["Low rel bullet"],

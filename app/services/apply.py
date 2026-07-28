@@ -905,6 +905,20 @@ async def _compile_latex_raw(
 
     tex_file.write_text(tex_content, encoding="utf-8")
 
+    # Resolve to long paths (avoid ~ short-name issues with lualatex on Windows)
+    if sys.platform == "win32":
+        import ctypes
+        _GetLongPathNameW = ctypes.windll.kernel32.GetLongPathNameW
+        _GetLongPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        _buf = ctypes.create_unicode_buffer(260)
+        for _p in (str(tex_file), str(pdf_file), str(output_dir)):
+            n = _GetLongPathNameW(_p, _buf, 260)
+            if n > 0 and n <= 260:
+                _resolved = _buf.value
+                if _p == str(tex_file): tex_file = Path(_resolved)
+                elif _p == str(pdf_file): pdf_file = Path(_resolved)
+                elif _p == str(output_dir): output_dir = Path(_resolved)
+
     engine_bin = _resolve_latex_binary(engine)
     for _ in range(2):
         loop = asyncio.get_running_loop()
@@ -918,7 +932,7 @@ async def _compile_latex_raw(
         )
         stdout, stderr = result.stdout, result.stderr
 
-        if result.returncode != 0:
+        if result.returncode != 0 and not pdf_file.exists():
             error_output = stderr.decode("utf-8", errors="replace")
             raise LatexCompileError(
                 f"{engine} compilation failed for {job_name}: {error_output}"

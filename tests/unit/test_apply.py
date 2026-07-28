@@ -213,7 +213,7 @@ async def sample_application(db_session, sample_candidate, sample_job, sample_ev
 def mock_tailored_experience():
     """Mock tailored experience output from LLM."""
     return apply.TailoredExperienceLLMOutput(
-        experience=[
+        tailored_experience=[
             apply.TailoredExperienceEntry(
                 title="Senior ML Engineer",
                 company="Acme Corp",
@@ -535,7 +535,7 @@ async def test_build_tailored_experience_prompt(sample_candidate, sample_job, sa
     assert messages[1]["role"] == "user"
     assert "GUARDRAIL" in messages[0]["content"]
     assert "X-Y-Z" in messages[0]["content"]
-    assert "Jane Doe" in messages[0]["content"]
+    assert "Test User" in messages[0]["content"]
     assert "Senior Machine Learning Engineer" in messages[0]["content"]
     assert "Kubernetes" in messages[0]["content"]  # missing keyword
 
@@ -543,7 +543,7 @@ async def test_build_tailored_experience_prompt(sample_candidate, sample_job, sa
 @pytest.mark.asyncio
 async def test_build_cover_letter_prompt(sample_candidate, sample_job, sample_evaluation):
     """build_cover_letter_prompt creates correct prompt structure."""
-    tailored_exp = mock_tailored_experience().experience
+    tailored_exp = mock_tailored_experience().tailored_experience
     messages = apply.build_cover_letter_prompt(sample_candidate, sample_job, sample_evaluation, tailored_exp)
 
     assert len(messages) == 2
@@ -556,12 +556,12 @@ async def test_build_cover_letter_prompt(sample_candidate, sample_job, sample_ev
 @pytest.mark.asyncio
 async def test_render_cv_latex(sample_candidate, sample_job):
     """render_cv_latex produces valid LaTeX with replaced placeholders."""
-    tailored_exp = mock_tailored_experience().experience
+    tailored_exp = mock_tailored_experience().tailored_experience
     latex = apply.render_cv_latex(sample_candidate, tailored_exp, sample_job)
 
-    assert "Jane Doe" in latex
+    assert "Test User" in latex
     assert "Copenhagen, Denmark" in latex
-    assert "jane@example.com" in latex
+    assert "test@example.com" in latex
     assert "Senior ML Engineer" in latex
     assert "Acme Corp" in latex
     assert "TensorRT" in latex
@@ -576,8 +576,8 @@ async def test_render_cover_letter_latex(sample_candidate, sample_job):
     cover_content = mock_cover_letter()
     latex = apply.render_cover_letter_latex(sample_candidate, sample_job, cover_content)
 
-    assert "Jane Doe" in latex
-    assert "jane@example.com" in latex
+    assert "Test User" in latex
+    assert "test@example.com" in latex
     assert "TechCorp" in latex
     assert "Senior Machine Learning Engineer" in latex
     assert "TensorRT" in latex
@@ -588,7 +588,7 @@ async def test_render_cover_letter_latex(sample_candidate, sample_job):
 @pytest.mark.asyncio
 async def test_extract_incorporated_keywords():
     """_extract_incorporated_keywords finds keywords in tailored experience."""
-    tailored_exp = mock_tailored_experience().experience
+    tailored_exp = mock_tailored_experience().tailored_experience
     missing = ["Kubernetes", "AWS", "CI/CD", "Docker", "Python"]
 
     incorporated = apply._extract_incorporated_keywords(tailored_exp, missing)
@@ -602,7 +602,7 @@ async def test_extract_incorporated_keywords():
 @pytest.mark.asyncio
 async def test_extract_addressed_red_flags():
     """_extract_addressed_red_flags finds addressed red flags."""
-    tailored_exp = mock_tailored_experience().experience
+    tailored_exp = mock_tailored_experience().tailored_experience
     red_flags = ["Gap in employment 2017-2018", "No Kubernetes experience"]
 
     addressed = apply._extract_addressed_red_flags(tailored_exp, red_flags)
