@@ -1196,6 +1196,7 @@ async def execute_apply(
     cover_letter_template: str = "cover-cls",
     provider_config: dict | None = None,
     application: Application | None = None,
+    use_typst: bool = False,
 ) -> ApplyResult:
     """Execute the full apply workflow with Drafter-Reviewer pipeline.
 
@@ -1206,6 +1207,9 @@ async def execute_apply(
     4. REVISE: Apply feedback and regenerate (1 LLM call, temp=0.2)
     5. RENDER FINAL: Produce final LaTeX (deterministic)
     6. COMPILE: LaTeX compilation and page count verification
+
+    When ``use_typst=True``, stages 1–6 use JSON prompts + Typst compile
+    instead of the existing LaTeX pipeline.  LaTeX remains the default.
 
     The pipeline_stage is persisted in the Application record so the
     frontend can show real-time progress.
@@ -1279,94 +1283,227 @@ async def execute_apply(
             await db.commit()
 
         # ═══════════════════════════════════════════════════════════════
-        # STAGE 1: DRAFT — Generate tailored experience + cover letter
+        # BRANCH: LaTeX (default) vs JSON/Typst pipeline
         # ═══════════════════════════════════════════════════════════════
 
-        tailored_experience = await _generate_tailored_experience(
-            candidate, job, evaluation, provider_config
-        )
-
-        cover_letter_content = await _generate_cover_letter(
-            candidate, job, evaluation, tailored_experience, provider_config
-        )
-
-        # ═══════════════════════════════════════════════════════════════
-        # STAGE 2: RENDER DRAFT — Produce LaTeX from draft content
-        # Save draft LaTeX for audit trail (pre-review content).
-        # ═══════════════════════════════════════════════════════════════
-
-        draft_cv_tex = render_cv_latex(candidate, tailored_experience, job)
-        draft_cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
-
-        # Persist draft for audit trail and update stage
-        application.pipeline_stage = "draft"
-        application.draft_cv_tex = draft_cv_tex
-        application.draft_cover_letter_tex = draft_cover_tex
-        await db.commit()
-
-        # ── Company research ──────────────────────────────────────────
-        # Fetch basic company info so the reviewer can verify cover letter
-        # claims about the target company.
-        company_research = await _fetch_company_info(job, provider_config)
-
-        # ═══════════════════════════════════════════════════════════════
-        # STAGE 3: REVIEW — Second agent critiques the draft
-        # ═══════════════════════════════════════════════════════════════
-
-        review_feedback = await _generate_review(
-            candidate, job, evaluation,
-            draft_cv_tex, draft_cover_tex,
-            tailored_experience, cover_letter_content,
-            provider_config,
-            company_research=company_research,
-        )
-
-        # Persist review feedback and update stage
-        application.pipeline_stage = "reviewed"
-        application.review_feedback = review_feedback.model_dump()
-        application.review_issues = [i.model_dump() for i in review_feedback.issues]
-        await db.commit()
-
-        # ═══════════════════════════════════════════════════════════════
-        # STAGE 4: REVISE — Apply feedback and regenerate
-        # ═══════════════════════════════════════════════════════════════
-
-        revised_experience, revise_result = await _generate_revision(
-            candidate, job, evaluation,
-            tailored_experience, cover_letter_content,
-            review_feedback, provider_config,
-        )
-
-        # ═══════════════════════════════════════════════════════════════
-        # STAGE 4b: REVISE COVER LETTER — Always regenerate cover letter
-        # using the revised experience section. This ensures the cover letter
-        # stays aligned with the CV after revision, even if the reviewer found
-        # no specific cover letter issues. Falls back to original on LLM error.
-        # ═══════════════════════════════════════════════════════════════
-
-        try:
-            revised_cover_letter = await _generate_cover_letter(
-                candidate, job, evaluation, revised_experience, provider_config
+        if use_typst:
+            # ── JSON/Typst pipeline (Fase 1) ──────────────────────────
+            from app.services.apply_json import (
+                generate_cv as _json_cv,
+                generate_cover_letter as _json_cl,
+                generate_review as _json_review,
+                generate_revision as _json_revise,
             )
-            logger.info("Cover letter regenerated with revised experience")
-        except Exception as e:
-            logger.warning(f"Cover letter revision failed — keeping original: {e}")
-            revised_cover_letter = cover_letter_content
+            from app.services.pdf_compiler_typst import compile_cv as _typst_compile
 
-        # Persist revised stage
-        application.pipeline_stage = "revised"
-        await db.commit()
+            # STAGE 1: DRAFT — JSON	
+            cv_output = await _json_cv(candidate, job, evaluation, provider_config)
+            cv_cover = await _json_cl(candidate, job, evaluation, provider_config)
+            if cv_cover is not None:
+                cv_output.cv.cover_letter = cv_cover
 
-        # ═══════════════════════════════════════════════════════════════
-        # STAGE 5: RENDER FINAL — Produce final LaTeX from revised content
-        # ═══════════════════════════════════════════════════════════════
+            # STAGE 2: PERSIST DRAFT
+            application.pipeline_stage = "draft"
+            application.draft_cv_tex = json.dumps(
+                cv_output.cv.model_dump(), indent=2, ensure_ascii=False
+            )
+            await db.commit()
 
-        final_cv_tex = render_cv_latex(candidate, revised_experience, job)
-        final_cover_tex = render_cover_letter_latex(candidate, job, revised_cover_letter)
+            # STAGE 3: REVIEW (fresh context — reviewer sees JSON, not drafter reasoning)
+            company_research = await _fetch_company_info(job, provider_config)
+            cv_dict = cv_output.cv.model_dump()
+            review_feedback = await _json_review(
+                cv_dict, candidate, job, evaluation, provider_config,
+            )
+
+            application.pipeline_stage = "reviewed"
+            application.review_feedback = review_feedback.model_dump()
+            application.review_issues = [i.model_dump() for i in review_feedback.issues]
+            await db.commit()
+
+            # STAGE 4: REVISE
+            cv_output = await _json_revise(
+                cv_dict, review_feedback, candidate, job, provider_config,
+            )
+
+            application.pipeline_stage = "revised"
+            await db.commit()
+
+            # STAGE 5-6: RENDER + COMPILE via Typst
+            final_cv_dict = cv_output.cv.model_dump()
+            generated_dir = Path("generated") / user_id / job_posting_id
+            generated_dir.mkdir(parents=True, exist_ok=True)
+            cv_pdf_path = generated_dir / f"cv_{job.company}_{job.title}.pdf"
+            _typst_compile(final_cv_dict, output=cv_pdf_path)
+            cv_pages = await _get_pdf_page_count(cv_pdf_path)
+            cv_compiled = True
+
+            if cv_output.cv.cover_letter is not None:
+                # Cover letter is embedded in same PDF (after pagebreak)
+                cover_pdf_path = cv_pdf_path
+                cover_pages = max(0, cv_pages - 1)
+                cover_compiled = True
+            else:
+                cover_pdf_path = None
+                cover_pages = 0
+                cover_compiled = False
+
+            # Store JSON CV for audit
+            application.tailored_experience = final_cv_dict.get("experience", [])
+            application.incorporated_keywords = [
+                kw.model_dump() for kw in (cv_output.metadata.incorporated_keywords or [])
+            ]
+            application.addressed_red_flags = [
+                rf.model_dump() for rf in (cv_output.metadata.addressed_red_flags or [])
+            ]
+
+            # ── This ends the branching block. The rest of the function
+            # (persist + ATS check + compile finalisation) is shared below.
+            # We set the LaTeX-render variables to None so the shared code
+            # skips the LaTeX-specific sections.
+            final_cv_tex = None
+            final_cover_tex = None
+            cv_trim_result = None
+            cv_compile_success = True
+
+        else:
+            # ═══════════════════════════════════════════════════════════════
+            # STAGE 1: DRAFT — Generate tailored experience + cover letter
+            # ═══════════════════════════════════════════════════════════════
+
+            tailored_experience = await _generate_tailored_experience(
+                candidate, job, evaluation, provider_config
+            )
+
+            cover_letter_content = await _generate_cover_letter(
+                candidate, job, evaluation, tailored_experience, provider_config
+            )
+
+            # ═══════════════════════════════════════════════════════════════
+            # STAGE 2: RENDER DRAFT — Produce LaTeX from draft content
+            # Save draft LaTeX for audit trail (pre-review content).
+            # ═══════════════════════════════════════════════════════════════
+
+            draft_cv_tex = render_cv_latex(candidate, tailored_experience, job)
+            draft_cover_tex = render_cover_letter_latex(candidate, job, cover_letter_content)
+
+            # Persist draft for audit trail and update stage
+            application.pipeline_stage = "draft"
+            application.draft_cv_tex = draft_cv_tex
+            application.draft_cover_letter_tex = draft_cover_tex
+            await db.commit()
+
+            # ── Company research ──────────────────────────────────────────
+            # Fetch basic company info so the reviewer can verify cover letter
+            # claims about the target company.
+            company_research = await _fetch_company_info(job, provider_config)
+
+            # ═══════════════════════════════════════════════════════════════
+            # STAGE 3: REVIEW — Second agent critiques the draft
+            # ═══════════════════════════════════════════════════════════════
+
+            review_feedback = await _generate_review(
+                candidate, job, evaluation,
+                draft_cv_tex, draft_cover_tex,
+                tailored_experience, cover_letter_content,
+                provider_config,
+                company_research=company_research,
+            )
+
+            # Persist review feedback and update stage
+            application.pipeline_stage = "reviewed"
+            application.review_feedback = review_feedback.model_dump()
+            application.review_issues = [i.model_dump() for i in review_feedback.issues]
+            await db.commit()
+
+            # ═══════════════════════════════════════════════════════════════
+            # STAGE 4: REVISE — Apply feedback and regenerate
+            # ═══════════════════════════════════════════════════════════════
+
+            revised_experience, revise_result = await _generate_revision(
+                candidate, job, evaluation,
+                tailored_experience, cover_letter_content,
+                review_feedback, provider_config,
+            )
+
+            # ═══════════════════════════════════════════════════════════════
+            # STAGE 4b: REVISE COVER LETTER — Always regenerate cover letter
+            # using the revised experience section. This ensures the cover letter
+            # stays aligned with the CV after revision, even if the reviewer found
+            # no specific cover letter issues. Falls back to original on LLM error.
+            # ═══════════════════════════════════════════════════════════════
+
+            try:
+                revised_cover_letter = await _generate_cover_letter(
+                    candidate, job, evaluation, revised_experience, provider_config
+                )
+                logger.info("Cover letter regenerated with revised experience")
+            except Exception as e:
+                logger.warning(f"Cover letter revision failed — keeping original: {e}")
+                revised_cover_letter = cover_letter_content
+
+            # Persist revised stage
+            application.pipeline_stage = "revised"
+            await db.commit()
+
+            # ═══════════════════════════════════════════════════════════════
+            # STAGE 5: RENDER FINAL — Produce final LaTeX from revised content
+            # ═══════════════════════════════════════════════════════════════
+
+            final_cv_tex = render_cv_latex(candidate, revised_experience, job)
+            final_cover_tex = render_cover_letter_latex(candidate, job, revised_cover_letter)
 
         # ═══════════════════════════════════════════════════════════════
         # STAGE 6: COMPILE — LaTeX compilation + page count verification
         # ═══════════════════════════════════════════════════════════════
+
+        if use_typst:
+            # Typst path already compiled in its branch.  Run ATS check on
+            # the PDF, persist everything, and return early.
+            ats_result = None
+            try:
+                ats_result = await ats_check.check_ats_parseability(
+                    pdf_path=cv_pdf_path,
+                    job_posting=job,
+                    candidate=candidate,
+                )
+            except Exception as e:
+                logger.warning(f"ATS check failed (non-blocking): {e}")
+
+            application.cv_pdf_path = str(cv_pdf_path)
+            application.cv_compiled = True
+            application.cv_pages = cv_pages
+            application.cover_letter_pdf_path = str(cover_pdf_path) if cover_pdf_path else None
+            application.cover_letter_compiled = cover_compiled
+            application.cover_letter_pages = cover_pages
+            application.pipeline_stage = "verified" if (ats_result and ats_result.pass_ats) else "compiled"
+            application.ats_score = ats_result.keyword_coverage if ats_result else None
+            application.ats_missing_keywords = ats_result.missing_keywords if ats_result else None
+            application.ats_pass = ats_result.pass_ats if ats_result else None
+            application.ats_checked_at = datetime.now(timezone.utc) if ats_result else None
+
+            job.status = "applied"
+            await db.commit()
+            await db.refresh(application)
+
+            ats_summary = ""
+            if ats_result is not None:
+                ats_summary = (
+                    f" ATS check passed ({ats_result.keyword_coverage:.0%} keyword coverage)."
+                    if ats_result.pass_ats else
+                    f" ATS check flagged {len(ats_result.missing_keywords)} missing keywords."
+                )
+
+            return ApplyResult(
+                application_id=application.id,
+                cv_compiled=True,
+                cv_pages=cv_pages,
+                cover_letter_compiled=cover_compiled,
+                cover_letter_pages=cover_pages,
+                message=f"Application generated (Typst): "
+                        f"CV ({cv_pages} pages), Cover Letter ({cover_pages} page)."
+                        f"{ats_summary}",
+            )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Resolver el path largo de Windows (MiKTeX no tolera tildes 8.3)

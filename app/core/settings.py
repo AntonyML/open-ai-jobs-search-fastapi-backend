@@ -79,11 +79,16 @@ class Settings(BaseSettings):
     # Max concurrent LLM workers in the execution queue
     orchestrator_max_concurrency: int = 4
 
-    # -- LaTeX -------------------------------------------------
+    # -- LaTeX / Typst -----------------------------------------
     # Directorio con los binarios de LaTeX (lualatex, xelatex, pdfinfo, pdftotext).
     # Si es None, usa los binarios del PATH del sistema.
     # Para MiKTeX Portable: app/external/latex/miktex-portable/miktex/bin/x64
     latex_bin_dir: str | None = None
+
+    # Usar Typst en vez de LaTeX para la compilación del CV.
+    # False = LaTeX (default, comportamiento existente).
+    # True  = JSON prompts + Typst compile (habilitado para comparación en Fase 1).
+    use_typst: bool = False
 
     @property
     def latex_cv_dir(self) -> Path:
