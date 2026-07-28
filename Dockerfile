@@ -1,11 +1,9 @@
-# Dockerfile for FastAPI backend with MiKTeX Portable and Bun
+# Dockerfile for FastAPI backend with Typst and Bun
 # Multi-stage build for smaller final image
 
 # =====================================================================
 # Stage 1: Build dependencies and install Bun
 # =====================================================================
-# Pin to bookworm (Debian 12) because MiKTeX only provides an apt
-# repository for bookworm. python:3.11-slim now defaults to trixie.
 FROM python:3.11-slim-bookworm AS builder
 
 # Install system dependencies
@@ -20,36 +18,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
-# Install Python dependencies
+# Install Python dependencies (including typst)
 COPY pyproject.toml .
 COPY app/ ./app/
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir .[typst]
 
 # =====================================================================
-# Stage 2: Runtime image with MiKTeX installed via apt
+# Stage 2: Runtime
 # =====================================================================
-# Pin to bookworm (Debian 12) to match the MiKTeX apt repository.
 FROM python:3.11-slim-bookworm AS runtime
 
-# Install runtime dependencies + MiKTeX
-# MiKTeX's key.asc URL is no longer available (404), so we retrieve the
-# signing key from the Ubuntu keyserver as documented by MiKTeX.
-# Key ID: D6BC243565B2087BC3F897C9277A7293F59E4889
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
-    gnupg \
     ca-certificates \
-    && gpg --homedir /tmp --no-default-keyring --keyring /usr/share/keyrings/miktex-keyring.gpg \
-        --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys D6BC243565B2087BC3F897C9277A7293F59E4889 \
-    && echo "deb [signed-by=/usr/share/keyrings/miktex-keyring.gpg] https://miktex.org/download/debian bookworm universe" > /etc/apt/sources.list.d/miktex.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends miktex \
-    && rm -rf /var/lib/apt/lists/* \
-    && miktexsetup --shared=yes finish \
-    && initexmf --admin --set-config-value [MPM]AutoInstall=1 \
-    && which lualatex && which xelatex && which pdfinfo && which pdftotext
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
@@ -65,10 +50,10 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=appuser:appuser --from=builder /root/.bun /home/appuser/.bun
 ENV PATH="/home/appuser/.bun/bin:${PATH}"
 
-# Copy application code (only what's needed)
+# Copy application code
 COPY --chown=appuser:appuser app/ ./app/
 
-# Switch to non-root user for bun install (so node_modules is owned by appuser)
+# Switch to non-root user for bun install
 USER appuser
 
 # Install scraper TypeScript dependencies
@@ -77,9 +62,6 @@ RUN for dir in app/external/scrapers/*/cli; do \
         bun install --cwd "$dir"; \
       fi; \
     done
-
-# Set MiKTeX binary path (installed via apt)
-ENV LATEX_BIN_DIR=/usr/bin
 
 # Switch back to root to install entrypoint
 USER root
@@ -94,9 +76,9 @@ USER appuser
 # Expose port
 EXPOSE 8000
 
-# Health check (only for API process)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
-# Run via entrypoint — set DOCKER_PROCESS=worker to start the ranking worker
+# Run via entrypoint
 CMD ["/entrypoint.sh"]

@@ -24,6 +24,7 @@ dependencies = [
     "sentry-sdk>=2.20.0,<3.0.0",
     "aiosqlite>=0.20.0,<0.21.0",
     "aiocache[redis]>=0.12.0,<1.0.0",
+    "typst>=0.13.0,<0.14.0",
 ]
 
 [project.optional-dependencies]

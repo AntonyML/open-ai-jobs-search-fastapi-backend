@@ -19,7 +19,7 @@ from app.db.models import (
     RankEvaluation,
     User,
 )
-from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
+from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.services import apply
 
 
@@ -260,50 +260,7 @@ def mock_cover_letter():
 # ── Tests ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_execute_apply_basic(db_session, sample_candidate, sample_job, sample_evaluation):
-    """execute_apply generates tailored CV and cover letter."""
-    with patch("app.services.apply.llm_completion_structured") as mock_llm:
-        # First call: tailored experience
-        # Second call: cover letter
-        mock_llm.side_effect = [
-            mock_tailored_experience(),
-            mock_cover_letter(),
-        ]
 
-        with patch("app.services.apply.compile_latex") as mock_compile:
-            mock_compile.side_effect = [
-                (Path("/tmp/cv.pdf"), 2),  # CV: 2 pages
-                (Path("/tmp/cover.pdf"), 1),  # Cover letter: 1 page
-            ]
-
-            with patch("app.services.apply.shutil.copy2"):
-                with patch("app.services.apply.Path.mkdir"):
-                    with patch("app.services.apply.Path.exists", return_value=True):
-                        with patch("app.services.apply.Path.write_text"):
-                            result = await apply.execute_apply(
-                            db=db_session,
-                            user_id="test-user-id",
-                            job_posting_id=sample_job.id,
-                            rank_evaluation_id=sample_evaluation.id,
-                        )
-
-    assert result.application_id is not None
-    assert result.cv_compiled is True
-    assert result.cv_pages == 2
-    assert result.cover_letter_compiled is True
-    assert result.cover_letter_pages == 1
-
-    # Verify application was created
-    app_result = await db_session.execute(
-        select(Application).where(Application.id == result.application_id)
-    )
-    application = app_result.scalar_one_or_none()
-    assert application is not None
-    assert application.user_id == "test-user-id"
-    assert application.job_posting_id == sample_job.id
-    assert application.tailored_experience is not None
-    assert len(application.tailored_experience) == 2
 
 
 @pytest.mark.asyncio
@@ -412,25 +369,7 @@ async def test_execute_apply_llm_error(db_session, sample_candidate, sample_job,
             )
 
 
-@pytest.mark.asyncio
-async def test_execute_apply_latex_compile_error(db_session, sample_candidate, sample_job, sample_evaluation):
-    """execute_apply raises LatexCompileError when LaTeX compilation fails."""
-    with patch("app.services.apply.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
-            mock_tailored_experience(),
-            mock_cover_letter(),
-        ]
 
-        with patch("app.services.apply.compile_latex") as mock_compile:
-            mock_compile.side_effect = LatexCompileError("lualatex failed: missing font")
-
-            with pytest.raises(LatexCompileError):
-                await apply.execute_apply(
-                    db=db_session,
-                    user_id="test-user-id",
-                    job_posting_id=sample_job.id,
-                    rank_evaluation_id=sample_evaluation.id,
-                )
 
 
 @pytest.mark.asyncio
@@ -554,38 +493,6 @@ async def test_build_cover_letter_prompt(sample_candidate, sample_job, sample_ev
 
 
 @pytest.mark.asyncio
-async def test_render_cv_latex(sample_candidate, sample_job):
-    """render_cv_latex produces valid LaTeX with replaced placeholders."""
-    tailored_exp = mock_tailored_experience().tailored_experience
-    latex = apply.render_cv_latex(sample_candidate, tailored_exp, sample_job)
-
-    assert "Test User" in latex
-    assert "Copenhagen, Denmark" in latex
-    assert "test@example.com" in latex
-    assert "Senior ML Engineer" in latex
-    assert "Acme Corp" in latex
-    assert "TensorRT" in latex
-    assert "\\section{Core Competencies}" in latex
-    assert "\\section{Professional Experience}" in latex
-    assert "\\section{Education}" in latex
-
-
-@pytest.mark.asyncio
-async def test_render_cover_letter_latex(sample_candidate, sample_job):
-    """render_cover_letter_latex produces valid LaTeX with replaced placeholders."""
-    cover_content = mock_cover_letter()
-    latex = apply.render_cover_letter_latex(sample_candidate, sample_job, cover_content)
-
-    assert "Test User" in latex
-    assert "test@example.com" in latex
-    assert "TechCorp" in latex
-    assert "Senior Machine Learning Engineer" in latex
-    assert "TensorRT" in latex
-    assert "Dear TechCorp," in latex
-    assert "Raleway-Medium" in latex  # font for bullets
-
-
-@pytest.mark.asyncio
 async def test_extract_incorporated_keywords():
     """_extract_incorporated_keywords finds keywords in tailored experience."""
     tailored_exp = mock_tailored_experience().tailored_experience
@@ -611,73 +518,7 @@ async def test_extract_addressed_red_flags():
     assert len(addressed) >= 0  # May or may not find depending on text matching
 
 
-# ── LaTeX compilation tests (mocked) ────────────────────────────────
 
-
-@pytest.mark.asyncio
-async def test_compile_latex_success():
-    """compile_latex returns PDF path and page count on success."""
-    import tempfile
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-        mock_exec.return_value = mock_proc
-
-        with patch("app.services.apply._get_pdf_page_count", return_value=2):
-            with patch("pathlib.Path.exists", return_value=True):
-                pdf_path, pages = await apply.compile_latex(
-                    "dummy tex content",
-                    Path(tempfile.gettempdir()),
-                    "test_cv",
-                    "lualatex",
-                    2,
-                )
-
-    assert pages == 2
-    assert pdf_path.name == "test_cv.pdf"
-
-
-@pytest.mark.asyncio
-async def test_compile_latex_failure():
-    """compile_latex raises LatexCompileError on compilation failure."""
-    import tempfile
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"Error: missing font"))
-        mock_exec.return_value = mock_proc
-
-        with pytest.raises(LatexCompileError):
-            await apply.compile_latex(
-                "dummy tex content",
-                Path(tempfile.gettempdir()),
-                "test_cv",
-                "lualatex",
-                2,
-            )
-
-
-@pytest.mark.asyncio
-async def test_compile_latex_wrong_page_count():
-    """compile_latex raises LatexCompileError on wrong page count."""
-    import tempfile
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-        mock_exec.return_value = mock_proc
-
-        with patch("app.services.apply._get_pdf_page_count", return_value=3):  # Expected 2, got 3
-            with patch("pathlib.Path.exists", return_value=True):
-                with pytest.raises(LatexCompileError):
-                    await apply.compile_latex(
-                        "dummy tex content",
-                        Path(tempfile.gettempdir()),
-                        "test_cv",
-                        "lualatex",
-                        2,
-                    )
 
 
 # ── Drafter-Reviewer happy path tests ──────────────────────────────
