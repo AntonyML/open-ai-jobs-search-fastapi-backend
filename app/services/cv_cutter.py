@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from app.schemas.apply import TailoredExperienceEntry
 from app.schemas.cv_cutter import CVTrimResult, ScoredBullet
@@ -255,6 +255,182 @@ def _remove_bullet(
 
 
 # ── Main entry point ────────────────────────────────────────────────
+
+
+# ── Dict-based helpers (for JSON/Typst path) ─────────────────────────
+
+
+def _extract_all_bullets_from_dicts(
+    experience: list[dict],
+) -> list[ScoredBullet]:
+    """Flatten dict experience entries into ScoredBullet list."""
+    bullets: list[ScoredBullet] = []
+    for exp_idx, entry in enumerate(experience):
+        for bul_idx, bullet_text in enumerate(entry.get("bullets", [])):
+            bullets.append(
+                ScoredBullet(
+                    entry_index=exp_idx,
+                    bullet_index=bul_idx,
+                    text=bullet_text,
+                )
+            )
+    return bullets
+
+
+def _bullets_from_experience_dicts(
+    experience: list[dict],
+) -> list[tuple[int, int, str]]:
+    """Extract (entry_idx, bullet_idx, text) from dict experience."""
+    result: list[tuple[int, int, str]] = []
+    for exp_idx, entry in enumerate(experience):
+        for bul_idx, text in enumerate(entry.get("bullets", [])):
+            result.append((exp_idx, bul_idx, text))
+    return result
+
+
+def _remove_bullet_from_dicts(
+    experience: list[dict],
+    entry_index: int,
+    bullet_index: int,
+) -> list[dict]:
+    """Remove a bullet from a dict-based experience list (deep-copied)."""
+    if entry_index >= len(experience):
+        return experience
+
+    entry = experience[entry_index]
+    if len(entry.get("bullets", [])) <= MIN_BULLETS_PER_ENTRY:
+        return experience
+
+    result = deepcopy(experience)
+    del result[entry_index]["bullets"][bullet_index]
+    return result
+
+
+async def trim_cv_experience(
+    experience: list[dict],
+    job_posting: JobPosting,
+    compile_fn: Callable[[list[dict]], Awaitable[tuple[Path, int]]],
+    cover_text: str = "",
+    max_pages: int = 2,
+) -> tuple[list[dict], CVTrimResult]:
+    """Trim dict-based CV experience to fit within a page limit.
+
+    Same scoring logic as ``trim_cv_to_page_limit`` but operates on
+    ``list[dict]`` (the JSON path's experience entries) instead of
+    ``list[TailoredExperienceEntry]``.
+
+    Args:
+        experience: CV experience entries as dicts with ``bullets`` key.
+        job_posting: The JobPosting (for keyword extraction).
+        compile_fn: Async callable that takes the current experience list,
+            renders + compiles the full CV, and returns ``(pdf_path, pages)``.
+        cover_text: Cover letter text for reference-score detection.
+        max_pages: Target page count (default 2).
+
+    Returns:
+        Tuple of (trimmed_experience, CVTrimResult).
+    """
+    with bind_context(pipeline_stage="cv_cutter"):
+        bullets_before = sum(len(e.get("bullets", [])) for e in experience)
+        entries_before = len(experience)
+
+        # First compile to check current page count
+        _, current_pages = await compile_fn(experience)
+
+        if current_pages <= max_pages:
+            return experience, CVTrimResult(
+                entries_before=entries_before,
+                bullets_before=bullets_before,
+                bullets_removed=0,
+                pages_achieved=current_pages,
+                removed_bullet_texts=[],
+                remaining_bullets_per_entry=[
+                    len(e.get("bullets", [])) for e in experience
+                ],
+                was_trimmed=False,
+            )
+
+        trimmed_experience = deepcopy(experience)
+        removed_texts: list[str] = []
+
+        for iteration in range(MAX_TRIM_ITERATIONS):
+            current_bullets = _extract_all_bullets_from_dicts(trimmed_experience)
+            if not current_bullets:
+                break
+
+            all_current_tuples = _bullets_from_experience_dicts(trimmed_experience)
+
+            scored: list[ScoredBullet] = []
+            for sb in current_bullets:
+                sb.relevance_score = _compute_relevance_score(sb.text, job_posting)
+                sb.uniqueness_score = _compute_uniqueness_score(
+                    sb.text, all_current_tuples, (sb.entry_index, sb.bullet_index)
+                )
+                sb.cover_reference_score = _compute_cover_reference_score(
+                    sb.text, cover_text
+                )
+                sb.combined_score = (
+                    sb.relevance_score * WEIGHT_RELEVANCE
+                    + sb.uniqueness_score * WEIGHT_UNIQUENESS
+                    + sb.cover_reference_score * WEIGHT_COVER_REFERENCE
+                )
+                scored.append(sb)
+
+            scored.sort(key=lambda s: s.combined_score)
+
+            lowest = None
+            for sb in scored:
+                entry = trimmed_experience[sb.entry_index]
+                if len(entry.get("bullets", [])) > MIN_BULLETS_PER_ENTRY:
+                    lowest = sb
+                    break
+
+            if lowest is None:
+                break
+
+            removed_texts.append(lowest.text)
+            trimmed_experience = _remove_bullet_from_dicts(
+                trimmed_experience, lowest.entry_index, lowest.bullet_index
+            )
+
+            _, current_pages = await compile_fn(trimmed_experience)
+
+            if current_pages <= max_pages:
+                logger.info(
+                    f"CV trimmed to {max_pages} page(s) in {iteration + 1} iteration(s). "
+                    f"Removed {len(removed_texts)} bullet(s)."
+                )
+                return trimmed_experience, CVTrimResult(
+                    entries_before=entries_before,
+                    bullets_before=bullets_before,
+                    bullets_removed=len(removed_texts),
+                    pages_achieved=current_pages,
+                    removed_bullet_texts=removed_texts,
+                    remaining_bullets_per_entry=[
+                        len(e.get("bullets", [])) for e in trimmed_experience
+                    ],
+                    was_trimmed=True,
+                )
+
+        final_bullets = sum(
+            len(e.get("bullets", [])) for e in trimmed_experience
+        )
+        logger.warning(
+            f"CV trim exhausted: removed {len(removed_texts)} bullet(s) "
+            f"({bullets_before} → {final_bullets}), "
+            f"but still at {current_pages} pages (max {max_pages})."
+        )
+        return trimmed_experience, CVTrimResult(
+            entries_before=entries_before,
+            bullets_before=bullets_before,
+            bullets_removed=len(removed_texts),
+            pages_achieved=current_pages,
+            removed_bullet_texts=removed_texts,
+            remaining_bullets_per_entry=[
+                len(e.get("bullets", [])) for e in trimmed_experience
+            ],
+            was_trimmed=len(removed_texts) > 0,
+        )
 
 
 async def trim_cv_to_page_limit(

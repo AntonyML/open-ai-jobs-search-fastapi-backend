@@ -394,3 +394,169 @@ async def test_execute_apply_with_cv_cutter_flow(db_session):
                                         )
     assert result.application_id is not None and result.cv_compiled
     mock_cutter.assert_called_once()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# JSON/dict CV cutter (trim_cv_experience) — Fase 1.4
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _make_dict_experience(*bullet_lists: list[str]) -> list[dict]:
+    entries = []
+    for i, bullets in enumerate(bullet_lists):
+        entries.append({
+            "title": f"Role {i + 1}",
+            "company": f"Company {i + 1}",
+            "location": "Copenhagen",
+            "date_range": {"start": "2020-01", "end": "Present"},
+            "bullets": bullets,
+        })
+    return entries
+
+
+class TestTrimCvExperience:
+    """Tests for the dict-based trim_cv_experience function."""
+
+    async def _compile_ok(self, page_count: int = 1):
+        """Return a compile_fn that always reports the given page count."""
+        async def _compile(experience: list[dict]) -> tuple[Path, int]:
+            return Path("/tmp/cv.pdf"), page_count
+        return _compile
+
+    @pytest.mark.asyncio
+    async def test_no_trim_needed(self):
+        """CV already within page limit — no bullets removed."""
+        exp = _make_dict_experience(
+            ["Relevant bullet about Python"],
+            ["Another bullet about PyTorch"],
+        )
+        compile_fn = await self._compile_ok(page_count=1)
+        job = _make_job(requirements=["Python", "PyTorch"])
+
+        result_exp, result = await cv_cutter.trim_cv_experience(
+            exp, job, compile_fn, max_pages=2,
+        )
+
+        assert result.was_trimmed is False
+        assert result.bullets_removed == 0
+        assert len(result_exp) == 2
+        assert len(result_exp[0]["bullets"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_removes_lowest_scoring_bullet(self):
+        """When over page limit, the lowest-scoring bullet is removed."""
+        exp = _make_dict_experience(
+            ["Relevant Python experience", "Also decent SQL work"],
+            ["Irrelevant cooking hobby", "Another cooking detail"],
+        )
+        async def _compile_over(experience: list[dict]) -> tuple[Path, int]:
+            total = sum(len(e.get("bullets", [])) for e in experience)
+            pages = 2 if total > 2 else 1  # 1 page once down to 1 bullet/entry
+            return Path("/tmp/cv.pdf"), pages
+        job = _make_job(requirements=["Python"])
+
+        result_exp, result = await cv_cutter.trim_cv_experience(
+            exp, job, _compile_over, max_pages=1,
+        )
+
+        assert result.was_trimmed is True
+        assert result.bullets_removed >= 1
+        # The cooking bullet has no keyword overlap, should be removed before Python
+        all_bullets = (
+            result_exp[0].get("bullets", [])
+            + result_exp[1].get("bullets", [])
+        )
+        assert "Irrelevant cooking hobby" not in all_bullets
+
+    @pytest.mark.asyncio
+    async def test_protects_minimum_bullets(self):
+        """Never remove the last bullet from any entry."""
+        exp = _make_dict_experience(
+            ["Only bullet in role 1"],
+            ["Bullet A", "Bullet B"],
+        )
+        compile_fn = await self._compile_ok(page_count=3)  # Always over limit
+        job = _make_job(requirements=["Python"])
+
+        result_exp, result = await cv_cutter.trim_cv_experience(
+            exp, job, compile_fn, max_pages=1,
+        )
+
+        # First entry protects its only bullet
+        assert len(result_exp[0]["bullets"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_cover_reference_protects_bullet(self):
+        """Bullets referenced in cover text get a score boost."""
+        exp = _make_dict_experience(
+            ["Important Python skill used in project X", "Secondary note about setup"],
+            ["Less relevant detail about setup", "Minor side comment"],
+        )
+        cover_text = "Used in project X"
+        async def _compile_cover(experience: list[dict]) -> tuple[Path, int]:
+            total = sum(len(e.get("bullets", [])) for e in experience)
+            pages = 2 if total > 2 else 1
+            return Path("/tmp/cv.pdf"), pages
+        job = _make_job(requirements=["Python"])
+
+        result_exp, result = await cv_cutter.trim_cv_experience(
+            exp, job, _compile_cover, cover_text=cover_text, max_pages=1,
+        )
+
+        assert result.was_trimmed is True
+        # The bullet referenced in cover letter should survive
+        all_remaining = (
+            result_exp[0].get("bullets", [])
+            + result_exp[1].get("bullets", [])
+        )
+        assert "Important Python skill used in project X" in all_remaining
+
+    @pytest.mark.asyncio
+    async def test_exhausted_trim_returns_warning(self):
+        """When trimming can't reach target pages, return what we have."""
+        exp = _make_dict_experience(
+            ["Bullet 1a", "Bullet 1b"],
+            ["Bullet 2a", "Bullet 2b"],
+        )
+        # Always report more pages than limit
+        async def _compile_exhausted(experience: list[dict]) -> tuple[Path, int]:
+            return Path("/tmp/cv.pdf"), 5
+        job = _make_job(requirements=["Python"])
+
+        result_exp, result = await cv_cutter.trim_cv_experience(
+            exp, job, _compile_exhausted, max_pages=1,
+        )
+
+        # Should have removed all removable bullets (down to min 1 each)
+        assert result.bullets_removed == 2
+        assert result.was_trimmed is True
+
+    @pytest.mark.asyncio
+    async def test_relevance_score_determines_order(self):
+        """Higher-relevance bullets are kept over lower-relevance ones."""
+        # Entry 0 has Python (high relevance) + SQL (no overlap = 0)
+        # Entry 1 has two baking bullets (no overlap = 0)
+        # After trimming, at least the Python-relevant bullet survives.
+        exp = _make_dict_experience(
+            ["Python expert with 5 years", "SQL database design"],
+            ["Expert baker with pastry degree", "Decorative cake techniques"],
+        )
+        async def _compile(experience: list[dict]) -> tuple[Path, int]:
+            total = sum(len(e.get("bullets", [])) for e in experience)
+            pages = 2 if total > 2 else 1
+            return Path("/tmp/cv.pdf"), pages
+        job = _make_job(requirements=["Python", "PyTorch", "ML"])
+
+        result_exp, result = await cv_cutter.trim_cv_experience(
+            exp, job, _compile, max_pages=1,
+        )
+
+        assert result.was_trimmed is True
+        all_bullets = (
+            result_exp[0].get("bullets", [])
+            + result_exp[1].get("bullets", [])
+        )
+        # Python-related bullet must survive
+        assert "Python expert with 5 years" in all_bullets
+        # At least one zero-relevance bullet was removed
+        assert result.bullets_removed >= 1

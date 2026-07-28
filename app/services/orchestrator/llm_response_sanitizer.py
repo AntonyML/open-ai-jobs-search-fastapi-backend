@@ -166,9 +166,11 @@ def _sanitize_values(
                     "Truncating field '%s' from %d items to %d",
                     key, len(value), max_len,
                 )
-                sanitized[key] = [str(v).strip() for v in value[:max_len]]
-            else:
-                sanitized[key] = [str(v).strip() if not isinstance(v, (int, float)) else v for v in value]
+                value = value[:max_len]
+            sanitized[key] = [
+                str(v).strip() if isinstance(v, str)
+                else v for v in value
+            ]
 
         # Dict values (pass through)
         elif isinstance(value, dict):

@@ -387,7 +387,12 @@ async def _llm_json(
     )
 
     constraints = field_constraints or default_field_constraints()
-    cleaned = sanitize_llm_response(raw, schema_type.__name__, constraints)
+    try:
+        cleaned = sanitize_llm_response(raw, schema_type.__name__, constraints)
+    except ValueError as exc:
+        raise LLMError(
+            f"LLM response could not be parsed for {schema_type.__name__}: {exc}"
+        ) from exc
 
     try:
         schema_type.model_validate(cleaned)
