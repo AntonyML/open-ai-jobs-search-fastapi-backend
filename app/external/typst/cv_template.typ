@@ -64,7 +64,9 @@
 #let _entry-line(left-content, right-content) = {
   // Inline format — both items appear in content-stream order (no columns)
   // so ATS parsers extract everything as a single readable line.
-  [#left-content #text(fill: rgb("#444"), size: 9.5pt, right-content)]
+  // When right-content is non-empty, a " — " separator is added for clarity.
+  let sep = if right-content != "" { " — " } else { "" }
+  [#left-content #text(fill: rgb("#444"), size: 9.5pt, sep + right-content)]
   linebreak()
 }
 
