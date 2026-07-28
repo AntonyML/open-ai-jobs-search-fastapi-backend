@@ -62,9 +62,9 @@
 }
 
 #let _entry-line(left-content, right-content) = {
-  // Inline right-alignment — put both on same line in content stream order
-  // so ATS parsers extract company + location, role + dates in correct sequence.
-  [#left-content #h(1fr) #text(fill: rgb("#444"), size: 9.5pt, right-content)]
+  // Inline format — both items appear in content-stream order (no columns)
+  // so ATS parsers extract everything as a single readable line.
+  [#left-content #text(fill: rgb("#444"), size: 9.5pt, right-content)]
   linebreak()
 }
 
@@ -135,18 +135,22 @@
       let dr = entry.at("date_range", default: (:))
       let bullets = entry.at("bullets", default: ())
 
-      // Line 1: Company (bold) + Location (right)
+      // Line 1: Company — Location (inline, no columns)
       if company != "" {
-        let loc-str = if loc != none { loc } else { "" }
-        _entry-line(text(weight: "bold", size: 10.5pt, company), loc-str)
+        let loc-str = if loc != none and loc != "" { " — " + loc } else { "" }
+        text(weight: "bold", size: 10.5pt, company + loc-str)
+        linebreak()
       }
 
-      // Line 2: Title (italic) + Date range (right)
+      // Line 2: Role | Date range (inline, no columns)
       let dstr = fmt_date_range(dr)
       if title != "" {
-        _entry-line(text(style: "italic", size: 10pt, title), dstr)
+        let date-part = if dstr != "" { " | " + dstr } else { "" }
+        text(style: "italic", size: 10pt, title + date-part)
+        linebreak()
       } else if dstr != "" {
-        _entry-line("", dstr)
+        text(size: 10pt, dstr)
+        linebreak()
       }
 
       v(0.02em)

@@ -184,6 +184,7 @@ async def execute_outcome(
 
         # 9. Update job posting status
         application.job_posting.status = _map_outcome_to_job_status(payload.status)
+        await db.commit()
         return outcome
 
 

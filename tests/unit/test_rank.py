@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.db.models import Base, CandidateProfile, JobPosting, RankEvaluation, User
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
-from app.schemas.rank import RankLLMOutput
+from app.schemas.rank import RankQualitativeOutput
 from app.services import rank
 
 
@@ -180,25 +180,18 @@ def mock_orchestrator_output(
     gaps=None,
     red_flags=None,
 ):
-    """Create a mock RankLLMOutput for the orchestrator.
+    """Create a mock RankQualitativeOutput for the orchestrator (Fase 5).
 
-    Note: technical_score, experience_score, location_status, deadline,
-    missing_keywords, and language are now computed deterministically
-    by rank_analyzer, so we only mock the qualitative LLM fields.
+    Only qualitative fields — quantitative scores are now computed
+    deterministically by rank_analyzer server-side.
     """
-    return RankLLMOutput(
-        technical_score=0,  # Will be overridden by deterministic analysis
-        experience_score=0,  # Will be overridden by deterministic analysis
+    return RankQualitativeOutput(
         behavioral_score=behavioral,
         career_score=career,
-        location_status="PASS",  # Will be overridden
-        deadline=None,  # Will be overridden
-        deadline_urgent=False,  # Will be overridden
         strengths=strengths or ["Strong ML engineering background", "Team leadership experience", "Production ML at scale"],
         gaps=gaps or ["No explicit Kubernetes certification", "Limited public cloud architecture experience"],
-        missing_keywords=[],  # Will be overridden
         red_flags=red_flags or ["Gap in employment 2017-2018"],
-        language="en",  # Will be overridden
+        confidence="high",
     )
 
 
@@ -221,7 +214,7 @@ def mock_orchestrator():
 
 
 @pytest.mark.asyncio
-async def test_execute_rank_basic(db_session, sample_candidate, sample_job, mock_orchestrator):
+async def test_execute_rank_basic(db_session, db_factory, sample_candidate, sample_job, mock_orchestrator):
     """execute_rank evaluates a job and returns a shortlist."""
     mock_orchestrator.return_value = mock_orchestrator_output(
         behavioral=75, career=90,

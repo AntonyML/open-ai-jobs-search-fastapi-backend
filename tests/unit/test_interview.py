@@ -895,73 +895,7 @@ async def test_extract_conversation_hooks():
     assert any("AI Platform" in t for t in topics)
 
 
-# ── LaTeX compilation tests (mocked) ────────────────────────────────
 
-
-@pytest.mark.asyncio
-async def test_compile_latex_success():
-    """compile_latex returns PDF path and page count on success."""
-    import tempfile
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-        mock_exec.return_value = mock_proc
-
-        with patch("app.services.apply._get_pdf_page_count", return_value=2):
-            with patch("pathlib.Path.exists", return_value=True):
-                pdf_path, pages = await interview.compile_latex(
-                    "dummy tex content",
-                    Path(tempfile.gettempdir()),
-                    "test_cv",
-                    "lualatex",
-                    2,
-                )
-
-    assert pages == 2
-    assert pdf_path.name == "test_cv.pdf"
-
-
-@pytest.mark.asyncio
-async def test_compile_latex_failure():
-    """compile_latex raises LatexCompileError on compilation failure."""
-    import tempfile
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"Error: missing font"))
-        mock_exec.return_value = mock_proc
-
-        with pytest.raises(interview.LatexCompileError):
-            await interview.compile_latex(
-                "dummy tex content",
-                Path(tempfile.gettempdir()),
-                "test_cv",
-                "lualatex",
-                2,
-            )
-
-
-@pytest.mark.asyncio
-async def test_compile_latex_wrong_page_count():
-    """compile_latex raises LatexCompileError on wrong page count."""
-    import tempfile
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-        mock_exec.return_value = mock_proc
-
-        with patch("app.services.interview._get_pdf_page_count", return_value=3):  # Expected 2, got 3
-            with patch("pathlib.Path.exists", return_value=True):
-                with pytest.raises(interview.LatexCompileError):
-                    await interview.compile_latex(
-                        "dummy tex content",
-                        Path(tempfile.gettempdir()),
-                        "test_cv",
-                        "lualatex",
-                        2,
-                    )
 
 
 # ── Mock interview tests ────────────────────────────────────────────

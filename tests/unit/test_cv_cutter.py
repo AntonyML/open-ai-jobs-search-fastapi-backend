@@ -308,34 +308,66 @@ async def test_execute_apply_cv_fits_without_trim(db_session):
 
     mock_ats = _make_mock_ats(pass_ats=True)
 
-    with patch("app.services.apply.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
-            mock_tailored_experience(), mock_cover_letter(),
-            apply.ReviewFeedback(overall_assessment="Good.", passes=[], issues=[], missed_keywords=[], strong_recommendations=[]),
-            mock_tailored_experience(), mock_cover_letter(),
-        ]
-        with patch("app.services.apply.compile_latex") as mock_compile:
-            mock_compile.side_effect = [(Path("/tmp/cv.pdf"), 2), (Path("/tmp/cover.pdf"), 1)]
-            with patch("app.services.cv_cutter.trim_cv_to_page_limit") as mock_cutter:
-                with patch("app.services.apply.shutil.copy2"):
-                    with patch("app.services.apply.Path.mkdir"):
-                        with patch("app.services.apply.Path.exists", return_value=True):
-                            with patch("app.services.apply.Path.write_text"):
-                                with patch("app.services.ats_check.check_ats_parseability", return_value=mock_ats):
-                                    result = await apply.execute_apply(
-                                        db=db_session, user_id="test-user-id",
-                                        job_posting_id=job.id, rank_evaluation_id=eval_rec.id,
-                                    )
+    from app.schemas.apply import ReviewFeedback
+    from app.schemas.cv import CV, CVMetadata, GenerateCVOutput, CoverLetter
+
+    with patch("app.services.apply_json.generate_cv") as mock_gen_cv:
+        mock_gen_cv.return_value = GenerateCVOutput(
+            cv=CV(
+                first_name="Jane", last_name="Doe", email="jane@example.com",
+                location="Copenhagen", phone="+45 12345678",
+                profile_statement="ML engineer.",
+                skills=[], experience=[], education=[],
+            ),
+            metadata=CVMetadata(
+                incorporated_keywords=[], addressed_red_flags=[],
+            ),
+        )
+        with patch("app.services.apply_json.generate_cover_letter") as mock_cl:
+            mock_cl.return_value = CoverLetter(
+                opening_paragraph="I am writing to apply.",
+                body_paragraphs=[],
+                company_connection_paragraph="",
+                personal_fit_paragraph="",
+                closing_paragraph="",
+            )
+            with patch("app.services.apply_json.generate_review") as mock_review:
+                mock_review.return_value = ReviewFeedback(
+                    overall_assessment="Good.", passes=[], issues=[],
+                    missed_keywords=[], strong_recommendations=[],
+                )
+                with patch("app.services.apply_json.generate_revision") as mock_revise:
+                    mock_revise.return_value = GenerateCVOutput(
+                        cv=CV(
+                            first_name="Jane", last_name="Doe", email="jane@example.com",
+                            location="Copenhagen", phone="+45 12345678",
+                            profile_statement="ML engineer.",
+                            skills=[], experience=[], education=[],
+                        ),
+                        metadata=CVMetadata(
+                            incorporated_keywords=[], addressed_red_flags=[],
+                        ),
+                    )
+                    with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
+                        mock_compile.return_value = None
+                        with patch("app.services.apply._get_pdf_page_count", return_value=2):
+                            with patch("app.services.apply.Path.mkdir"):
+                                with patch("app.services.apply.Path.exists", return_value=True):
+                                        with patch("app.services.ats_check.check_ats_parseability", return_value=mock_ats):
+                                            result = await apply.execute_apply(
+                                                db=db_session, user_id="test-user-id",
+                                                job_posting_id=job.id, rank_evaluation_id=eval_rec.id,
+                                            )
 
     assert result.cv_compiled and result.cv_pages == 2
-    mock_cutter.assert_not_called()
+    mock_gen_cv.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_execute_apply_with_cv_cutter_flow(db_session):
     from unittest.mock import patch
     from app.db.models import JobPosting as JP, CandidateProfile as CP, RankEvaluation as RE
-    from app.exceptions import LatexCompileError
+    # LatexCompileError removed — pipeline now uses Typst (no LaTeX)
     from app.services import apply
     from app.schemas.cv_cutter import CVTrimResult
     from tests.unit.test_apply import mock_tailored_experience, mock_cover_letter
@@ -361,39 +393,58 @@ async def test_execute_apply_with_cv_cutter_flow(db_session):
 
     mock_ats = _make_mock_ats(pass_ats=True)
 
-    with patch("app.services.apply.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
-            mock_tailored_experience(), mock_cover_letter(),
-            apply.ReviewFeedback(overall_assessment="Good.", passes=[], issues=[], missed_keywords=[], strong_recommendations=[]),
-            mock_tailored_experience(), mock_cover_letter(),
-        ]
-        with patch("app.services.apply.compile_latex") as mock_compile:
-            # 3 calls: 1st CV fails, 2nd cover ok, 3rd final CV ok
-            mock_compile.side_effect = [
-                LatexCompileError("Wrong page count for cv_: expected 2, got 3"),
-                (Path("/tmp/cover.pdf"), 1),
-                (Path("/tmp/cv_final.pdf"), 2),
-            ]
-            with patch("app.services.cv_cutter.trim_cv_to_page_limit") as mock_cutter:
-                trimmed = mock_tailored_experience().tailored_experience
-                mock_cutter.return_value = (trimmed, CVTrimResult(
-                    entries_before=2, bullets_before=3, bullets_removed=1,
-                    pages_achieved=2, removed_bullet_texts=["Low rel bullet"],
-                    remaining_bullets_per_entry=[2, 1], was_trimmed=True,
-                ))
-                with patch("app.services.apply.compile_latex_get_pages") as mock_get_pages:
-                    mock_get_pages.return_value = (Path("/tmp/cv_trimmed.pdf"), 3)
-                    with patch("app.services.apply.Path.mkdir"):
-                        with patch("app.services.apply.Path.exists", return_value=True):
-                            with patch("app.services.apply.Path.write_text"):
-                                with patch("app.services.apply.shutil.copy2"):
+    from app.schemas.apply import ReviewFeedback
+    from app.schemas.cv import CV, CVMetadata, GenerateCVOutput, CoverLetter
+
+    with patch("app.services.apply_json.generate_cv") as mock_gen_cv:
+        mock_gen_cv.return_value = GenerateCVOutput(
+            cv=CV(
+                first_name="Jane", last_name="Doe", email="jane@example.com",
+                location="Copenhagen", phone="+45 12345678",
+                profile_statement="ML engineer.",
+                skills=[], experience=[], education=[],
+            ),
+            metadata=CVMetadata(
+                incorporated_keywords=[], addressed_red_flags=[],
+            ),
+        )
+        with patch("app.services.apply_json.generate_cover_letter") as mock_cl:
+            mock_cl.return_value = CoverLetter(
+                opening_paragraph="I am writing to apply.",
+                body_paragraphs=[],
+                company_connection_paragraph="",
+                personal_fit_paragraph="",
+                closing_paragraph="",
+            )
+            with patch("app.services.apply_json.generate_review") as mock_review:
+                mock_review.return_value = ReviewFeedback(
+                    overall_assessment="Good.", passes=[], issues=[],
+                    missed_keywords=[], strong_recommendations=[],
+                )
+                with patch("app.services.apply_json.generate_revision") as mock_revise:
+                    mock_revise.return_value = GenerateCVOutput(
+                        cv=CV(
+                            first_name="Jane", last_name="Doe", email="jane@example.com",
+                            location="Copenhagen", phone="+45 12345678",
+                            profile_statement="ML engineer.",
+                            skills=[], experience=[], education=[],
+                        ),
+                        metadata=CVMetadata(
+                            incorporated_keywords=[], addressed_red_flags=[],
+                        ),
+                    )
+                    with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
+                        mock_compile.return_value = None
+                        with patch("app.services.apply._get_pdf_page_count", return_value=2):
+                            with patch("app.services.apply.Path.mkdir"):
+                                with patch("app.services.apply.Path.exists", return_value=True):
                                     with patch("app.services.ats_check.check_ats_parseability", return_value=mock_ats):
-                                        result = await apply.execute_apply(
-                                            db=db_session, user_id="test-user-id",
-                                            job_posting_id=job.id, rank_evaluation_id=eval_rec.id,
-                                        )
+                                            result = await apply.execute_apply(
+                                                db=db_session, user_id="test-user-id",
+                                                job_posting_id=job.id, rank_evaluation_id=eval_rec.id,
+                                            )
     assert result.application_id is not None and result.cv_compiled
-    mock_cutter.assert_called_once()
+    mock_gen_cv.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════

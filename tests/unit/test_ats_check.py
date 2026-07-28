@@ -487,47 +487,59 @@ async def test_ats_check_integrated_in_apply(db_session):
     await db_session.commit()
     await db_session.refresh(eval_rec)
 
-    # Mock the 5 LLM calls needed by execute_apply
-    with patch("app.services.apply.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
-            mock_tailored_experience(),  # 1. Draft experience
-            mock_cover_letter(),         # 2. Draft cover letter
-            apply.ReviewFeedback(        # 3. Review feedback
-                overall_assessment="Good draft.",
-                passes=[],
-                issues=[],
-                missed_keywords=[],
-                strong_recommendations=[],
+    from app.schemas.apply import ReviewFeedback
+    from app.schemas.cv import CV, CVMetadata, GenerateCVOutput, CoverLetter
+
+    with patch("app.services.apply_json.generate_cv") as mock_gen_cv:
+        mock_gen_cv.return_value = GenerateCVOutput(
+            cv=CV(
+                first_name="Jane", last_name="Doe", email="jane@example.com",
+                location="Copenhagen", phone="+45 12345678",
+                profile_statement="ML engineer.",
+                skills=[], experience=[], education=[],
             ),
-            mock_tailored_experience(),  # 4. Revised experience
-            mock_cover_letter(),         # 5. Revised cover letter
-        ]
-
-        with patch("app.services.apply.compile_latex") as mock_compile:
-            mock_compile.side_effect = [
-                (Path("/tmp/cv.pdf"), 2),
-                (Path("/tmp/cover.pdf"), 1),
-            ]
-
-            with patch("app.services.ats_check.check_ats_parseability") as mock_ats:
-                mock_ats.return_value = ATSResult(
-                    raw_text="Mock PDF text with Python and PyTorch keywords present.",
-                    has_cid_markers=False,
-                    has_email=True,
-                    has_phone=True,
-                    has_candidate_name=True,
-                    keyword_coverage=1.0,
-                    found_keywords=["Python", "PyTorch"],
-                    missing_keywords=[],
-                    reading_order_ok=True,
-                    pass_ats=True,
+            metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
+        )
+        with patch("app.services.apply_json.generate_cover_letter") as mock_cl:
+            mock_cl.return_value = CoverLetter(
+                opening_paragraph="I am writing to apply.", body_paragraphs=[],
+                company_connection_paragraph="", personal_fit_paragraph="", closing_paragraph="",
+            )
+            with patch("app.services.apply_json.generate_review") as mock_review:
+                mock_review.return_value = ReviewFeedback(
+                    overall_assessment="Good.", passes=[], issues=[],
+                    missed_keywords=[], strong_recommendations=[],
                 )
-
-                with patch("app.services.apply.shutil.copy2"):
-                    with patch("app.services.apply.Path.mkdir"):
-                        with patch("app.services.apply.Path.exists", return_value=True):
-                            with patch("app.services.apply.Path.write_text"):
-                                result = await apply.execute_apply(
+                with patch("app.services.apply_json.generate_revision") as mock_revise:
+                    mock_revise.return_value = GenerateCVOutput(
+                        cv=CV(
+                            first_name="Jane", last_name="Doe", email="jane@example.com",
+                            location="Copenhagen", phone="+45 12345678",
+                            profile_statement="ML engineer.",
+                            skills=[], experience=[], education=[],
+                        ),
+                        metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
+                    )
+                    with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
+                        mock_compile.return_value = None
+                        with patch("app.services.apply._get_pdf_page_count", return_value=2):
+                            with patch("app.services.ats_check.check_ats_parseability") as mock_ats:
+                                mock_ats.return_value = ATSResult(
+                                    raw_text="Mock PDF text with Python and PyTorch keywords present.",
+                                    has_cid_markers=False,
+                                    has_email=True,
+                                    has_phone=True,
+                                    has_candidate_name=True,
+                                    keyword_coverage=1.0,
+                                    found_keywords=["Python", "PyTorch"],
+                                    missing_keywords=[],
+                                    reading_order_ok=True,
+                                    pass_ats=True,
+                                )
+                                with patch("app.services.apply.Path.mkdir"):
+                                        with patch("app.services.apply.Path.exists", return_value=True):
+                                            with patch("app.services.apply.Path.write_text"):
+                                                result = await apply.execute_apply(
                                     db=db_session,
                                     user_id="test-user-id",
                                     job_posting_id=job.id,
@@ -617,46 +629,59 @@ async def test_ats_check_integrated_ats_fails_but_pipeline_continues(db_session)
     await db_session.commit()
     await db_session.refresh(eval_rec)
 
-    with patch("app.services.apply.llm_completion_structured") as mock_llm:
-        mock_llm.side_effect = [
-            mock_tailored_experience(),
-            mock_cover_letter(),
-            apply.ReviewFeedback(
-                overall_assessment="Good draft.",
-                passes=[],
-                issues=[],
-                missed_keywords=[],
-                strong_recommendations=[],
+    from app.schemas.apply import ReviewFeedback
+    from app.schemas.cv import CV, CVMetadata, GenerateCVOutput, CoverLetter
+
+    with patch("app.services.apply_json.generate_cv") as mock_gen_cv:
+        mock_gen_cv.return_value = GenerateCVOutput(
+            cv=CV(
+                first_name="Jane", last_name="Doe", email="jane@example.com",
+                location="Copenhagen", phone="+45 12345678",
+                profile_statement="ML engineer.",
+                skills=[], experience=[], education=[],
             ),
-            mock_tailored_experience(),
-            mock_cover_letter(),
-        ]
-
-        with patch("app.services.apply.compile_latex") as mock_compile:
-            mock_compile.side_effect = [
-                (Path("/tmp/cv.pdf"), 2),
-                (Path("/tmp/cover.pdf"), 1),
-            ]
-
-            with patch("app.services.ats_check.check_ats_parseability") as mock_ats:
-                mock_ats.return_value = ATSResult(
-                    raw_text="Bad PDF text with (cid:123) markers. Very little content.",
-                    has_cid_markers=True,
-                    has_email=False,
-                    has_phone=False,
-                    has_candidate_name=False,
-                    keyword_coverage=0.2,
-                    found_keywords=[],
-                    missing_keywords=["Python", "PyTorch", "Kubernetes"],
-                    reading_order_ok=False,
-                    pass_ats=False,
+            metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
+        )
+        with patch("app.services.apply_json.generate_cover_letter") as mock_cl:
+            mock_cl.return_value = CoverLetter(
+                opening_paragraph="I am writing to apply.", body_paragraphs=[],
+                company_connection_paragraph="", personal_fit_paragraph="", closing_paragraph="",
+            )
+            with patch("app.services.apply_json.generate_review") as mock_review:
+                mock_review.return_value = ReviewFeedback(
+                    overall_assessment="Good.", passes=[], issues=[],
+                    missed_keywords=[], strong_recommendations=[],
                 )
-
-                with patch("app.services.apply.shutil.copy2"):
-                    with patch("app.services.apply.Path.mkdir"):
-                        with patch("app.services.apply.Path.exists", return_value=True):
-                            with patch("app.services.apply.Path.write_text"):
-                                result = await apply.execute_apply(
+                with patch("app.services.apply_json.generate_revision") as mock_revise:
+                    mock_revise.return_value = GenerateCVOutput(
+                        cv=CV(
+                            first_name="Jane", last_name="Doe", email="jane@example.com",
+                            location="Copenhagen", phone="+45 12345678",
+                            profile_statement="ML engineer.",
+                            skills=[], experience=[], education=[],
+                        ),
+                        metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
+                    )
+                    with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
+                        mock_compile.return_value = None
+                        with patch("app.services.apply._get_pdf_page_count", return_value=2):
+                            with patch("app.services.ats_check.check_ats_parseability") as mock_ats:
+                                mock_ats.return_value = ATSResult(
+                                    raw_text="Bad PDF text with (cid:123) markers. Very little content.",
+                                    has_cid_markers=True,
+                                    has_email=False,
+                                    has_phone=False,
+                                    has_candidate_name=False,
+                                    keyword_coverage=0.2,
+                                    found_keywords=[],
+                                    missing_keywords=["Python", "PyTorch", "Kubernetes"],
+                                    reading_order_ok=False,
+                                    pass_ats=False,
+                                )
+                                with patch("app.services.apply.Path.mkdir"):
+                                        with patch("app.services.apply.Path.exists", return_value=True):
+                                            with patch("app.services.apply.Path.write_text"):
+                                                result = await apply.execute_apply(
                                     db=db_session,
                                     user_id="test-user-id",
                                     job_posting_id=job.id,
