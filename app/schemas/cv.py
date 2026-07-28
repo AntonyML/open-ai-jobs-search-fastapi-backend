@@ -1,41 +1,61 @@
 """JSON CV schema — structured representation of a tailored CV and cover letter.
 
-This schema is the single source of truth for the Typst rendering pipeline.
-The LLM generates JSON matching this schema (instead of LaTeX), and the
-Typst templates consume it directly.
+The schema is profession-agnostic. Skill groups are free-label categories so
+the same model serves a developer, an electrical engineer, a UX designer,
+a data analyst, or a DevOps engineer equally well.
 
-The schema must handle real-world variability:
-- Variable-length bullets
-- Employment gaps (no start/end dates, or present-tense "Present" entries)
-- Multiple concurrent experiences
-- Skills with proficiency levels and optional frameworks
-- Optional sections (publications, awards, languages, references)
-- Cover letter as a separate but co-designed structure
+The rendered CV (``CV``) is separated from generation metadata (``CVMetadata``)
+so the Typst template never sees pipeline internals.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 # ── Shared value objects ──────────────────────────────────────────────
 
 
-class DateRange(BaseModel):
-    """Flexible date representation — handles gaps and open-ended roles."""
+ProficiencyLevel = Literal["beginner", "intermediate", "advanced", "expert"]
+LanguageProficiency = Literal["native", "fluent", "advanced", "intermediate", "basic"]
 
-    start: str | None = Field(None, description="Start date (YYYY-MM or YYYY). Null if unknown.")
-    end: str | None = Field(None, description="End date (YYYY-MM or YYYY), or 'Present'. Null if unknown.")
+
+class DateRange(BaseModel):
+    """Flexible date representation for roles, education, projects.
+
+    Both fields are optional so a single ``start`` with no ``end`` (current role,
+    one-off project) and completely open-ended entries (``null``, ``null`` for
+    gaps) are valid.  ``end="Present"`` is the expected convention for ongoing.
+    """
+
+    start: str | None = Field(None, description="Start date (YYYY-MM or YYYY).")
+    end: str | None = Field(None, description="End date (YYYY-MM or YYYY), or 'Present'.")
 
 
 class Skill(BaseModel):
-    """A single skill with optional proficiency and related frameworks."""
+    """A single skill with optional proficiency and related tools/frameworks."""
 
-    name: str = Field(..., description="Skill name (e.g. 'Python', 'TensorFlow', 'Agile').")
-    proficiency: str | None = Field(None, description="Proficiency level: 'beginner', 'intermediate', 'advanced', 'expert'.")
-    frameworks: list[str] | None = Field(None, description="Related frameworks / libraries.")
+    name: str = Field(..., description="Skill name (e.g. 'Python', 'Figma', 'PMP').")
+    proficiency: ProficiencyLevel | None = Field(None, description="Self-assessed level.")
+    frameworks: list[str] | None = Field(None, description="Related frameworks, libraries, or tools.")
+
+
+class SkillGroup(BaseModel):
+    """A labelled group of skills — the core flexibility mechanism.
+
+    The LLM chooses the label based on profession:
+    - Developer:  ``{"label": "Languages", "skills": [...]}``
+    - UX:         ``{"label": "Design Tools", "skills": [...]}``
+    - EE:         ``{"label": "CAD / Simulation", "skills": [...]}``
+    - DevOps:     ``{"label": "Infrastructure", "skills": [...]}``
+
+    Human languages also use this model (label = "Languages").
+    """
+
+    label: str = Field(..., description="Category label chosen by the LLM (e.g. 'Languages', 'Design Tools').")
+    skills: list[Skill] = Field(..., description="Skills in this group.")
 
 
 # ── CV sections ───────────────────────────────────────────────────────
@@ -46,21 +66,41 @@ class ExperienceEntry(BaseModel):
 
     title: str = Field(..., description="Job title (tailored to target role).")
     company: str = Field(..., description="Company or organization name.")
-    location: str | None = Field(None, description="Work location (city, state/country, remote).")
+    location: str | None = Field(None, description="Work location (city, region, or remote).")
     date_range: DateRange = Field(default_factory=DateRange)
     bullets: list[str] = Field(
         default_factory=list,
-        description="X-Y-Z formatted bullet points (max ~6 per entry).",
+        description="X-Y-Z formatted bullet points.",
+        max_length=8,
     )
 
 
 class EducationEntry(BaseModel):
-    """Education entry, typically with optional details."""
+    """Education entry with structured dates and optional detail."""
 
     degree: str = Field(..., description="Degree name (e.g. 'M.Sc. in Computer Science').")
-    institution: str = Field(..., description="University or institution name.")
-    period: str | None = Field(None, description="e.g. '2016–2020' or 'September 2016 – June 2020'.")
-    key_topics: list[str] | None = Field(None, description="Relevant coursework or thesis topics.")
+    institution: str = Field(..., description="University or institution.")
+    date_range: DateRange = Field(default_factory=DateRange)
+    period: str | None = Field(None, description="Display-friendly alternative to date_range (e.g. '2016–2020').")
+    key_topics: list[str] | None = Field(None, description="Relevant coursework, thesis, or specialisation.")
+
+
+class ProjectEntry(BaseModel):
+    """A project or portfolio piece — more flexible than experience bullets."""
+
+    name: str = Field(..., description="Project name.")
+    url: str | None = Field(None, description="Live URL or repository.")
+    description: str | None = Field(None, description="1–2 sentence summary.")
+    technologies: list[str] | None = Field(None, description="Key technologies or methods used.")
+
+
+class CertificationEntry(BaseModel):
+    """Professional certification or license."""
+
+    name: str = Field(..., description="Certification name (e.g. 'AWS Solutions Architect').")
+    issuer: str = Field(..., description="Issuing body (e.g. 'Amazon', 'PMP').")
+    year: str | None = Field(None, description="Year obtained.")
+    url: str | None = Field(None, description="Verification URL.")
 
 
 class PublicationEntry(BaseModel):
@@ -77,15 +117,8 @@ class AwardEntry(BaseModel):
     """Honor, award, or recognition."""
 
     name: str = Field(..., description="Award name.")
-    event: str | None = Field(None, description="Event or organization.")
+    issuer: str | None = Field(None, description="Issuing organisation or event.")
     year: str | None = Field(None, description="Year received.")
-
-
-class LanguageEntry(BaseModel):
-    """Language proficiency."""
-
-    language: str = Field(..., description="Language name (e.g. 'English', 'Danish').")
-    proficiency: str = Field(..., description="Level: 'native', 'fluent', 'advanced', 'intermediate', 'basic'.")
 
 
 class ReferenceEntry(BaseModel):
@@ -93,21 +126,9 @@ class ReferenceEntry(BaseModel):
 
     name: str = Field(..., description="Reference name.")
     title: str | None = Field(None, description="Job title.")
-    company: str | None = Field(None, description="Company.")
+    company: str | None = Field(None, description="Company or organisation.")
     email: str | None = Field(None, description="Email address.")
     phone: str | None = Field(None, description="Phone number.")
-
-
-# ── Skills taxonomy ────────────────────────────────────────────────────
-
-
-class SkillsSection(BaseModel):
-    """Grouped skills — matches the CandidateProfile structure."""
-
-    programming_ml: list[Skill] | None = Field(None, description="Programming languages and ML frameworks.")
-    domain_expertise: list[str] | None = Field(None, description="Domain expertise areas (plain strings).")
-    software_tools: list[str] | None = Field(None, description="Software tools (plain strings).")
-    languages: list[LanguageEntry] | None = Field(None, description="Human languages.")
 
 
 # ── Cover letter ──────────────────────────────────────────────────────
@@ -116,95 +137,158 @@ class SkillsSection(BaseModel):
 class CoverLetter(BaseModel):
     """Structured cover letter."""
 
-    opening_paragraph: str = Field(..., description="Salutation + hook. Addresses hiring manager if known.")
+    opening_paragraph: str = Field(..., description="Salutation + hook.")
     body_paragraphs: list[str] = Field(
         ...,
-        description="2–4 body paragraphs. Each highlights fit, skills, or achievements.",
+        description="2–4 body paragraphs highlighting fit, skills, or achievements.",
         max_length=4,
     )
     company_connection_paragraph: str | None = Field(
         None,
-        description="Optional paragraph connecting to the company's mission or recent work.",
-    )
-    personal_fit_paragraph: str | None = Field(
-        None,
-        description="Why the candidate is a good cultural/personal fit.",
+        description="Connection to the company's mission, product, or recent work.",
     )
     closing_paragraph: str = Field(..., description="Call to action + thank you.")
 
 
-# ── Metadata / tracking ───────────────────────────────────────────────
-
-
-class IncorporatedKeyword(BaseModel):
-    """Tracks how a job keyword was incorporated into the CV."""
-
-    keyword: str = Field(..., description="The job-posting keyword.")
-    where_incorporated: str = Field(..., description="Section and context (e.g. 'experience: ML Engineer bullet 2').")
-    original_context: str | None = Field(None, description="How the candidate's profile supported this keyword.")
-
-
-class AddressedRedFlag(BaseModel):
-    """Tracks how a red flag was addressed in the CV."""
-
-    red_flag: str = Field(..., description="The red flag identified during ranking.")
-    how_addressed: str = Field(..., description="How the CV addresses it (reframing, emphasis, etc.).")
-
-
-# ── Full CV document ──────────────────────────────────────────────────
+# ── Full CV document (renderable only) ────────────────────────────────
 
 
 class CV(BaseModel):
-    """Complete structured CV document — the single source of truth for rendering.
+    """Complete structured CV — what the Typst template renders.
 
-    All sections are optional so that the same schema handles profiles
-    with different section combinations (e.g. no publications, no awards).
+    Every section beyond the header is optional so the same schema handles
+    profiles with different section combinations.  The Typst template iterates
+    over ``sections`` or accesses named fields directly — no metadata leaks in.
     """
 
     # ── Header ─────────────────────────────────────────────────────
     first_name: str = Field(..., description="Candidate first name.")
     last_name: str = Field(..., description="Candidate last name.")
-    email: str = Field(..., description="Email address.")
+    email: EmailStr = Field(..., description="Email address.")
     phone: str | None = Field(None, description="Phone number (international format).")
+    location: str | None = Field(None, description="City and country (e.g. 'Copenhagen, Denmark').")
     linkedin: str | None = Field(None, description="Full LinkedIn URL.")
     github: str | None = Field(None, description="Full GitHub URL.")
-    address: str | None = Field(None, description="City and country (e.g. 'Copenhagen, Denmark').")
-    location: str | None = Field(None, description="Current location, same as address if not specified separately.")
+    portfolio_url: str | None = Field(None, description="Personal website, portfolio, or blog URL.")
+    language: str | None = Field(
+        None,
+        description="ISO 639-1 code of the CV language (e.g. 'en', 'da', 'es'). "
+        "Affects hyphenation and font selection at render time.",
+    )
 
     # ── Profile ────────────────────────────────────────────────────
     profile_statement: str | None = Field(
         None,
-        description="2–3 sentence summary targeting the role. Mentions job title.",
+        description="2–3 sentence professional summary. Mentions target role title.",
     )
 
-    # ── Core competencies (rendered as tag cloud / grouped list) ───
+    # ── Core competencies ──────────────────────────────────────────
     core_competencies: list[str] | None = Field(
         None,
-        description="Key skills / competencies to highlight (8–15 items).",
+        description="8–15 high-level headline competencies for the tag-cloud section "
+        "at the top of the CV (e.g. 'System Design', 'UX Research', 'Embedded Systems'). "
+        "Distinct from ``skills``: competencies are headlines, skills carry proficiency levels.",
+        max_length=15,
     )
 
-    # ── Skills (detailed, with proficiency) ────────────────────────
-    skills: SkillsSection | None = Field(None, description="Detailed skills grouped by category.")
+    # ── Skills (detailed breakdown) ────────────────────────────────
+    skills: list[SkillGroup] | None = Field(
+        None,
+        description="Detailed skills grouped by free-label categories. "
+        "The LLM chooses labels per profession. "
+        "Human languages are one group (label = 'Languages').",
+    )
 
     # ── Experience ─────────────────────────────────────────────────
     experience: list[ExperienceEntry] = Field(
         ...,
-        description="Tailored professional experience entries (max ~6).",
+        description="Tailored professional experience entries.",
+        max_length=6,
+    )
+
+    # ── Projects / Portfolio ───────────────────────────────────────
+    projects: list[ProjectEntry] | None = Field(
+        None,
+        description="Key projects or portfolio pieces (especially relevant for developers "
+        "and designers).",
         max_length=6,
     )
 
     # ── Education ──────────────────────────────────────────────────
-    education: list[EducationEntry] | None = Field(None, description="Education background (max ~3 entries).")
+    education: list[EducationEntry] | None = Field(
+        None,
+        description="Education background (max ~3 entries).",
+        max_length=3,
+    )
 
-    # ── Optional sections ──────────────────────────────────────────
-    publications: list[PublicationEntry] | None = Field(None, description="Publications (max ~10).")
-    awards: list[AwardEntry] | None = Field(None, description="Honors and awards (max ~5).")
-    references: list[ReferenceEntry] | None = Field(None, description="Professional references (max ~3).")
+    # ── Certifications ─────────────────────────────────────────────
+    certifications: list[CertificationEntry] | None = Field(
+        None,
+        description="Professional certifications and licenses (e.g. AWS, PMP, PE licence).",
+        max_length=5,
+    )
+
+    # ── Publications ───────────────────────────────────────────────
+    publications: list[PublicationEntry] | None = Field(
+        None,
+        description="Academic or industry publications.",
+        max_length=10,
+    )
+
+    # ── Awards ─────────────────────────────────────────────────────
+    awards: list[AwardEntry] | None = Field(
+        None,
+        description="Honors, awards, and recognitions.",
+        max_length=5,
+    )
+
+    # ── References ─────────────────────────────────────────────────
+    references: list[ReferenceEntry] | None = Field(
+        None,
+        description="Professional references.",
+        max_length=3,
+    )
 
     # ── Cover letter ───────────────────────────────────────────────
     cover_letter: CoverLetter | None = Field(None, description="Tailored cover letter.")
 
-    # ── Metadata (not rendered) ────────────────────────────────────
+
+# ── Generation metadata (separate from renderable CV) ─────────────────
+
+
+class IncorporatedKeyword(BaseModel):
+    """Tracks how a job-posting keyword was incorporated into the CV."""
+
+    keyword: str = Field(..., description="The job-posting keyword.")
+    where_incorporated: str = Field(
+        ...,
+        description="Section and context (e.g. 'experience bullet 2', 'skills group Frameworks').",
+    )
+    original_context: str | None = Field(
+        None,
+        description="How the candidate's profile supported this keyword (defensibility).",
+    )
+
+
+class AddressedRedFlag(BaseModel):
+    """Tracks how a ranking red flag was addressed in the CV."""
+
+    red_flag: str = Field(..., description="Red flag identified during ranking.")
+    how_addressed: str = Field(..., description="How the CV addresses it (reframing, emphasis, etc.).")
+
+
+class CVMetadata(BaseModel):
+    """Generation metadata — NOT rendered into the PDF.
+
+    Lives alongside ``CV`` in ``GenerateCVOutput`` for the pipeline stages
+    (reviewer, verification checklist) but never reaches the Typst template.
+    """
+
+    language: str | None = Field(
+        None,
+        description="ISO 639-1 code of the generated content (e.g. 'en', 'da', 'es'). "
+        "Shared with ``CV.language`` for convenience.",
+    )
     incorporated_keywords: list[IncorporatedKeyword] | None = Field(
         None,
         description="Keywords from the job posting incorporated into the CV.",
@@ -215,15 +299,18 @@ class CV(BaseModel):
     )
 
 
-# ── Drafter LLM output (wraps CV for structured generation) ──────────
+# ── Drafter output wrapper ────────────────────────────────────────────
 
 
-class DrafterOutput(BaseModel):
-    """Output schema for the drafter LLM call."""
+class GenerateCVOutput(BaseModel):
+    """Top-level output from the drafter LLM call.
 
-    cv: CV = Field(..., description="The complete tailored CV and cover letter.")
+    Separates the renderable CV from pipeline metadata so the Typst template
+    is never exposed to generation internals.
+    """
 
-    class Config:
-        json_schema_extra = {
-            "description": "Generate a complete CV document in JSON format.",
-        }
+    cv: CV = Field(..., description="The renderable CV (consumed by Typst templates).")
+    metadata: CVMetadata = Field(
+        default_factory=CVMetadata,
+        description="Generation metadata (used by reviewer, verification checklist).",
+    )

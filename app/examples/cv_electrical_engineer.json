@@ -1,0 +1,165 @@
+{
+  "cv": {
+    "first_name": "Carlos",
+    "last_name": "Mendoza",
+    "email": "carlos.mendoza@email.com",
+    "phone": "+1 555 987 6543",
+    "location": "Austin, TX, USA",
+    "linkedin": "https://linkedin.com/in/carlos-mendoza",
+    "github": null,
+    "portfolio_url": null,
+    "language": "en",
+    "profile_statement": "Electrical Engineer with 8+ years in power systems...",
+    "core_competencies": [
+      "Power Distribution",
+      "SCADA",
+      "Protection Relaying",
+      "ETAP",
+      "AutoCAD Electrical",
+      "Project Management",
+      "NERC Compliance",
+      "Root Cause Analysis"
+    ],
+    "skills": [
+      {
+        "label": "CAD / Simulation",
+        "skills": [
+          {
+            "name": "AutoCAD Electrical",
+            "proficiency": "expert",
+            "frameworks": null
+          },
+          {
+            "name": "ETAP",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "MATLAB/Simulink",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "PSpice",
+            "proficiency": "intermediate",
+            "frameworks": null
+          }
+        ]
+      },
+      {
+        "label": "Standards & Compliance",
+        "skills": [
+          {
+            "name": "NERC CIP",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "IEEE Standards",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "NFPA 70E",
+            "proficiency": "intermediate",
+            "frameworks": null
+          }
+        ]
+      },
+      {
+        "label": "Tools & Instrumentation",
+        "skills": [
+          {
+            "name": "SCADA Systems",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "PLCs (Allen-Bradley)",
+            "proficiency": "intermediate",
+            "frameworks": null
+          },
+          {
+            "name": "Multisim",
+            "proficiency": "intermediate",
+            "frameworks": null
+          }
+        ]
+      }
+    ],
+    "experience": [
+      {
+        "title": "Senior Electrical Engineer",
+        "company": "GridPower Inc.",
+        "location": "Austin, TX",
+        "date_range": {
+          "start": "2020-06",
+          "end": null
+        },
+        "bullets": [
+          "Designed protection schemes for 138 kV substation, reducing fault-clearing time by 20%",
+          "Led NERC CIP compliance audit with zero findings across 15 critical cyber assets"
+        ]
+      },
+      {
+        "title": "Electrical Engineer",
+        "company": "EnergyCorp",
+        "location": "Houston, TX",
+        "date_range": {
+          "start": "2016-01",
+          "end": "2020-05"
+        },
+        "bullets": [
+          "Performed arc-flash studies for 12 industrial facilities using ETAP",
+          "Specified and commissioned 25+ medium-voltage switchgear lineups"
+        ]
+      }
+    ],
+    "projects": null,
+    "education": [
+      {
+        "degree": "M.Sc. in Electrical Engineering",
+        "institution": "UT Austin",
+        "date_range": {
+          "start": "2014",
+          "end": "2015"
+        },
+        "period": "2014–2015",
+        "key_topics": null
+      },
+      {
+        "degree": "B.Sc. in Electrical Engineering",
+        "institution": "Texas A&M",
+        "date_range": {
+          "start": "2010",
+          "end": "2014"
+        },
+        "period": "2010–2014",
+        "key_topics": null
+      }
+    ],
+    "certifications": [
+      {
+        "name": "Professional Engineer (PE)",
+        "issuer": "Texas Board",
+        "year": "2019",
+        "url": null
+      },
+      {
+        "name": "Project Management Professional (PMP)",
+        "issuer": "PMI",
+        "year": "2021",
+        "url": null
+      }
+    ],
+    "publications": null,
+    "awards": null,
+    "references": null,
+    "cover_letter": null
+  },
+  "metadata": {
+    "language": null,
+    "incorporated_keywords": null,
+    "addressed_red_flags": null
+  }
+}

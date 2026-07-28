@@ -1,0 +1,178 @@
+{
+  "cv": {
+    "first_name": "Sofia",
+    "last_name": "Reyes",
+    "email": "sofia.reyes@email.com",
+    "phone": "+52 55 1234 5678",
+    "location": "Mexico City, Mexico",
+    "linkedin": "https://linkedin.com/in/sofia-reyes",
+    "github": null,
+    "portfolio_url": "https://sofia.design",
+    "language": "es",
+    "profile_statement": "UX Designer with 6+ years creating human-centred interfaces...",
+    "core_competencies": [
+      "User Research",
+      "Interaction Design",
+      "Prototyping",
+      "Usability Testing",
+      "Design Systems",
+      "Information Architecture",
+      "Accessibility",
+      "Design Thinking"
+    ],
+    "skills": [
+      {
+        "label": "Design Tools",
+        "skills": [
+          {
+            "name": "Figma",
+            "proficiency": "expert",
+            "frameworks": null
+          },
+          {
+            "name": "Sketch",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "Adobe XD",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "Principle",
+            "proficiency": "intermediate",
+            "frameworks": null
+          }
+        ]
+      },
+      {
+        "label": "Research Methods",
+        "skills": [
+          {
+            "name": "Contextual Inquiry",
+            "proficiency": "expert",
+            "frameworks": null
+          },
+          {
+            "name": "A/B Testing",
+            "proficiency": "advanced",
+            "frameworks": null
+          },
+          {
+            "name": "Surveys",
+            "proficiency": "advanced",
+            "frameworks": null
+          }
+        ]
+      },
+      {
+        "label": "Prototyping",
+        "skills": [
+          {
+            "name": "Figma Prototyping",
+            "proficiency": "expert",
+            "frameworks": null
+          },
+          {
+            "name": "Framer",
+            "proficiency": "intermediate",
+            "frameworks": null
+          },
+          {
+            "name": "HTML/CSS",
+            "proficiency": "intermediate",
+            "frameworks": null
+          }
+        ]
+      },
+      {
+        "label": "Languages",
+        "skills": [
+          {
+            "name": "Spanish",
+            "proficiency": "expert",
+            "frameworks": null
+          },
+          {
+            "name": "English",
+            "proficiency": "advanced",
+            "frameworks": null
+          }
+        ]
+      }
+    ],
+    "experience": [
+      {
+        "title": "Senior UX Designer",
+        "company": "FintechCo",
+        "location": "Mexico City",
+        "date_range": {
+          "start": "2022-01",
+          "end": null
+        },
+        "bullets": [
+          "Redefined onboarding flow, reducing drop-off by 35% via contextual research and iterative prototyping",
+          "Built and maintained a design system used by 4 product teams across web and mobile"
+        ]
+      },
+      {
+        "title": "UX Designer",
+        "company": "EcommerceCo",
+        "location": "Mexico City",
+        "date_range": {
+          "start": "2019-03",
+          "end": "2021-12"
+        },
+        "bullets": [
+          "Led usability testing for checkout redesign, improving completion rate by 22%",
+          "Conducted 30+ user interviews informing 3 major product pivots"
+        ]
+      }
+    ],
+    "projects": [
+      {
+        "name": "Design System Playbook",
+        "url": "https://ds.fintechco.com",
+        "description": "Comprehensive design system documentation used across 4 product teams",
+        "technologies": null
+      }
+    ],
+    "education": [
+      {
+        "degree": "B.A. in Graphic Design",
+        "institution": "UNAM",
+        "date_range": {
+          "start": "2013",
+          "end": "2017"
+        },
+        "period": "2013–2017",
+        "key_topics": null
+      }
+    ],
+    "certifications": [
+      {
+        "name": "Certified Usability Analyst",
+        "issuer": "HFI",
+        "year": "2021",
+        "url": null
+      }
+    ],
+    "publications": null,
+    "awards": null,
+    "references": null,
+    "cover_letter": {
+      "opening_paragraph": "Estimado equipo de contratación,",
+      "body_paragraphs": [
+        "Como diseñadora UX con experiencia en productos financieros..."
+      ],
+      "company_connection_paragraph": "He seguido el trabajo de FintechCo en inclusión financiera...",
+      "closing_paragraph": "Espero poder contribuir al equipo con mi experiencia..."
+    }
+  },
+  "metadata": {
+    "language": "es",
+    "incorporated_keywords": null,
+    "addressed_red_flags": null
+  }
+}

@@ -132,25 +132,11 @@
     "publications": null,
     "awards": null,
     "references": null,
-    "cover_letter": {
-      "opening_paragraph": "Dear Hiring Manager,",
-      "body_paragraphs": [
-        "As a developer with deep experience in production systems...",
-        "I have led multiple migrations..."
-      ],
-      "company_connection_paragraph": "I have followed TechCorp work on...",
-      "closing_paragraph": "I look forward to discussing how I can contribute."
-    }
+    "cover_letter": null
   },
   "metadata": {
-    "language": "en",
-    "incorporated_keywords": [
-      {
-        "keyword": "microservices",
-        "where_incorporated": "experience bullet 2",
-        "original_context": null
-      }
-    ],
+    "language": null,
+    "incorporated_keywords": null,
     "addressed_red_flags": null
   }
 }
