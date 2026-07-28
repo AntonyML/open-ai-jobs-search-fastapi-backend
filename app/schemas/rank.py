@@ -64,6 +64,9 @@ class RankRequest(BaseModel):
     top_n: int = Field(
         5, description="Size of the shortlist to return", ge=1, le=50
     )
+    job_ids: list[str] | None = Field(
+        None, description="Specific ingested_job IDs to rank (from search step)"
+    )
 
 
 # ── Response schemas ────────────────────────────────────────────────

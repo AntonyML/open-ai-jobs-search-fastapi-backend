@@ -559,6 +559,7 @@ async def _rank_single_job(
         "location": job.location,
         "deadline": job.deadline,
         "language": job.language,
+        "salary": job.salary,
     }
 
     quantitative = compute_quantitative_scores(candidate_dict, job_dict, candidate.job_target)

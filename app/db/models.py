@@ -333,6 +333,7 @@ class JobPosting(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text)
     requirements: Mapped[list[str] | None] = mapped_column(FlexJSON)
     employment_type: Mapped[str | None] = mapped_column(String(50))  # full-time, part-time, ...
+    salary: Mapped[str | None] = mapped_column(String(100))  # from ingested_jobs
 
     # ── Language ─────────────────────────────────────────────
     language: Mapped[str | None] = mapped_column(String(10))  # en, da, ...

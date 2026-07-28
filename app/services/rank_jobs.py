@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError
 
-from app.db.models import CandidateProfile, ExecutionJob, ExecutionJobItem, JobPosting
+from app.db.models import CandidateProfile, ExecutionJob, ExecutionJobItem, IngestedJob, JobPosting
 from app.services.orchestrator.execution_queue import ExecutionQueue
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.rank import ALGORITHM_VERSION, PROMPT_VERSION
@@ -96,29 +96,76 @@ async def start(
                 "job_target": candidate.job_target if candidate else {},
             }
 
-            query = select(JobPosting).where(JobPosting.user_id == user_id)
-            if not re_rank:
-                query = query.where(
-                    or_(
-                        JobPosting.status == "new",
-                        JobPosting.rank_score.is_(None),
-                    )
+            job_ids = payload.get("job_ids")
+            if job_ids is not None:
+                ingested_result = await db.execute(
+                    select(IngestedJob).where(IngestedJob.id.in_(job_ids))
                 )
-            query = query.order_by(JobPosting.created_at.desc())
-            if max_jobs is not None:
-                query = query.limit(max_jobs)
-            result = await db.execute(query)
-            jobs = list(result.scalars().all())
-            total_jobs = len(jobs)
+                ingested_list = list(ingested_result.scalars().all())
+                if not ingested_list:
+                    return {
+                        "job_id": None,
+                        "status": "skipped",
+                        "total_jobs": 0,
+                        "accepted_jobs": 0,
+                        "message": "No ingested jobs found for given IDs.",
+                    }
+                jobs = []
+                for ij in ingested_list:
+                    existing = await db.get(JobPosting, ij.id)
+                    if existing is None:
+                        jp = JobPosting(
+                            id=ij.id,
+                            user_id=user_id,
+                            portal=ij.portal or "web",
+                            external_id=f"ij_{ij.id}",
+                            title=ij.title,
+                            company=ij.company,
+                            location=ij.location,
+                            url=ij.url,
+                            description=ij.description,
+                            salary=ij.salary,
+                            status="new",
+                        )
+                        db.add(jp)
+                        jobs.append(jp)
+                    else:
+                        jobs.append(existing)
+                await db.flush()
+                total_jobs = len(jobs)
+                if total_jobs == 0:
+                    return {
+                        "job_id": None,
+                        "status": "skipped",
+                        "total_jobs": 0,
+                        "accepted_jobs": 0,
+                        "message": "No unranked jobs found.",
+                    }
+                # Skip standard query — we only use the imported jobs
+            else:
+                query = select(JobPosting).where(JobPosting.user_id == user_id)
+                if not re_rank:
+                    query = query.where(
+                        or_(
+                            JobPosting.status == "new",
+                            JobPosting.rank_score.is_(None),
+                        )
+                    )
+                query = query.order_by(JobPosting.created_at.desc())
+                if max_jobs is not None:
+                    query = query.limit(max_jobs)
+                result = await db.execute(query)
+                jobs = list(result.scalars().all())
+                total_jobs = len(jobs)
 
-            if total_jobs == 0:
-                return {
-                    "job_id": None,
-                    "status": "skipped",
-                    "total_jobs": 0,
-                    "accepted_jobs": 0,
-                    "message": "No unranked jobs found.",
-                }
+                if total_jobs == 0:
+                    return {
+                        "job_id": None,
+                        "status": "skipped",
+                        "total_jobs": 0,
+                        "accepted_jobs": 0,
+                        "message": "No unranked jobs found.",
+                    }
 
             # 3. Verify no other active rank job exists
             existing_active = await db.execute(
