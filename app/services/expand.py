@@ -25,17 +25,13 @@ from app.db.models import (
     CompetencyExpansion,
     User,
 )
-from app.exceptions import LLMError, LatexCompileError, NotFoundError, ProfileIncompleteError
+from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.schemas.expand import (
     EnrichedCompetenciesLLMOutput,
     ExpandRequest,  # noqa: F401 — re-export for tests/callers
     ProposedAdditionsLLMOutput,
 )
-from app.services.apply import compile_latex as _compile_latex  # renamed to avoid shadowing
 from app.services.apply import _get_pdf_page_count  # noqa: F401 — re-export for tests
-
-# Re-export for API layer and tests
-compile_latex = _compile_latex  # noqa: F811
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 
 logger = get_logger(__name__)

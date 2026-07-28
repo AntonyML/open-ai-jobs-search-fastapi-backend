@@ -1,11 +1,16 @@
+// ── Harvard / ATS Resume Template ─────────────────────────────────
+// Single column, chronological reverse, clean serif (Latin Modern).
+// Right-aligned dates use fixed spacing — no real columns that break
+// ATS reading order.
+
 #let _months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 #let _fmt_date(iso) = {
   if iso == none or iso == "" { return none }
-  if iso == "Present" { return "Present" }
-  let parts = iso.split("-")
-  if parts.len() == 1 { return parts.at(0) }
+  if type(iso) == str and (iso == "Present" or lower(iso) == "present") { return "Present" }
+  let parts = if type(iso) == str { iso.split("-") } else { return none }
+  if parts.len() < 2 { return parts.at(0) }
   let m = int(parts.at(1))
   let mn = if m >= 1 and m <= 12 { _months.at(m - 1) } else { parts.at(1) }
   return mn + " " + parts.at(0)
@@ -18,9 +23,17 @@
   let ef = _fmt_date(end)
   if sf == none and ef == none { return "" }
   if sf == none { return ef }
-  if ef == none or ef == "" or ef == "Present" { return sf + " – Present" }
+  if ef == none or ef == "" { return sf + " – Present" }
+  if type(ef) == str and lower(ef) == "present" { return sf + " – Present" }
   if ef == sf { return sf }
   return sf + " – " + ef
+}
+
+#let _fmt_date_range_from_field(val) = {
+  // Accepts either a date_range dict or a period string
+  if type(val) == "dictionary" { return fmt_date_range(val) }
+  if type(val) == "string" { return val }
+  return ""
 }
 
 #let _contact_strip(url) = {
@@ -28,14 +41,33 @@
 }
 
 #let _section-header(title) = {
-  v(0.4em)
-  text(weight: "bold", size: 10pt, title)
-  line(length: 100%, stroke: 0.3pt + black)
-  v(0.15em)
+  v(0.35em)
+  text(weight: "bold", size: 11pt, upper(title))
+  line(length: 100%, stroke: 0.4pt + black)
+  v(0.12em)
 }
 
-#let _bold(it) = text(weight: "bold", it)
-#let _italic(it) = text(style: "italic", it)
+#let _hanging-bullet(text-body) = {
+  let indent = 1.8em
+  let hang = 0.45em
+  let bullet-box = box(width: indent - hang, [\u{2022} #h(0.15em)])
+  let body-text = text(text-body)
+  par(
+    hanging-indent: hang,
+    first-line-indent: -hang,
+    [
+      #bullet-box#body-text
+    ]
+  )
+}
+
+#let _entry-line(left-content, right-content) = {
+  // Inline right-alignment with fixed spacing — preserves ATS reading order
+  left-content
+  h(1fr, weak: true)
+  text(fill: rgb("#444"), size: 9.5pt, right-content)
+  linebreak()
+}
 
 #let render_cv(data) = {
   let first = data.at("first_name", default: "")
@@ -58,19 +90,19 @@
 
   set page(
     paper: "a4",
-    margin: (top: 0.5in, bottom: 0.45in, left: 0.6in, right: 0.6in),
+    margin: (top: 0.55in, bottom: 0.5in, left: 0.65in, right: 0.65in),
     header-ascent: 0cm,
     numbering: none,
   )
-  set text(font: "Latin Modern Roman", size: 9.5pt)
-  set par(leading: 0.4em, justify: false)
+  set text(font: "Latin Modern Roman", size: 10pt)
+  set par(leading: 0.35em, justify: false)
 
   let muted = rgb("#444444")
 
-  // ── Header ──────────────────────────────────────────────────────
+  // ── Header: Name + Contact Line ─────────────────────────────
   set align(center)
-  text(weight: "bold", size: 15pt, first + " " + last)
-  v(0.08em)
+  text(weight: "bold", size: 17pt, first + " " + last)
+  v(0.06em)
 
   let contact-parts = ()
   if location != none { contact-parts.push(location) }
@@ -81,104 +113,51 @@
   if portfolio != none { contact-parts.push(_contact_strip(portfolio)) }
 
   if contact-parts.len() > 0 {
-    text(fill: muted, size: 9pt, contact-parts.join(" | "))
+    text(fill: muted, size: 9.5pt, contact-parts.join("  |  "))
   }
+  v(0.1em)
 
   set align(left)
 
-  // ── Profile (compact) ─────────────────────────────────────────
-  if profile != none {
-    v(0.2em)
-    text(size: 9.5pt, fill: muted, profile)
+  // ── Profile Statement (compact, optional) ───────────────────
+  if profile != none and profile != "" {
+    v(0.1em)
+    text(size: 10pt, fill: muted, profile)
+    v(0.05em)
   }
 
-  // ── Experience (first) ──────────────────────────────────────
-  _section-header("Experience")
-  for entry in experience {
-    let title = entry.at("title", default: "")
-    let company = entry.at("company", default: "")
-    let loc = entry.at("location", default: none)
-    let dr = entry.at("date_range", default: (:))
-    let bullets = entry.at("bullets", default: ())
+  // ── Experience (FIRST — for experienced candidates) ─────────
+  if experience.len() > 0 {
+    _section-header("Experience")
+    for entry in experience {
+      let title = entry.at("title", default: "")
+      let company = entry.at("company", default: "")
+      let loc = entry.at("location", default: none)
+      let dr = entry.at("date_range", default: (:))
+      let bullets = entry.at("bullets", default: ())
 
-    // Line 1: Company (bold) + Location (right, inline)
-    if company != "" {
-      _bold(company)
-      if loc != none {
-        h(1fr)
-        text(fill: muted, size: 9pt, loc)
+      // Line 1: Company (bold) + Location (right)
+      if company != "" {
+        let loc-str = if loc != none { loc } else { "" }
+        _entry-line(text(weight: "bold", size: 10.5pt, company), loc-str)
       }
-      linebreak()
-    }
 
-    // Line 2: Role (italic) + Dates (right, inline)
-    let dstr = fmt_date_range(dr)
-    if title != "" {
-      _italic(title)
-      if dstr != "" {
-        h(1fr)
-        text(fill: muted, size: 9pt, dstr)
+      // Line 2: Title (italic) + Date range (right)
+      let dstr = fmt_date_range(dr)
+      if title != "" {
+        _entry-line(text(style: "italic", size: 10pt, title), dstr)
+      } else if dstr != "" {
+        _entry-line("", dstr)
       }
-      linebreak()
-    } else if dstr != "" {
-      text(fill: muted, size: 9pt, dstr)
-      linebreak()
-    }
 
-    v(0.04em)
+      v(0.02em)
 
-    for bullet in bullets {
-      text(size: 9pt, "\u2022 " + bullet)
-      v(0.06em)
-    }
-    v(0.2em)
-  }
-
-  // ── Core Competencies ───────────────────────────────────────
-  if competencies != none and competencies.len() > 0 {
-    _section-header("Core Competencies")
-    text(size: 9.5pt, fill: muted, competencies.join("  \u2022  "))
-  }
-
-  // ── Skills ──────────────────────────────────────────────────
-  if skills != none and skills.len() > 0 {
-    _section-header("Skills")
-    for group in skills {
-      let label = group.at("label", default: "")
-      let items = group.at("skills", default: ())
-      if items.len() > 0 {
-        let parts = ()
-        for skill in items {
-          parts.push(skill.at("name", default: ""))
-        }
-        _bold(label + ": ") + text(parts.join(", "))
-        linebreak()
+      // Bullets
+      for bullet in bullets {
+        _hanging-bullet(text(size: 9.5pt, bullet))
+        v(0.04em)
       }
-    }
-  }
-
-  // ── Projects ────────────────────────────────────────────────
-  if projects != none and projects.len() > 0 {
-    _section-header("Projects")
-    for proj in projects {
-      let pname = proj.at("name", default: "")
-      let purl = proj.at("url", default: none)
-      let pdesc = proj.at("description", default: none)
-      let techs = proj.at("technologies", default: none)
-      _bold(pname)
-      if purl != none {
-        text(fill: muted, size: 9pt, " (" + _contact_strip(purl) + ")")
-      }
-      linebreak()
-      if pdesc != none {
-        text(size: 9.5pt, pdesc)
-        linebreak()
-      }
-      if techs != none and techs.len() > 0 {
-        text(size: 9pt, fill: muted, "Tech: " + techs.join(", "))
-        linebreak()
-      }
-      v(0.12em)
+      v(0.18em)
     }
   }
 
@@ -193,17 +172,68 @@
       let topics = edu.at("key_topics", default: none)
       let dstr = if period != none { period } else { fmt_date_range(dr) }
 
-      _bold(degree + ", " + institution)
-      if dstr != "" {
-        h(1fr)
-        text(fill: muted, size: 9.5pt, dstr)
-      }
-      linebreak()
-      if topics != none and topics.len() > 0 {
-        text(size: 9pt, fill: muted, "Relevant coursework: " + topics.join(", "))
+      // Line: Degree, Institution (bold) + Date (right)
+      _entry-line(
+        text(weight: "bold", size: 10pt, degree + ", " + institution),
+        dstr
+      )
+
+      if topics != none and topics != "" {
+        text(size: 9.5pt, fill: muted, topics)
         linebreak()
       }
       v(0.15em)
+    }
+  }
+
+  // ── Skills ──────────────────────────────────────────────────
+  if skills != none and skills.len() > 0 {
+    _section-header("Skills")
+    for group in skills {
+      let label = group.at("label", default: "")
+      let items = group.at("skills", default: ())
+      if items.len() > 0 {
+        let parts = ()
+        for skill in items {
+          parts.push(skill.at("name", default: ""))
+        }
+        text(weight: "bold", size: 10pt, label + ": ")
+        text(size: 10pt, parts.join(", "))
+        linebreak()
+      }
+    }
+    v(0.1em)
+  }
+
+  // ── Core Competencies (if skills not present) ───────────────
+  if competencies != none and competencies.len() > 0 {
+    _section-header("Core Competencies")
+    text(size: 10pt, fill: muted, competencies.join("  \u{2022}  "))
+  }
+
+  // ── Projects ────────────────────────────────────────────────
+  if projects != none and projects.len() > 0 {
+    _section-header("Projects")
+    for proj in projects {
+      let pname = proj.at("name", default: "")
+      let purl = proj.at("url", default: none)
+      let pdesc = proj.at("description", default: none)
+      let techs = proj.at("technologies", default: none)
+
+      _entry-line(
+        text(weight: "bold", size: 10pt, pname),
+        if purl != none { _contact_strip(purl) } else { "" }
+      )
+
+      if pdesc != none and pdesc != "" {
+        text(size: 9.5pt, pdesc)
+        linebreak()
+      }
+      if techs != none and techs.len() > 0 {
+        text(size: 9.5pt, fill: muted, "Tech: " + techs.join(", "))
+        linebreak()
+      }
+      v(0.12em)
     }
   }
 
@@ -214,13 +244,11 @@
       let cname = cert.at("name", default: "")
       let issuer = cert.at("issuer", default: "")
       let year = cert.at("year", default: none)
-      _bold(cname)
-      if issuer != "" { text(", " + issuer) }
-      if year != none {
-        h(1fr)
-        text(fill: muted, size: 9.5pt, year)
-      }
-      linebreak()
+
+      _entry-line(
+        text(weight: "bold", size: 10pt, cname + if issuer != "" { ", " + issuer } else { "" }),
+        if year != none { year } else { "" }
+      )
       v(0.12em)
     }
   }
@@ -233,10 +261,11 @@
       let year = pub.at("year", default: "")
       let ptitle = pub.at("title", default: "")
       let journal = pub.at("journal", default: none)
-      text(size: 9.5pt, authors + " (" + year + "). " + ptitle + ".")
-      if journal != none {
-        text(size: 9.5pt, fill: muted, " " + journal + ".")
+      let body = authors + " (" + year + "). " + ptitle + "."
+      if journal != none and journal != "" {
+        body += " " + journal + "."
       }
+      text(size: 9.5pt, body)
       linebreak()
       v(0.12em)
     }
@@ -249,13 +278,11 @@
       let aname = award.at("name", default: "")
       let issuer = award.at("issuer", default: none)
       let year = award.at("year", default: none)
-      _bold(aname)
-      if issuer != none { text(", " + issuer) }
-      if year != none {
-        h(1fr)
-        text(fill: muted, size: 9.5pt, year)
-      }
-      linebreak()
+
+      _entry-line(
+        text(weight: "bold", size: 10pt, aname + if issuer != none { ", " + issuer } else { "" }),
+        if year != none { year } else { "" }
+      )
       v(0.15em)
     }
   }

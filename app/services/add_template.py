@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
 from app.db.models import User
-from app.exceptions import LatexCompileError, NotFoundError
+from app.exceptions import NotFoundError
 
 settings = get_settings()
 
@@ -258,17 +258,17 @@ async def execute_add_template(
 
             if result.returncode != 0:
                 error_output = (stdout + stderr).decode("utf-8", errors="replace")
-                raise LatexCompileError(
+                raise RuntimeError(
                     f"Template test compilation failed with {req.engine}: {error_output}"
                 )
 
         if not scratch_pdf.exists():
-            raise LatexCompileError("PDF was not generated during template compile check.")
+            raise RuntimeError("PDF was not generated during template compile check.")
 
         # Check page count limit
         actual_pages = await _get_pdf_page_count(scratch_pdf)
         if actual_pages > req.page_limit:
-            raise LatexCompileError(
+            raise RuntimeError(
                 f"Template exceeds page limit. Expected max {req.page_limit} pages, got {actual_pages}."
             )
 

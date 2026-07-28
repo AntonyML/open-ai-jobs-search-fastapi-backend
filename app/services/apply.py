@@ -712,8 +712,6 @@ async def execute_apply_background(
             user_id=application.user_id,
             job_posting_id=application.job_posting_id,
             provider_config=provider_config,
-            cv_template=application.cv_template,
-            cover_letter_template=application.cover_letter_template,
             application=application,
         )
         logger.info("execute_apply_background: execute_apply completed successfully (stage=%s)", application.pipeline_stage)

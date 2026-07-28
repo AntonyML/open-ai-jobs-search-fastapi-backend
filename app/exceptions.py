@@ -73,16 +73,6 @@ class LLMError(AppError):
         super().__init__(message or _t("errors.llm_error", locale), locale=locale)
 
 
-class LatexCompileError(AppError):
-    """LaTeX compilation failed or produced wrong page count."""
-
-    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-    code = "latex_compile_error"
-
-    def __init__(self, message: str | None = None, locale: str = "en"):
-        super().__init__(message or _t("errors.latex_compile_error", locale), locale=locale)
-
-
 class DuplicateError(AppError):
     """Attempted to create a resource that already exists."""
 
