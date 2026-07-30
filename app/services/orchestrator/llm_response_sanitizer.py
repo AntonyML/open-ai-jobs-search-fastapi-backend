@@ -141,24 +141,35 @@ def _sanitize_values(
     - Trim strings
     - Convert numbers to int where appropriate
     - Fill in defaults for None values where possible
+    - **Deep recursion**: handles nested dicts and lists of dicts
+    - **Proficiency mapping**: maps LLM-common values (``'native'``, ``'fluent'``)
+      to valid ``ProficiencyLevel`` literals
+    - **Null date_range**: replaces explicit ``None`` with
+      ``{"start": None, "end": None}`` so Pydantic's ``default_factory`` works
     """
     sanitized: dict[str, Any] = {}
     constraints = field_constraints or {}
 
     for key, value in data.items():
         if value is None:
-            sanitized[key] = None
+            # ── Special handling for fields that can be null ──────
+            if key == "date_range":
+                # Pydantic DateRange has default_factory but rejects
+                # explicit None.  Replace with empty DateRange.
+                sanitized[key] = {"start": None, "end": None}
+            else:
+                sanitized[key] = None
             continue
 
         # String values
         if isinstance(value, str):
-            sanitized[key] = value.strip()
+            sanitized[key] = _sanitize_string_value(key, value)
 
         # Integer values
         elif isinstance(value, (int, float)):
             sanitized[key] = value
 
-        # List values (truncate to max_length if specified)
+        # List values (truncate to max_length + recurse into dict items)
         elif isinstance(value, list):
             max_len = constraints.get(key, {}).get("max_length")
             if max_len and len(value) > max_len:
@@ -168,13 +179,16 @@ def _sanitize_values(
                 )
                 value = value[:max_len]
             sanitized[key] = [
-                str(v).strip() if isinstance(v, str)
-                else v for v in value
+                _sanitize_values(item, constraints)
+                if isinstance(item, dict)
+                else str(item).strip() if isinstance(item, str)
+                else item
+                for item in value
             ]
 
-        # Dict values (pass through)
+        # Dict values (recurse)
         elif isinstance(value, dict):
-            sanitized[key] = value
+            sanitized[key] = _sanitize_values(value, constraints)
 
         # Boolean values
         elif isinstance(value, bool):
@@ -185,6 +199,42 @@ def _sanitize_values(
             sanitized[key] = str(value)
 
     return sanitized
+
+
+def _sanitize_string_value(key: str, value: str) -> str:
+    """Sanitize a single string value, with special handling per field key."""
+    stripped = value.strip()
+
+    # ── Proficiency mapping ───────────────────────────────────────
+    # The LLM often returns 'native', 'fluent', 'master' for CV skills,
+    # but ProficiencyLevel only accepts: beginner/intermediate/advanced/expert.
+    if key == "proficiency":
+        return _map_proficiency(stripped)
+
+    return stripped
+
+
+def _map_proficiency(value: str) -> str:
+    """Map an LLM proficiency string to a valid ProficiencyLevel literal.
+
+    ``ProficiencyLevel = Literal["beginner", "intermediate", "advanced", "expert"]``
+    """
+    mapping = {
+        "native": "expert",
+        "fluent": "advanced",
+        "master": "expert",
+        "proficient": "advanced",
+        "expert": "expert",
+        "advanced": "advanced",
+        "intermediate": "intermediate",
+        "beginner": "beginner",
+    }
+    key = value.lower().strip()
+    if key in mapping:
+        return mapping[key]
+    # Unknown proficiency value — default to "intermediate"
+    logger.warning("Unknown proficiency value '%s', defaulting to 'intermediate'", value)
+    return "intermediate"
 
 
 def default_field_constraints() -> dict[str, dict[str, int]]:
