@@ -131,6 +131,17 @@ def _fix_single_quotes(text: str) -> str:
     return text
 
 
+# Fields that MUST be strings in the final schema.
+# The LLM sometimes returns a single-element array (e.g. ["2024"]) where
+# a plain string is expected.  We detect and unwrap them here.
+_STRING_FIELDS: set[str] = {
+    "period", "year", "url", "degree", "institution", "company",
+    "title", "name", "location", "salary", "description",
+    "start", "end", "label", "proficiency",
+    "issuer", "journal", "doi", "authors", "degree",
+}
+
+
 def _sanitize_values(
     data: dict[str, Any],
     field_constraints: dict[str, dict[str, int]] | None = None,
@@ -146,6 +157,8 @@ def _sanitize_values(
       to valid ``ProficiencyLevel`` literals
     - **Null date_range**: replaces explicit ``None`` with
       ``{"start": None, "end": None}`` so Pydantic's ``default_factory`` works
+    - **Array-to-scalar**: single-element arrays in ``_STRING_FIELDS`` are
+      unwrapped to their scalar value (``["2024"]`` → ``"2024"``)
     """
     sanitized: dict[str, Any] = {}
     constraints = field_constraints or {}
@@ -159,6 +172,12 @@ def _sanitize_values(
                 sanitized[key] = {"start": None, "end": None}
             else:
                 sanitized[key] = None
+            continue
+
+        # ── Array-to-scalar: LLM sometimes returns ["2024"] for a string field ─
+        if isinstance(value, list) and key in _STRING_FIELDS:
+            # Join all non-None items into a comma-separated string
+            sanitized[key] = ", ".join(str(v) for v in value if v is not None)
             continue
 
         # String values

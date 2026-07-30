@@ -65,8 +65,17 @@
   // Inline format — both items appear in content-stream order (no columns)
   // so ATS parsers extract everything as a single readable line.
   // When right-content is non-empty, a " — " separator is added for clarity.
-  let sep = if right-content != "" { " — " } else { "" }
-  [#left-content #text(fill: rgb("#444"), size: 9.5pt, sep + right-content)]
+  //
+  // Defence: the LLM sometimes passes an array instead of a string (e.g.
+  // ["2024"]), which would cause "expected content, found array".  The
+  // sanitizer normally catches this, but we protect here too.
+  let rc = if type(right-content) == array {
+    if right-content.len() > 0 { str(right-content.at(0)) } else { "" }
+  } else {
+    str(right-content)
+  }
+  let sep = if rc != "" { " — " } else { "" }
+  [#left-content #text(fill: rgb("#444"), size: 9.5pt, sep + rc)]
   linebreak()
 }
 

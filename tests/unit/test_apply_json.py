@@ -370,6 +370,64 @@ class TestSanitizerIntegration:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 6. Sanitizer array-to-scalar tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestSanitizerArrayToScalar:
+    """Sanitizer converts single-element arrays to scalars for string fields.
+
+    The LLM sometimes returns ``["2024"]`` instead of ``"2024"`` for fields
+    like ``period``, ``year``, ``url``.  The sanitizer must unwrap these
+    before Pydantic validation.
+    """
+
+    def test_single_element_array_to_scalar(self):
+        """["2024"] → "2024" for string fields like period, year, url."""
+        from app.services.orchestrator.llm_response_sanitizer import sanitize_llm_response
+
+        # Simulate the raw LLM output (must be a string)
+        dirty_json = json.dumps({
+            "cv": {
+                "education": [{
+                    "degree": "BS Computer Science",
+                    "institution": "UCR",
+                    "period": ["2015-2019"],  # array instead of string
+                    "date_range": None,
+                }],
+                "certifications": [{
+                    "name": "AWS Solutions Architect",
+                    "issuer": "Amazon",
+                    "year": ["2024"],  # array instead of string
+                }],
+            },
+        })
+
+        result = sanitize_llm_response(dirty_json, "GenerateCVOutput")
+        cv = result["cv"]
+        assert cv["education"][0]["period"] == "2015-2019"
+        assert cv["certifications"][0]["year"] == "2024"
+
+    def test_multi_element_array_joined(self):
+        """["Python", "Java"] in a string field → "Python, Java"."""
+        from app.services.orchestrator.llm_response_sanitizer import sanitize_llm_response
+
+        dirty_json = json.dumps({
+            "cv": {
+                "education": [{
+                    "institution": ["University X", "Technical Institute Y"],
+                    "degree": "Dual Degree",
+                    "period": None,
+                    "date_range": None,
+                }],
+            },
+        })
+
+        result = sanitize_llm_response(dirty_json, "GenerateCVOutput")
+        assert result["cv"]["education"][0]["institution"] == "University X, Technical Institute Y"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 3. Generation function round-trip tests
 # ═══════════════════════════════════════════════════════════════════════
 
