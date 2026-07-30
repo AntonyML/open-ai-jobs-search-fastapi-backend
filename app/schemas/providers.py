@@ -50,6 +50,7 @@ class ProviderCredentialOut(BaseModel):
     """Provider credential response (without API key)."""
 
     provider: str
+    display_name: str | None = None
     api_base: str | None
     model: str | None
     has_key: bool = True
@@ -165,5 +166,8 @@ KNOWN_PROVIDERS: list[ProviderInfo] = [
         supports_custom_base=True,
         default_model="llama3.2",  # was: llama3.1 (3.2 es el tag actual en ollama hub)
         example_base_url="http://localhost:11434/v1",
-    ),
+        ),
 ]
+
+PROVIDER_DISPLAY_MAP: dict[str, str] = {p.name: p.display_name for p in KNOWN_PROVIDERS}
+

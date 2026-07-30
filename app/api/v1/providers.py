@@ -110,6 +110,8 @@ async def list_my_providers(
     db: AsyncSession = Depends(get_db),
 ) -> list[ProviderCredentialOut]:
     """Return all providers the user has configured (without API keys)."""
+    from app.schemas.providers import PROVIDER_DISPLAY_MAP
+
     providers = await list_user_providers(db, user["sub"])
     active_config = await get_user_active_provider_config(db, user["sub"])
     limits = get_tier_limits(user.get("tier", "free"))
@@ -126,6 +128,7 @@ async def list_my_providers(
         result.append(
             ProviderCredentialOut(
                 provider=p["provider"],
+                display_name=PROVIDER_DISPLAY_MAP.get(p["provider"]),
                 api_base=p["api_base"],
                 model=model,
                 has_key=True,
