@@ -48,7 +48,15 @@ async def search_jobs(
             query = query.where(or_(*conditions))
 
     if req.location:
-        query = query.where(IngestedJob.location.ilike(f"%{req.location}%"))
+        loc_pattern = f"%{req.location}%"
+        # TEMPORAL: incluir jobs sin location (parche mientras los parsers se arreglan)
+        query = query.where(
+            or_(
+                IngestedJob.location.is_(None),
+                IngestedJob.location == "",
+                IngestedJob.location.ilike(loc_pattern),
+            )
+        )
 
     query = query.order_by(IngestedJob.ingested_at.desc()).limit(req.limit)
 
