@@ -1,5 +1,7 @@
 """Job search service — reads from ingested_jobs, triggers microservice if needed."""
 
+import logging
+
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -15,6 +17,8 @@ from app.schemas.jobs import (
     IngestStatusResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 MIN_RESULTS_THRESHOLD = 5
 
 
@@ -23,6 +27,12 @@ async def search_jobs(
     req: JobSearchRequest,
     user: dict,
 ) -> JobSearchResponse:
+    # ── DEBUG FASE 1.3: Ver qué keywords llegan y cuántos jobs hay ──
+    logger.warning("[FASE 1.3 DEBUG] === SEARCH REQUEST ===")
+    logger.warning("[FASE 1.3 DEBUG] keywords_raw='%s'", req.keywords)
+    logger.warning("[FASE 1.3 DEBUG] location='%s'", req.location)
+    logger.warning("[FASE 1.3 DEBUG] limit=%s", req.limit)
+
     query = select(IngestedJob).where(
         IngestedJob.expires_at > datetime.now(timezone.utc)
     )
@@ -38,20 +48,33 @@ async def search_jobs(
 
     query = query.order_by(IngestedJob.ingested_at.desc()).limit(req.limit)
 
+    # Log the compiled SQL
+    compiled = query.compile(compile_kwargs={"literal_binds": True})
+    logger.warning("[FASE 1.3 DEBUG] SQL=%s", compiled.string)
+
     result = await db.execute(query)
     jobs = result.scalars().all()
 
+    logger.warning("[FASE 1.3 DEBUG] results_count=%s", len(jobs))
+    logger.warning("[FASE 1.3 DEBUG] MIN_RESULTS_THRESHOLD=%s", MIN_RESULTS_THRESHOLD)
+
     if len(jobs) >= MIN_RESULTS_THRESHOLD:
+        logger.warning("[FASE 1.3 DEBUG] Returning fresh=True (enough results)")
         return JobSearchResponse(
             jobs=[JobOut.model_validate(j) for j in jobs],
             count=len(jobs),
             fresh=True,
         )
 
+    # Not enough results — trigger ingest
+    category_id = _infer_category(req.keywords, req.location)
+    logger.warning("[FASE 1.3 DEBUG] Not enough results. Triggering ingest for category=%s", category_id)
+
     ingest_job_id = await trigger_ingest(
-        category_id=_infer_category(req.keywords, req.location),
+        category_id=category_id,
         keywords=req.keywords,
     )
+    logger.warning("[FASE 1.3 DEBUG] ingest_job_id=%s", ingest_job_id)
 
     return JobSearchResponse(
         jobs=[JobOut.model_validate(j) for j in jobs],
