@@ -4,7 +4,7 @@ import logging
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 
@@ -38,10 +38,14 @@ async def search_jobs(
     )
 
     if req.keywords:
-        kw = f"%{req.keywords}%"
-        query = query.where(
-            IngestedJob.title.ilike(kw) | IngestedJob.description.ilike(kw)
-        )
+        terms = [t.strip() for t in req.keywords.split() if len(t.strip()) > 2]
+        if terms:
+            conditions = []
+            for term in terms:
+                pattern = f"%{term}%"
+                conditions.append(IngestedJob.title.ilike(pattern))
+                conditions.append(IngestedJob.description.ilike(pattern))
+            query = query.where(or_(*conditions))
 
     if req.location:
         query = query.where(IngestedJob.location.ilike(f"%{req.location}%"))
