@@ -122,3 +122,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(v1_router, prefix="/api/v1")
 
     return app
+
+
+app = create_app()
