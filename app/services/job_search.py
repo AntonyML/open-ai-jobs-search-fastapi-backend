@@ -92,11 +92,25 @@ def _infer_category(keywords: str, location: str | None) -> str:
     kw = keywords.lower()
     loc = (location or "").lower()
 
-    if "costa rica" in loc or " cr" in loc or "san jos" in loc:
+    # STEM Costa Rica
+    if "costa rica" in loc or " cr" in loc or "san jos" in loc or "heredia" in loc or "alajuela" in loc:
         return "stem_cr"
-    if "denmark" in loc or "danmark" in loc or "copenhagen" in loc:
-        return "stem_dk"
-    if "remote" in loc or "remoto" in loc:
-        return "stem_remote"
 
+    # Dinamarca
+    if "denmark" in loc or "danmark" in loc or "copenhagen" in loc or "københavn" in loc:
+        return "stem_dk"
+
+    # Remoto LATAM
+    if "remoto" in loc or "remote" in loc or "latam" in loc or "cualquier país" in loc:
+        return "latam_remote"
+
+    # Freelance keywords
+    if any(w in kw for w in ["freelance", "freelancer", "contractor", "project"]):
+        return "freelance_intl"
+
+    # Work from home keywords
+    if any(w in kw for w in ["work from home", "home office", "data entry", "virtual assistant"]):
+        return "from_work_home"
+
+    # Default: stem_cr (Costa Rica es el mercado principal)
     return "stem_cr"

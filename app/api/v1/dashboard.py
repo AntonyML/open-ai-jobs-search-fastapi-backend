@@ -26,7 +26,6 @@ from app.db.models import (
     JobPosting,
     Outcome,
     ProviderCredential,
-    ScrapeRun,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +39,7 @@ async def get_dashboard_stats(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Aggregated KPIs — single query with 8 scalar subselects."""
+    """Aggregated KPIs — single query with 7 scalar subselects."""
     uid = user["sub"]
 
     jobs_scraped = select(func.count(JobPosting.id)).where(JobPosting.user_id == uid)
@@ -49,10 +48,7 @@ async def get_dashboard_stats(
     )
     applications = select(func.count(Application.id)).where(Application.user_id == uid)
     interviews = select(func.count(InterviewPrep.id)).where(InterviewPrep.user_id == uid)
-    scrape_runs = select(func.count(ScrapeRun.id)).where(
-        ScrapeRun.user_id == uid,
-        ScrapeRun.status.in_(["completed", "completed_with_errors"]),
-    )
+    # Note: scrape_runs tracking was removed — ingesta is now handled by the microservice
     avg_rank_score = select(func.avg(JobPosting.rank_score)).where(
         JobPosting.user_id == uid, JobPosting.rank_score.isnot(None)
     )
@@ -68,8 +64,7 @@ async def get_dashboard_stats(
         func.coalesce(jobs_ranked.scalar_subquery(), 0).label("jobs_ranked"),
         func.coalesce(applications.scalar_subquery(), 0).label("applications"),
         func.coalesce(interviews.scalar_subquery(), 0).label("interviews"),
-        func.coalesce(scrape_runs.scalar_subquery(), 0).label("scrape_runs"),
-        avg_rank_score.scalar_subquery().label("avg_rank_score"),
+        func.coalesce(avg_rank_score.scalar_subquery(), 0).label("avg_rank_score"),
         func.coalesce(hired.scalar_subquery(), 0).label("hired"),
         func.coalesce(rejected.scalar_subquery(), 0).label("rejected"),
     )
@@ -80,7 +75,6 @@ async def get_dashboard_stats(
         "jobs_ranked": row.jobs_ranked,
         "applications": row.applications,
         "interviews": row.interviews,
-        "scrape_runs": row.scrape_runs,
         "avg_rank_score": round(row.avg_rank_score, 1) if row.avg_rank_score is not None else None,
         "hired": row.hired,
         "rejected": row.rejected,

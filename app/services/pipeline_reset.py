@@ -29,7 +29,6 @@ from app.db.models import (
     JobPosting,
     ModelHealth,
     ProviderHealth,
-    ScrapeRun,
     Upskill,
     User,
     UserSalaryData,
@@ -87,11 +86,7 @@ async def execute_pipeline_reset(
     )
     deleted["job_postings"] = job_result.rowcount
 
-    # 6. Delete ScrapeRuns
-    scrape_result = await db.execute(
-        delete(ScrapeRun).where(ScrapeRun.user_id == user_id)
-    )
-    deleted["scrape_runs"] = scrape_result.rowcount
+    # 6. (Removed: ScrapeRun table was deprecated with the migration to ingesta microservice)
 
     # 7. Delete UserSalaryData (uploaded salary benchmarks)
     salary_result = await db.execute(
