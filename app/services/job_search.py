@@ -89,16 +89,37 @@ async def search_jobs(
     )
 
 
-async def trigger_ingest(category_id: str, keywords: str) -> str:
+async def trigger_ingest(category_id: str, keywords: str) -> str | None:
+    """Trigger a job ingest via the microservice.
+
+    Returns the ingest_job_id on success, or None if the microservice
+    is unavailable (5xx). 4xx errors still raise immediately.
+    """
     settings = get_settings()
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            f"{settings.ingest_service_url}/api/v1/ingest",
-            json={"category_id": category_id, "keywords": keywords},
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{settings.ingest_service_url}/api/v1/ingest",
+                json={"category_id": category_id, "keywords": keywords},
+            )
+    except httpx.TimeoutException:
+        logger.warning("[INGEST] Microservice timed out after 10s")
+        return None
+    except httpx.RequestError as e:
+        logger.warning("[INGEST] Microservice unreachable: %s", e)
+        return None
+
+    if resp.status_code >= 500:
+        logger.warning(
+            "[INGEST] Microservice returned %s for category=%s",
+            resp.status_code, category_id,
         )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["ingest_job_id"]
+        return None
+
+    # 4xx still raise — these are client errors
+    resp.raise_for_status()
+    data = resp.json()
+    return data["ingest_job_id"]
 
 
 async def get_ingest_status(
