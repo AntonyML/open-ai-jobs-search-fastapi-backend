@@ -1,6 +1,6 @@
 # Open Ai Jobs Search — FastAPI Backend
 
-Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta un pipeline completo: desde el scraping de portales hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas, tracking de resultados y calibración de fit.
+Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta un pipeline completo: desde la búsqueda de empleos (alimentada por el **microservicio de ingesta**) hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas, tracking de resultados y calibración de fit.
 
 > **Inspirado en:** [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search)
 
@@ -8,12 +8,13 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 ## Tabla de contenidos
 
-- [Stack](#stack)
 - [Arquitectura](#arquitectura)
+- [Microservicio de ingesta](#microservicio-de-ingesta)
 - [Pipeline completo](#pipeline-completo)
 - [Estructura](#estructura)
 - [Prerrequisitos](#prerrequisitos)
 - [Setup](#setup)
+- [Seed de administrador](#seed-de-administrador)
 - [Migraciones (Alembic)](#migraciones-alembic)
 - [Endpoints](#endpoints)
 - [LLM Orchestrator](#llm-orchestrator)
@@ -28,15 +29,16 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 ## Stack
 
 - **FastAPI** (async) + **Pydantic v2** + **SQLAlchemy 2.0** (async, asyncpg)
-- **LiteLLM** — capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, Groq, OpenRouter, LM Studio, Ollama)
+- **LiteLLM** — capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama)
 - **LLMOrchestrator** — sistema de colas persistente, failover automático, rate limiting, health monitoring, WebSocket real-time
 - **Supabase** (PostgreSQL) — Session Pooler o Direct Connection
-- **APScheduler** — scraping periódico
-- **Bun/TypeScript** scrapers (linkedin, jobindex, jobnet, jobdanmark, freehire, jobbank)
-- **LaTeX** (lualatex + xelatex) — generación de CV y cover letters tailored
+- **Typst** — compilación de PDFs (CV + cover letter) **in-process**, sin subprocesos ni LaTeX
+- **Microservicio de Ingesta** (Telegram → `ingested_jobs`) — la API principal **lee** los empleos de la tabla compartida
+- **Bun/TypeScript** — scrapers legacy + generación de nuevos portales (`/add-portal`)
 - **i18n** — soporte multi-idioma (en, es) con detección automática vía cookie/Accept-Language
 - **WebSocket** — notificaciones real-time del estado de la cola de ejecución
 - **Fernet** (cryptography) — cifrado de API keys por usuario en DB
+- **aiocache** — cache en memoria de KPIs de dashboard
 - **Sentry** — monitoreo de errores en producción
 - **Resend** — email transaccional (upgrades, donaciones)
 
@@ -46,43 +48,35 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                     LLMOrchestrator                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐  │
-│  │ Provider     │  │ Model        │  │ ExecutionQueue        │  │
-│  │ Manager      │  │ Manager      │  │ (concurrency,         │  │
-│  │ (health,     │  │ (states,     │  │  checkpointing,       │  │
-│  │  priorities, │  │  selection,  │  │  persistence)         │  │
-│  │  cooldowns)  │  │  costs)      │  │                       │  │
-│  └──────────────┘  └──────────────┘  └───────────────────────┘  │
-│  ┌──────────────┐  ┌──────────────────────────────────────────┐ │
-│  │ QueueNotifier│  │ LLMResponseSanitizer                     │ │
-│  │ (WebSocket   │  │ (repair JSON, truncate arrays,           │ │
-│  │  real-time)  │  │  fill defaults before Pydantic)          │ │
-│  └──────────────┘  └──────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         ▼
+│                        Frontend (Next.js)                        │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │ HTTP / WebSocket
+                               ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                      Services Layer                               │
-│  Scrape → Rank → Apply → Interview → Outcome → Upskill           │
-│  Expand → Verification → ATS Check → CV Cutter → PDF Compiler    │
-│  Fit Calibration → Salary Benchmarking → Pipeline Reset          │
-│  Tiers → Email → Provider Credentials → Provider Models          │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    Deterministic Analyzers                        │
-│  RankAnalyzer │ SkillLinter │ ContentGuard │ PDFVerifier         │
-│  SalaryLookup │ KeywordExtractor │ AtsChecker                   │
-└──────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    Cross-Cutting                                  │
-│  i18n (en/es) │ Middleware (PII guard) │ Dashboard & Analytics   │
-└──────────────────────────────────────────────────────────────────┘
+│                      API Principal (FastAPI)                     │
+│                                                                  │
+│  Auth │ Providers │ Setup │ Jobs/Search │ Rank │ Apply │        │
+│  Interview │ Outcome │ Upskill │ Expand │ Salary │ Verify        │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                    LLMOrchestrator                         │  │
+│  │  Provider/Model Manager │ ExecutionQueue │ QueueNotifier   │  │
+│  │  (failover, rate limits, checkpoints, WebSocket real-time) │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  Worker separado (app/worker.py) → cola de ranking               │
+│  (FOR UPDATE SKIP LOCKED, sesiones cortas LOAD/RANK/SAVE)        │
+└───────────────┬───────────────────────────────────┬──────────────┘
+                │ LEE ingested_jobs                 │ POST /api/v1/ingest
+                ▼                                   ▼
+┌────────────────────────────┐      ┌────────────────────────────────┐
+│       Supabase / Postgres  │      │  Microservicio de Ingesta      │
+│  ingested_jobs (TTL 72h)   │◀─────│  Telegram → parse → INSERT     │
+│  + tablas del pipeline     │      │  (regex deterministas, sin LLM)│
+└────────────────────────────┘      └────────────────────────────────┘
 ```
+
+> El `POST /api/v1/ingest` es un endpoint **del microservicio** (su propia ruta); la API principal solo lo consume vía `INGEST_SERVICE_URL`.
 
 ### Principios arquitectónicos
 
@@ -96,6 +90,25 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 5. **Worker de ranking como proceso separado.** El ranking corre en un worker independiente del API (proceso Fly.io separado). Usa `FOR UPDATE SKIP LOCKED` para evitar contención, sesiones de BD cortas (solo LOAD y SAVE), y LLM calls sin conexión a DB abierta.
 
+6. **La ingesta de empleos es responsabilidad del microservicio.** La API principal nunca scrapea portales: lee la tabla compartida `ingested_jobs` y, si no hay resultados suficientes, dispara una ingesta al microservicio vía `POST /api/v1/ingest`.
+
+---
+
+## Microservicio de ingesta
+
+La búsqueda de empleos está separada en un **microservicio propio** (repo `open-ai-jobs-search-microservice-searchjobs-backend`):
+
+```
+Telegram (canales públicos) → [Microservicio] → Supabase (ingested_jobs) → [API Principal] → Frontend
+```
+
+- El microservicio escucha canales públicos de Telegram, parsea con regex deterministas (sin LLM) y escribe en `ingested_jobs` (TTL 72h).
+- La API principal **solo hace SELECT** sobre `ingested_jobs` (modelos `IngestedJob` / `IngestJob` en `app/db/models.py`, migradas por el propio microservicio con su alembic `alembic_version_ingest`).
+- Sincronización vía **DB compartida**: sin callbacks, sin webhooks. El microservicio INSERTA, la API lee.
+- URL del microservicio configurable con `INGEST_SERVICE_URL` (default `http://localhost:8001`).
+
+Ver el README del microservicio para su setup (Telethon, api_id/api_hash, migraciones propias).
+
 ---
 
 ## Pipeline completo
@@ -103,7 +116,7 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 ```mermaid
 flowchart LR
     A[0. Providers<br/>Configurar LLM] --> B[1. Setup<br/>Perfil candidato]
-    B --> C[2. Scrape<br/>Búsqueda de jobs]
+    B --> C[2. Search<br/>Búsqueda de jobs]
     C --> D[3. Rank<br/>Evaluación de fit]
     D --> E[4. Apply<br/>CV + carta tailored]
     D --> H[7. Upskill<br/>Plan aprendizaje]
@@ -115,13 +128,17 @@ flowchart LR
 ```
 
 ### Fase 0 — Provider Setup
-Cada usuario configura su propio proveedor LLM (API key + modelo). Las credenciales se cifran con Fernet y se almacenan por usuario. El usuario puede seleccionar el modelo específico dentro de cada proveedor. Soporta: Anthropic, OpenAI, NVIDIA NIM, Groq, OpenRouter, LM Studio, Ollama.
+Cada usuario configura su propio proveedor LLM (API key + modelo). Las credenciales se cifran con Fernet y se almacenan por usuario. El usuario puede seleccionar el modelo específico dentro de cada proveedor. Soporta: Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama (catálogo en `app/schemas/providers.py`).
 
 ### Fase 1 — Setup (perfil candidato)
 Perfil completo: datos personales, experiencia, educación, skills, **perfil conductual** (DISC, fortalezas, áreas de crecimiento), y **ejemplos STAR** para entrevistas.
 
-### Fase 2 — Scrape
-Scraping multi-portal vía scrapers Bun/TS. Deduplicación automática por `(portal, external_id)`. Los scrapers corren en paralelo via `asyncio.gather`.
+### Fase 2 — Search (búsqueda de empleos)
+Los empleos **no se scrapean en este backend**: el microservicio de ingesta lee Telegram y los escribe en `ingested_jobs`.
+
+- `POST /api/v1/jobs/search` — busca por keywords/ubicación en `ingested_jobs` (solo jobs no expirados).
+- Si hay menos de 5 resultados, dispara una ingesta al microservicio (`POST {INGEST_SERVICE_URL}/api/v1/ingest`) y responde con `ingest_job_id` + `fresh=false`.
+- El estado de la ingesta se consulta en `GET /api/v1/jobs/search/{ingest_job_id}/status` (queued → running → done/failed).
 
 ### Fase 3 — Rank (evaluación de fit)
 
@@ -132,6 +149,8 @@ Evaluación multi-dimensión usando el **RankAnalyzer** determinista:
 - **Carrera**: salario (si hay datos), ubicación, modalidad (remote/hybrid)
 - **Fit general**: combinación ponderada + qualitative reasoning del LLM
 
+Los jobs a rankear provienen de la búsqueda (`ingested_jobs`) o de `job_ids` explícitos; al rankear se persisten como `JobPosting`.
+
 **Worker separado**: El ranking se ejecuta en un proceso independiente (`app/worker.py`). El API crea los jobs en una cola (`execution_job_items`) y el worker los reclama con `FOR UPDATE SKIP LOCKED`. Cada item se procesa en 3 fases:
 1. **LOAD** — sesión corta para cargar candidato + job posting
 2. **RANK** — sin conexión a DB: extracción → scores cuantitativos → llamada LLM
@@ -141,15 +160,17 @@ Esto permite escalar workers horizontalmente y garantiza que no haya sesiones ab
 
 ### Fase 4 — Apply (generación de documentos)
 **Pipeline Drafter-Reviewer-Revise** de 3 etapas:
-1. **Drafter**: genera CV + cover letter en LaTeX adaptados al posting específico
-2. **Reviewer**: agente con contexto fresco que investiga la empresa y critica los drafts buscando keywords faltantes, framing débil, claims inventados, lenguaje genérico
+1. **Drafter**: genera CV + cover letter estructurados (JSON) adaptados al posting específico
+2. **Reviewer**: agente con contexto fresco que critica el draft buscando keywords faltantes, framing débil, claims inventados, lenguaje genérico
 3. **Revise**: el drafter recibe el feedback y corrige
 
 Luego de la revisión:
 - **CV Cutter**: si el CV supera 2 páginas, corta bullets por relevancia (keyword overlap + unicidad + referencias en cover letter)
-- **Compilación**: `lualatex` para CV, `xelatex` para cover letter, con verificación de páginas y orphans
-- **ATS Check**: verifica parseabilidad del PDF (sin `(cid:*)` markers, keyword coverage ≥70%, orden de lectura correcto)
+- **Compilación**: PDFs generados **in-process con Typst** (`app/services/pdf_compiler_typst.py`, templates en `app/external/typst/`) — sin subprocesos, sin LaTeX
+- **ATS Check**: verifica parseabilidad del PDF (sin `(cid:*)` markers, keyword coverage ≥70%, email/nombre como texto literal, orden de lectura correcto). Usa `pdftotext`/`pdfinfo` (poppler) si están disponibles; si no, devuelve advertencia sin bloquear
 - **Verification Checklist**: 10+ checks deterministas + LLM para consistencia y claims fabricados
+
+> El pipeline LaTeX (`lualatex`/`xelatex`) quedó como **ruta legacy**; la ruta activa es JSON + Typst (`use_typst=True`).
 
 ### Fase 5 — Interview (preparación)
 Prep pack completo: research de empresa, preguntas probables mapeadas a ejemplos STAR del candidato, bridge answers para gaps de experiencia, **mock interview** (chat interactivo donde el LLM juega el rol del entrevistador, con historial de conversación persistente).
@@ -164,7 +185,7 @@ Registro de resultados: entrevista, oferta, rechazo, silencio. Calibración del 
 Escanea fuentes públicas (GitHub, portfolio, LinkedIn) para descubrir competencias no explícitas en el CV.
 
 ### Fase 9 — Verify (verificación de documentos)
-Checklist de 10+ verificaciones deterministas + 1 verificación con LLM ejecutada como servicio independiente. Verifica nombre, email, rol, empresa, fechas, LaTeX balanceado, placeholders, markers CID, keywords, y consistencia cualitativa.
+Checklist de 10+ verificaciones deterministas + 1 verificación con LLM ejecutada como servicio independiente. Verifica nombre, email, rol, empresa, fechas, estructura del documento, placeholders, markers CID, keywords, y consistencia cualitativa.
 
 ### Fase 10 — Calibrate (calibración de fit)
 Análisis 100% determinista que correlaciona outcomes reales (entrevistas, ofertas, rechazos) con keywords, skills y patrones para refinar el framework de ranking. Genera métricas de funnel (aplicación → entrevista → oferta → hired) y recomendaciones accionables.
@@ -176,59 +197,50 @@ Análisis 100% determinista que correlaciona outcomes reales (entrevistas, ofert
 ```
 FastAPI-backend/
 ├── app/
-│   ├── main.py                    # app factory: create_app()
+│   ├── main.py                    # app factory: create_app() (+ app = create_app() a nivel módulo)
 │   ├── worker.py                  # Worker separado de ranking (FOR UPDATE SKIP LOCKED)
-│   ├── core/                      # config (settings, security, logging, scheduler, task_manager, i18n)
+│   ├── core/                      # settings, security (JWT + Fernet), logging, task_manager, i18n
 │   ├── llm/                       # adaptador LiteLLM
 │   ├── db/
-│   │   ├── models.py              # SQLAlchemy models (~20 tablas)
+│   │   ├── models.py              # SQLAlchemy models (+ IngestedJob / IngestJob del microservicio)
 │   │   └── session.py             # async engine + session factory
-│   ├── schemas/                   # Pydantic v2 request/response (21 módulos)
-│   ├── services/                  # Lógica de negocio (~28 módulos)
+│   ├── schemas/                   # Pydantic v2 request/response
+│   ├── services/                  # Lógica de negocio
 │   │   ├── auth.py                # Registro, login, upgrade, donaciones
 │   │   ├── setup.py               # Perfil candidato + conductual + STAR
-│   │   ├── scrape.py              # Orquestación scrapers Bun/TS
-│   │   ├── rank.py                # Ranking + RankAnalyzer determinista
-│   │   ├── rank_analyzer.py       # Cómputo cuantitativo de scores (5 dimensiones)
-│   │   ├── rank_extractor.py      # Extracción estructurada (skills, años, modalidad, etc.)
-│   │   ├── rank_jobs.py           # Orquestación del job de ranking (idempotencia)
-│   │   ├── apply.py               # Drafter-Reviewer-Revise pipeline
-│   │   ├── interview.py           # Prep + mock interview
-│   │   ├── outcome.py             # Tracking + fit calibration
-│   │   ├── upskill.py             # Skill gap analysis (4-pass)
-│   │   ├── expand.py              # Perfil enrichment
+│   │   ├── job_search.py          # Lee ingested_jobs y dispara el microservicio
+│   │   ├── rank.py / rank_analyzer.py / rank_extractor.py / rank_jobs.py
+│   │   ├── apply.py / apply_json.py   # Drafter-Reviewer-Revise (JSON + Typst)
+│   │   ├── pdf_compiler_typst.py  # Compilación PDF in-process con Typst
+│   │   ├── ats_check.py / pdf_verifier.py / cv_cutter.py
 │   │   ├── verification.py        # Verification checklist (10+ checks)
-│   │   ├── ats_check.py           # ATS parseability
-│   │   ├── cv_cutter.py           # Relevance-weighted trimming
-│   │   ├── pdf_compiler.py        # LaTeX compilation loop
-│   │   ├── pipeline_reset.py      # Clean slate reset
-│   │   ├── provider_credentials.py # Fernet-encrypted creds
-│   │   ├── provider_models.py     # Model catalog per provider
-│   │   ├── tiers.py               # Límites free/premium
-│   │   ├── email.py               # Resend email integration
-│   │   ├── reset.py               # Reset de datos de usuario
-│   │   ├── fit_calibration.py     # Correlación outcome → keyword
-│   │   ├── add_portal.py          # Registro de portales
-│   │   ├── add_template.py        # Registro de templates LaTeX
-│   │   ├── salary/                # Salary benchmarking
-│   │   └── orchestrator/          # 9 módulos (LLMOrchestrator, ExecutionQueue, ProviderManager, ModelManager, etc.)
-│   ├── utils/                     # pdf_verifier.py, skill_linter.py
-│   ├── middleware/                # content_guard.py (detección PII)
-│   ├── external/                  # scrapers Bun/TS (6), templates LaTeX
+│   │   ├── interview.py / outcome.py / upskill.py / expand.py
+│   │   ├── fit_calibration.py / pipeline_reset.py / reset.py
+│   │   ├── provider_credentials.py / provider_models.py / tiers.py / email.py / cache.py
+│   │   ├── add_portal.py          # Genera portales Bun/TS desde un template
+│   │   ├── collectors/            # Colección legacy (telegram, sheets, rss)
+│   │   ├── orchestrator/          # LLMOrchestrator, ExecutionQueue, ProviderManager, etc.
+│   │   └── salary/                # Salary benchmarking
 │   ├── api/
 │   │   ├── deps.py                # get_db, get_current_user, get_llm_provider, get_locale
-│   │   └── v1/                    # ~17 routers (auth, setup, scrape, rank, apply, interview, outcome, expand, upskill, salary, providers, orchestrator, verification, add_portal, add_template, pipeline_reset, reset, dashboard, users, admin)
-│   └── exceptions.py              # Excepciones centralizadas
+│   │   └── v1/                    # auth, providers, orchestrator, setup, rank, apply, interview,
+│   │                              # outcome, expand, upskill, salary, verification, add_portal,
+│   │                              # pipeline_reset, reset, admin, dashboard, analytics, users, jobs
+│   ├── utils/                     # pdf_verifier.py, skill_linter.py
+│   └── external/
+│       ├── scrapers/              # 5 scrapers Bun/TS legacy (jobindex, jobnet, jobdanmark, jobbank, linkedin)
+│       ├── typst/                 # Templates Typst (cv, cover letter, entry)
+│       └── latex/                 # (legacy) MiKTeX portable
 ├── tests/
-│   ├── unit/                      # ~20 archivos de test (SQLite in-memory + mocks)
+│   ├── unit/                      # ~21 archivos de test (SQLite in-memory + mocks)
 │   └── integration/
-├── alembic/                       # 15 migraciones DB
-├── scripts/                       # check_miktex.py
+├── alembic/                       # 23 migraciones
+├── scripts/                       # run_api.py, test_e2e.py, test_e2e_full.py, test_e2e_inprocess.py
 ├── entrypoint.sh                  # Docker entrypoint (API o worker según DOCKER_PROCESS)
 ├── dev.ps1                        # Script desarrollo: arranca API + worker localmente
 ├── pyproject.toml
-├── Dockerfile                     # Multi-stage (Python + MiKTeX + Bun)
-└── fly.toml                       # Config Fly.io (procesos app + worker)
+├── Dockerfile                     # Multi-stage (Python 3.11 + Bun + Typst)
+└── fly.toml                       # Config Fly.io (procesos web + worker)
 ```
 
 ---
@@ -237,11 +249,14 @@ FastAPI-backend/
 
 | Componente | Propósito | Instalación |
 |------------|-----------|-------------|
-| **Python 3.12.10 | Runtime | `python.org` o `pyenv` |
-| **Bun** | Ejecutar scrapers TS heredados | `npm install -g bun` |
-| **LaTeX** (lualatex + xelatex) | Compilar CV y cover letters | MiKTeX o TeX Live |
+| **Python ≥ 3.11** | Runtime | `python.org` o `pyenv` |
+| **Microservicio de Ingesta** | Alimenta `ingested_jobs` (Telegram) | Repo `open-ai-jobs-search-microservice-searchjobs-backend` |
+| **Bun** | Scrapers legacy + `/add-portal` | `npm install -g bun` |
+| **poppler-utils** (opcional) | `pdftotext` / `pdfinfo` para el ATS check | `apt install poppler-utils` / MiKTeX Portable |
 | **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com |
-| **LLM Provider** | API key (Anthropic, OpenAI, NVIDIA, Groq, OpenRouter, etc.) | Según provider |
+| **LLM Provider** | API key (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama) | Según provider |
+
+> No se requiere LaTeX/MiKTeX: los PDFs se compilan con **Typst** (pip, in-process).
 
 ---
 
@@ -257,26 +272,26 @@ pip install -e ".[dev]"
 
 # 3. Variables de entorno
 cp .env.example .env
-# Editar DATABASE_URL, JWT_SECRET_KEY
+# Editar DATABASE_URL, JWT_SECRET_KEY, INGEST_SERVICE_URL
 
 # 4. Migraciones
 alembic upgrade head
 
-# 5. Instalar dependencias de los scrapers (TypeScript)
-bun install --cwd app/external/scrapers/freehire-search/cli
-bun install --cwd app/external/scrapers/jobbank-search/cli
-bun install --cwd app/external/scrapers/jobdanmark-search/cli
+# 5. (Opcional) Dependencias de los scrapers legacy (Bun)
 bun install --cwd app/external/scrapers/jobindex-search/cli
 bun install --cwd app/external/scrapers/jobnet-search/cli
+bun install --cwd app/external/scrapers/jobdanmark-search/cli
+bun install --cwd app/external/scrapers/jobbank-search/cli
 bun install --cwd app/external/scrapers/linkedin-search/cli
+```
 
-# 6. Servidor de desarrollo
+### Arranque (2 procesos + microservicio)
 
-El backend consta de dos procesos:
-- **API** (uvicorn) — sirve endpoints HTTP
+El backend consta de dos procesos + el microservicio de ingesta:
+
+- **Microservicio de Ingesta** (puerto 8001) — alimenta `ingested_jobs`. Setup en su propio README (`uvicorn app.main:app --port 8001`).
+- **API** (uvicorn) — sirve endpoints HTTP en `http://127.0.0.1:8000`
 - **Worker** — procesa la cola de ranking en segundo plano
-
-Para arrancar ambos a la vez:
 
 ```powershell
 # Windows — arranca API + worker automáticamente
@@ -285,13 +300,16 @@ Para arrancar ambos a la vez:
 
 ```bash
 # Linux/Mac — terminal 1: API
-uvicorn app.main:create_app --factory --reload
+uvicorn app.main:app --reload
 
 # Terminal 2: Worker
 python -m app.worker
+
+# Alternativa: script que arranca la API
+python scripts/run_api.py
 ```
 
-Servidor en `http://127.0.0.1:8000`. Healthcheck: `GET /api/v1/health`
+Healthcheck: `GET /api/v1/health`
 
 ---
 
@@ -359,9 +377,13 @@ alembic upgrade head
 alembic history
 ```
 
+> ⚠️ Las tablas `ingested_jobs` / `ingest_jobs` las migra el **microservicio de ingesta** con su propio alembic (`alembic_version_ingest`). No crearlas desde este repo.
+
 ---
 
 ## Endpoints
+
+Todos bajo `/api/v1` (salvo el WebSocket).
 
 ### Health
 
@@ -374,10 +396,10 @@ alembic history
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | POST | `/api/v1/auth/register` | Registro de usuario |
-| POST | `/api/v1/auth/login` | Login (devuelve JWT) |
+| POST | `/api/v1/auth/login` | Login (devuelve JWT, rate-limited por IP+email) |
 | GET | `/api/v1/auth/me` | Perfil del usuario actual |
-| DELETE | `/api/v1/auth/account` | Eliminar cuenta (requiere confirmación) |
-| POST | `/api/v1/auth/upgrade` | Solicitar upgrade de plan |
+| DELETE | `/api/v1/auth/account` | Eliminar cuenta (requiere contraseña + confirmación) |
+| POST | `/api/v1/auth/upgrade` | Solicitar upgrade de plan (notifica al admin) |
 | POST | `/api/v1/auth/donate` | Notificar donación |
 
 ### Providers — Configuración LLM
@@ -388,6 +410,7 @@ alembic history
 | POST | `/api/v1/providers/` | Guardar credencial cifrada |
 | GET | `/api/v1/providers/me` | Proveedores del usuario |
 | GET | `/api/v1/providers/me/active` | Proveedor activo actual |
+| GET | `/api/v1/providers/me/model` | Modelo seleccionado del proveedor activo |
 | PUT | `/api/v1/providers/active` | Cambiar proveedor activo |
 | PATCH | `/api/v1/providers/{provider}` | Actualizar credencial parcial |
 | DELETE | `/api/v1/providers/{provider}` | Eliminar credencial |
@@ -411,20 +434,21 @@ alembic history
 | POST | `/api/v1/setup/star-examples` | Crear ejemplo STAR |
 | DELETE | `/api/v1/setup/star-examples/{id}` | Eliminar ejemplo STAR |
 
-### Scrape — Búsqueda de empleos
+### Jobs — Búsqueda de empleos (ingesta microservicio)
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/v1/scrape/` | Ejecutar scraping multi-portal |
-| GET | `/api/v1/scrape/runs` | Historial de corridas |
-| GET | `/api/v1/scrape/jobs` | Jobs encontrados (filtros: status, portal) |
-| GET | `/api/v1/scrape/jobs/{job_id}` | Detalle de un job |
+| POST | `/api/v1/jobs/search` | Buscar jobs en `ingested_jobs` (dispara ingesta si hay <5 resultados) |
+| GET | `/api/v1/jobs/search/{ingest_job_id}/status` | Estado de una ingesta (queued → running → done/failed) |
 
 ### Rank — Evaluación de fit
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/v1/rank/` | Ejecutar ranking (focus_area, re_rank, top_n) |
+| POST | `/api/v1/rank/` | Ejecutar ranking (header `Idempotency-Key`, rate-limited) |
+| GET | `/api/v1/rank/status/{job_id}` | Estado de un job de ranking |
+| POST | `/api/v1/rank/cancel/{job_id}` | Cancelar un job de ranking |
+| GET | `/api/v1/rank/jobs/count` | Jobs pendientes/rankeados |
 | GET | `/api/v1/rank/jobs` | Jobs rankeados (filtros: min_score, verdict) |
 | GET | `/api/v1/rank/jobs/{job_id}/evaluation` | Evaluación completa de un job |
 
@@ -432,12 +456,12 @@ alembic history
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/v1/apply/` | Generar aplicación (pipeline drafter-reviewer) |
+| POST | `/api/v1/apply/` | Generar aplicación (pipeline drafter-reviewer, async) |
+| GET | `/api/v1/apply/available-jobs` | Jobs rankeados disponibles para aplicar |
 | GET | `/api/v1/apply/{application_id}` | Obtener aplicación por ID |
+| GET | `/api/v1/apply/{application_id}/status` | Estado del pipeline (queued → … → verified/failed) |
 | GET | `/api/v1/apply/` | Listar aplicaciones |
-| GET | `/api/v1/apply/{application_id}/status` | Estado del pipeline de generación |
 | POST | `/api/v1/apply/{application_id}/verify` | Ejecutar verification checklist |
-| GET | `/api/v1/apply/{application_id}/verify` | Resultado de verificación |
 
 ### Interview — Preparación de entrevistas
 
@@ -457,6 +481,7 @@ alembic history
 | GET | `/api/v1/outcome/{outcome_id}` | Obtener outcome |
 | GET | `/api/v1/outcome/` | Listar outcomes |
 | GET | `/api/v1/outcome/tracker/rows` | Filas del tracker (CSV-like) |
+| GET | `/api/v1/outcome/calibration` | Reporte de calibración del fit framework |
 
 ### Expand — Expansión de competencias
 
@@ -478,15 +503,15 @@ alembic history
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/v1/salary/data` | Cargar datos de salario (JSON o Excel) |
-| GET | `/api/v1/salary/data` | Obtener datos de salario del usuario |
-| DELETE | `/api/v1/salary/data` | Eliminar datos de salario |
+| POST | `/api/v1/profile/salary-data` | Cargar datos de salario (JSON) |
+| GET | `/api/v1/profile/salary-data` | Obtener datos de salario del usuario |
+| DELETE | `/api/v1/profile/salary-data` | Eliminar datos de salario |
 
 ### Dashboard & Analytics
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/api/v1/dashboard/stats` | KPIs del pipeline (scraped, ranked, applications, hired) |
+| GET | `/api/v1/dashboard/stats` | KPIs del pipeline (jobs, ranked, applications, hired) |
 | GET | `/api/v1/dashboard/pipeline` | Progreso del pipeline por paso |
 | GET | `/api/v1/analytics/funnel` | Datos de funnel de conversión |
 
@@ -494,47 +519,43 @@ alembic history
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| DELETE | `/api/v1/pipeline-reset` | Resetear pipeline (borra jobs, runs, métricas, health metrics) |
+| DELETE | `/api/v1/pipeline-reset` | Resetear pipeline (jobs, evaluaciones, aplicaciones, preps, outcomes, historial de cola, expansiones, upskill) |
 
 ### Orchestrator — Monitoreo y control
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/api/v1/orchestrator/status` | Estado general del orquestador |
-| GET | `/api/v1/orchestrator/providers` | Estado de todos los proveedores |
-| POST | `/api/v1/orchestrator/providers/{provider}/toggle` | Habilitar/deshabilitar proveedor |
-| GET | `/api/v1/orchestrator/queue` | Estado de la cola de ejecución |
-| POST | `/api/v1/orchestrator/pause` | Pausar cola |
-| POST | `/api/v1/orchestrator/resume` | Reanudar cola |
-| POST | `/api/v1/orchestrator/cancel/{job_id}` | Cancelar job |
-| POST | `/api/v1/orchestrator/retry/{job_id}` | Reintentar job fallido |
-| POST | `/api/v1/orchestrator/clear` | Limpiar cola |
-| WebSocket | `/api/v1/orchestrator/ws` | Notificaciones real-time de la cola |
+| GET | `/api/v1/orchestrator/queue` | Estado de la cola de ejecución (cacheado 1s) |
+| POST | `/api/v1/orchestrator/queue/control` | Controlar cola: `pause`, `resume`, `cancel`, `retry_failed` |
+| GET | `/api/v1/orchestrator/jobs/{job_id}` | Estado de un job de ejecución |
+| GET | `/api/v1/orchestrator/providers` | Salud de todos los proveedores |
+| GET | `/api/v1/orchestrator/models` | Salud de los modelos (filtro `?provider=`) |
+| WebSocket | `/api/v1/orchestrator/ws?token=<JWT>` | Notificaciones real-time de la cola |
 
-### Users — Administración
+### Users & Admin
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/api/v1/users/` | Listar usuarios (admin) |
-| PATCH | `/api/v1/users/{user_id}` | Actualizar usuario (role, tier) |
-| DELETE | `/api/v1/users/{user_id}` | Eliminar usuario |
+| GET | `/api/v1/users/usage` | Uso y límites del usuario autenticado |
+| GET | `/api/v1/admin/users` | Listar usuarios (admin) |
+| GET | `/api/v1/admin/users/{user_id}` | Detalle de un usuario (admin) |
+| PATCH | `/api/v1/admin/users/{user_id}` | Actualizar usuario: role, tier (admin) |
+| DELETE | `/api/v1/admin/users/{user_id}` | Eliminar usuario (admin) |
 
 ### Configuración
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/v1/add-portal/` | Registrar portal de scraping |
-| GET | `/api/v1/add-portal/` | Listar portales |
-| POST | `/api/v1/add-template/` | Registrar template LaTeX |
-| POST | `/api/v1/add-template/switch` | Cambiar template activo |
-| GET | `/api/v1/add-template/` | Listar templates |
-| POST | `/api/v1/reset/` | Resetear datos del usuario (requiere confirmación) |
+| POST | `/api/v1/add-portal/` | Generar un portal de búsqueda (scaffold Bun/TS) |
+| GET | `/api/v1/add-portal/` | Listar portales instalados |
+| GET | `/api/v1/add-portal/{skill_name}` | Detalle de un portal |
+| POST | `/api/v1/reset/` | Resetear perfil/documentos del usuario (requiere confirmación) |
 
 ---
 
 ## LLM Orchestrator
 
-El orchestrator es el corazón del sistema de ejecución. Reemplaza las llamadas directas a LiteLLM. Se compone de 9 módulos en `app/services/orchestrator/`.
+El orchestrator es el corazón del sistema de ejecución. Reemplaza las llamadas directas a LiteLLM. Se compone de módulos en `app/services/orchestrator/`.
 
 ### Provider Registry
 
@@ -575,7 +596,7 @@ Cada modelo tiene:
 
 ### Concurrencia
 
-Configurable (2, 4, 8 workers). Semaphore-based. Respeta rate limits por proveedor.
+Configurable con `ORCHESTRATOR_MAX_CONCURRENCY` (default 4). Semaphore-based. Respeta rate limits por proveedor.
 
 ---
 
@@ -594,7 +615,7 @@ Job Posting + Candidate Profile
 │  Llama al LLM     │
 │  para generar     │
 │  CV + cover       │
-│  letter en LaTeX  │
+│  letter (JSON)    │
 └────────┬──────────┘
          │
          ▼
@@ -635,7 +656,8 @@ Job Posting + Candidate Profile
 │  - CV Cutter      │
 │    (≤2 páginas)   │
 │  - Compilación    │
-│    LaTeX          │
+│    PDF con Typst  │
+│    (in-process)   │
 │  - ATS Check      │
 │  - Verification   │
 │    Checklist      │
@@ -650,9 +672,8 @@ Job Posting + Candidate Profile
 - Rol del posting en el profile statement
 - Empresa en la cover letter
 - Fechas en formato consistente
-- LaTeX balanceado (mismo número de `{` y `}`)
-- Sin placeholders `[YOUR_NAME]` sin reemplazar
-- Sin `(cid:*)` markers en PDF
+- Estructura del documento correcta (sin placeholders `[YOUR_NAME]` sin reemplazar)
+- Sin `(cid:*)` markers en el PDF (vía `pdftotext`)
 - Keywords del posting ≥70% presentes en CV
 
 **Con LLM (1 llamada al final):**
@@ -667,19 +688,34 @@ Job Posting + Candidate Profile
 | Variable | Requerida | Default | Descripción |
 |----------|-----------|---------|-------------|
 | `DATABASE_URL` | ✅ | — | PostgreSQL async (`postgresql+asyncpg://...`) |
-| `JWT_SECRET_KEY` | ✅ | `change-me` | Firma JWT (≥64 chars en prod) |
+| `JWT_SECRET_KEY` | ✅ | `change-me` | Firma JWT (≥64 chars en prod). También deriva la clave Fernet |
+| `INGEST_SERVICE_URL` | — | `http://localhost:8001` | URL del microservicio de ingesta |
+| `LLM_DEFAULT_PROVIDER` | — | `anthropic` | Proveedor por defecto (`anthropic`, `openai`, `nvidia_nim`, `lm_studio`, `ollama`) |
+| `LLM_TIMEOUT` | — | `180` | Timeout de llamadas LLM (segundos) |
+| `ANTHROPIC_API_KEY` | — | — | Fallback si no hay credencial en DB |
+| `OPENAI_API_KEY` | — | — | Fallback si no hay credencial en DB |
+| `NVIDIA_NIM_API_KEY` | — | — | Fallback si no hay credencial en DB |
+| `LM_STUDIO_API_BASE` | — | `http://localhost:1234/v1` | Base URL para LM Studio |
 | `JWT_ALGORITHM` | — | `HS256` | Algoritmo JWT |
 | `JWT_EXPIRE_MINUTES` | — | `1440` | Expiración JWT (24h) |
 | `APP_ENV` | — | `development` | `development` / `production` |
 | `LOG_LEVEL` | — | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `CORS_ORIGINS` | — | `["http://localhost:3000"]` | Orígenes CORS permitidos |
-| `LATEX_BIN_DIR` | — | `None` | Directorio de binarios LaTeX |
-| `SCRAPE_INTERVAL_HOURS` | — | `6` | Intervalo del scheduler |
-| `ORCHESTRATOR_MAX_WORKERS` | — | `4` | Workers concurrentes del orquestador |
+| `CORS_ORIGINS` | — | `http://localhost:3000` | Orígenes CORS (separados por coma) |
+| `RATE_LIMIT_ATTEMPTS` | — | `5` | Intentos fallidos de login antes de bloquear |
+| `RATE_LIMIT_WINDOW_SECONDS` | — | `900` | Ventana de rate limiting (15 min) |
+| `DEFAULT_LANGUAGE` | — | `en` | Idioma por defecto (`en`, `es`) |
 | `RESEND_API_KEY` | — | — | API key para email transaccional |
+| `RESEND_FROM_EMAIL` | — | `onboarding@resend.dev` | Remitente de los correos |
+| `ADMIN_EMAIL` | — | `admin@openajobs.com` | Email del admin (upgrades, donaciones) |
 | `SENTRY_DSN` | — | — | DSN de Sentry para errores en producción |
+| `ORCHESTRATOR_MAX_CONCURRENCY` | — | `4` | Workers LLM concurrentes del orquestador |
+| `SCRAPE_INTERVAL_HOURS` | — | `6` | ⚠️ Legacy — sin uso (la ingesta la hace el microservicio) |
+| `DOCUMENTS_DIR` | — | `documents` | Directorio de documentos de usuario |
+| `TRACKER_PATH` | — | `documents/tracker.json` | Tracker de aplicaciones (CSV) |
+| `LATEX_BIN_DIR` | — | — | Opcional: binarios poppler (`pdftotext`, `pdfinfo`) para el ATS check |
+| `MIKTEX_DOWNLOAD_URL` | — | — | Legacy: descarga de MiKTeX Portable (sin uso con Typst) |
 
-> Las API keys de proveedores LLM se registran vía API (`POST /api/v1/providers/`) y se almacenan **cifradas con Fernet** en DB por usuario. No van en `.env`.
+> Las API keys de proveedores LLM se registran vía API (`POST /api/v1/providers/`) y se almacenan **cifradas con Fernet** en DB por usuario. Las variables `*_API_KEY` del `.env` son solo fallback.
 
 ---
 
@@ -702,19 +738,26 @@ pytest --cov=app --cov-report=term-missing
 pytest tests/unit/test_rank.py -v --tb=short
 ```
 
+**E2E con el microservicio** (requiere el microservicio corriendo en `:8001`):
+
+```bash
+python scripts/test_e2e.py        # ingest → API principal lee ingested_jobs
+python scripts/test_e2e_full.py   # search → select → rank con job_ids
+```
+
 ---
 
 ## Deployment
 
-La app deploya en **Fly.io** con Docker multi-stage (instala MiKTeX vía apt del repositorio de Debian bookworm).
+La app deploya en **Fly.io** con Docker multi-stage sobre `python:3.11-slim-bookworm`. La imagen instala **Bun** (scrapers legacy) y compila los PDFs con **Typst** (vía pip, in-process). No requiere LaTeX/MiKTeX.
 
 El `fly.toml` define dos procesos:
-- **`app`** — API HTTP (uvicorn)
-- **`worker`** — worker de ranking (entrypoint con `DOCKER_PROCESS=worker`)
+- **`web`** — API HTTP (uvicorn)
+- **`worker`** — worker de ranking
 
 ```bash
-# Desplegar API
-flyctl deploy --process-groups app
+# Desplegar API (proceso web)
+flyctl deploy --process-groups web
 
 # Desplegar worker
 flyctl deploy --process-groups worker
@@ -725,43 +768,31 @@ flyctl deploy
 # Variables de entorno
 flyctl secrets set DATABASE_URL="postgresql+asyncpg://..." \
     JWT_SECRET_KEY="$(openssl rand -hex 32)" \
-    CORS_ORIGINS='["https://tu-frontend.com"]'
+    INGEST_SERVICE_URL="https://ingesta-tu-app.fly.dev" \
+    CORS_ORIGINS='["https://tu-frontend.com"]' \
+    ANTHROPIC_API_KEY="..."
 
 # Escalar workers
 flyctl scale count worker=2
 ```
 
-Ver `fly.toml` para configuración de máquina (1GB RAM mínimo por MiKTeX + LaTeX).
+> **Microservicio de ingesta:** debe estar desplegado y apuntar `INGEST_SERVICE_URL` hacia él (ver su README). La tabla `ingested_jobs` es compartida.
 
-### MiKTeX Portable (auto-instalación)
+Ver `fly.toml` para configuración de máquina (1GB RAM).
 
-El endpoint `/apply` compila CV y cover letter con `lualatex` (CV) y `xelatex` (cover). En **Windows**, el setup se hace automáticamente al ejecutar `dev.ps1` (que corre `python scripts/setup_latex.py`).
-
-`setup_latex.py` descarga el instalador portable desde **GitHub Releases** (tag `latex-v1`) o desde `MIKTEX_DOWNLOAD_URL` si está definida en `.env`, lo extrae en `app/external/latex/miktex-portable/`, y escribe `LATEX_BIN_DIR` en `.env`.
-
-**Requisito:** Antes del primer uso hay que crear un Release `latex-v1` en GitHub con `miktex-portable.exe` como adjunto, o definir `MIKTEX_DOWNLOAD_URL` en `.env`.
-
-**Verificación manual:**
-```bash
-python scripts/setup_latex.py
-# → OK: MiKTeX Portable listo para usar
-```
-
-En **Docker** (Linux), MiKTeX se instala vía `apt` (ver `Dockerfile`). En **Linux/Mac** nativo, instalar TeX Live manualmente.
-
-Los binarios de MiKTeX Portable **no se commitean** (~150 MB, en `.gitignore`).
+El `entrypoint.sh` permite arrancar API o worker según la variable `DOCKER_PROCESS` (`worker` → `python -m app.worker`; cualquier otro valor → uvicorn).
 
 ---
 
 ## Convenciones de diseño
 
-- **`main.py` es app factory** (`create_app()`), no `app = FastAPI()` global.
+- **`main.py` es app factory** (`create_app()`) y además expone `app = create_app()` a nivel de módulo (para `uvicorn app.main:app`).
 - **Schemas Pydantic separados** de modelos SQLAlchemy. Cada recurso tiene `XCreate`, `XUpdate`, `XOut`.
 - **Dependencias centralizadas** en `api/deps.py` (`get_db`, `get_current_user`, `get_llm_provider`, `get_locale`).
 - **Excepciones de negocio** en `exceptions.py` con handlers registrados. No `HTTPException` en servicios.
 - **LLM siempre vía LLMOrchestrator**, nunca SDK directo de proveedor.
 - **Sanitización antes de validación**: truncar arrays, reparar JSON, llenar defaults antes de Pydantic.
 - **Determinista primero**: si se puede resolver sin LLM, se resuelve sin LLM.
-- **Logging estructurado** con `structlog` (JSON en prod, consola en dev).
-- **Rate limiting** en login (por IP+email).
+- **Logging estructurado** con `logging` estándar: request_id por petición, archivos por categoría (`app.access`, `app.sql`, `app.llm`, `scraper.log`) y handlers/filters propios en `app/core/logging`.
+- **Rate limiting** en login (por IP+email) y en `/rank`.
 - **i18n** con detección vía cookie `NEXT_LOCALE` o `Accept-Language`.
