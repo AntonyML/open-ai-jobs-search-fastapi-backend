@@ -34,8 +34,6 @@ class LoggingConfig:
         "services.orchestrator": "orchestrator.log",
         "llm": "llm.log",
         "pipeline": "pipeline.log",
-        "scraper": "scraper.log",
-        "latex": "latex.log",
         "sql": "sql.log",
         "access": "access.log",
     })
@@ -47,7 +45,6 @@ class LoggingConfig:
         "litellm": "WARNING",
         "LiteLLM": "WARNING",
         "uvicorn.access": "WARNING",
-        "apscheduler": "WARNING",
         "hpack": "WARNING",
         "charset_normalizer": "WARNING",
         "sqlalchemy.engine": "WARNING",

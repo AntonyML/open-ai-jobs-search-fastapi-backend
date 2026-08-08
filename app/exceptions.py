@@ -53,16 +53,6 @@ class ProfileIncompleteError(AppError):
         super().__init__(message or _t("errors.profile_incomplete", locale), locale=locale)
 
 
-class ScraperError(AppError):
-    """A scraper subprocess exited with a non-zero code."""
-
-    status_code = status.HTTP_502_BAD_GATEWAY
-    code = "scraper_failed"
-
-    def __init__(self, message: str | None = None, locale: str = "en"):
-        super().__init__(message or _t("errors.scraper_failed", locale), locale=locale)
-
-
 class LLMError(AppError):
     """The LLM call failed (timeout, rate-limit, invalid response)."""
 

@@ -5,7 +5,6 @@ Uses pydantic-settings for validation and .env file support.
 
 import os
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -40,9 +39,6 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440
-
-    # -- APScheduler -------------------------------------------
-    scrape_interval_hours: int = 6
 
     # -- Resend (Email) ----------------------------------------
     resend_api_key: str | None = None
@@ -79,13 +75,6 @@ class Settings(BaseSettings):
     # Max concurrent LLM workers in the execution queue
     orchestrator_max_concurrency: int = 4
 
-    @property
-    def scrapers_dir(self) -> Path:
-        return Path(__file__).resolve().parent.parent / "external" / "scrapers"
-
-    @property
-    def templates_dir(self) -> Path:
-        return Path(__file__).resolve().parent.parent / "external" / "templates"
 
 
 @lru_cache

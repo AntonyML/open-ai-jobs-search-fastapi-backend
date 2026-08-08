@@ -15,14 +15,8 @@ primary_region = "iad"
   # CORS - update with your frontend URL
   CORS_ORIGINS = '["https://your-frontend-domain.com"]'
   
-  # LaTeX binary path (MiKTeX installed via apt on Debian bookworm)
-  LATEX_BIN_DIR = "/usr/bin"
-  
   # Default LLM provider
   LLM_DEFAULT_PROVIDER = "anthropic"
-  
-  # APScheduler
-  SCRAPE_INTERVAL_HOURS = "6"
 
 [processes]
   web = "uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000"

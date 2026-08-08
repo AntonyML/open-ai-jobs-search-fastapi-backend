@@ -15,8 +15,6 @@ from app.db.models import User
 FREE_TIER_LIMITS: dict[str, int | bool | str] = {
     "max_providers": 1,  # Only 1 LLM provider
     "allow_nvidia_nim": False,  # Nvidia NIM locked
-    "max_scrape_sites": 1,  # Only 1 job site
-    "max_scrape_jobs": 5,  # Max 5 jobs per scrape
     "max_rank_iterations": 3,  # Limited ranking iterations
     "max_apply_count": 5,  # Max 5 applications
     "max_prepare_count": 5,  # Max 5 prepared docs
@@ -29,8 +27,6 @@ FREE_TIER_LIMITS: dict[str, int | bool | str] = {
 PREMIUM_TIER_LIMITS: dict[str, int | bool | str] = {
     "max_providers": 10,
     "allow_nvidia_nim": True,
-    "max_scrape_sites": 10,
-    "max_scrape_jobs": 1000,
     "max_rank_iterations": 100,
     "max_apply_count": 1000,
     "max_prepare_count": 1000,

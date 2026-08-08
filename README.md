@@ -34,7 +34,6 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 - **Supabase** (PostgreSQL) — Session Pooler o Direct Connection
 - **Typst** — compilación de PDFs (CV + cover letter) **in-process**, sin subprocesos ni LaTeX
 - **Microservicio de Ingesta** (Telegram → `ingested_jobs`) — la API principal **lee** los empleos de la tabla compartida
-- **Bun/TypeScript** — scrapers legacy + generación de nuevos portales (`/add-portal`)
 - **i18n** — soporte multi-idioma (en, es) con detección automática vía cookie/Accept-Language
 - **WebSocket** — notificaciones real-time del estado de la cola de ejecución
 - **Fernet** (cryptography) — cifrado de API keys por usuario en DB
@@ -170,7 +169,7 @@ Luego de la revisión:
 - **ATS Check**: verifica parseabilidad del PDF (sin `(cid:*)` markers, keyword coverage ≥70%, email/nombre como texto literal, orden de lectura correcto). Usa `pdftotext`/`pdfinfo` (poppler) si están disponibles; si no, devuelve advertencia sin bloquear
 - **Verification Checklist**: 10+ checks deterministas + LLM para consistencia y claims fabricados
 
-> El pipeline LaTeX (`lualatex`/`xelatex`) quedó como **ruta legacy**; la ruta activa es JSON + Typst (`use_typst=True`).
+> La compilación es 100% **Typst** (in-process); no se ejecuta LaTeX en ningún punto del pipeline.
 
 ### Fase 5 — Interview (preparación)
 Prep pack completo: research de empresa, preguntas probables mapeadas a ejemplos STAR del candidato, bridge answers para gaps de experiencia, **mock interview** (chat interactivo donde el LLM juega el rol del entrevistador, con historial de conversación persistente).
@@ -216,9 +215,7 @@ FastAPI-backend/
 │   │   ├── verification.py        # Verification checklist (10+ checks)
 │   │   ├── interview.py / outcome.py / upskill.py / expand.py
 │   │   ├── fit_calibration.py / pipeline_reset.py / reset.py
-│   │   ├── provider_credentials.py / provider_models.py / tiers.py / email.py / cache.py
-│   │   ├── add_portal.py          # Genera portales Bun/TS desde un template
-│   │   ├── collectors/            # Colección legacy (telegram, sheets, rss)
+│   │   ├── provider_credentials.py / provider_models.py / tiers.py / email.py
 │   │   ├── orchestrator/          # LLMOrchestrator, ExecutionQueue, ProviderManager, etc.
 │   │   └── salary/                # Salary benchmarking
 │   ├── api/
@@ -228,9 +225,7 @@ FastAPI-backend/
 │   │                              # pipeline_reset, reset, admin, dashboard, analytics, users, jobs
 │   ├── utils/                     # pdf_verifier.py, skill_linter.py
 │   └── external/
-│       ├── scrapers/              # 5 scrapers Bun/TS legacy (jobindex, jobnet, jobdanmark, jobbank, linkedin)
-│       ├── typst/                 # Templates Typst (cv, cover letter, entry)
-│       └── latex/                 # (legacy) MiKTeX portable
+│       └── typst/                 # Templates Typst (cv, cover letter, entry)
 ├── tests/
 │   ├── unit/                      # ~21 archivos de test (SQLite in-memory + mocks)
 │   └── integration/
@@ -251,8 +246,7 @@ FastAPI-backend/
 |------------|-----------|-------------|
 | **Python ≥ 3.11** | Runtime | `python.org` o `pyenv` |
 | **Microservicio de Ingesta** | Alimenta `ingested_jobs` (Telegram) | Repo `open-ai-jobs-search-microservice-searchjobs-backend` |
-| **Bun** | Scrapers legacy + `/add-portal` | `npm install -g bun` |
-| **poppler-utils** (opcional) | `pdftotext` / `pdfinfo` para el ATS check | `apt install poppler-utils` / MiKTeX Portable |
+| **poppler-utils** (opcional) | `pdftotext` / `pdfinfo` para el ATS check | `apt install poppler-utils` (o binarios en el PATH) |
 | **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com |
 | **LLM Provider** | API key (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama) | Según provider |
 
@@ -276,13 +270,6 @@ cp .env.example .env
 
 # 4. Migraciones
 alembic upgrade head
-
-# 5. (Opcional) Dependencias de los scrapers legacy (Bun)
-bun install --cwd app/external/scrapers/jobindex-search/cli
-bun install --cwd app/external/scrapers/jobnet-search/cli
-bun install --cwd app/external/scrapers/jobdanmark-search/cli
-bun install --cwd app/external/scrapers/jobbank-search/cli
-bun install --cwd app/external/scrapers/linkedin-search/cli
 ```
 
 ### Arranque (2 procesos + microservicio)
@@ -546,9 +533,6 @@ Todos bajo `/api/v1` (salvo el WebSocket).
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/api/v1/add-portal/` | Generar un portal de búsqueda (scaffold Bun/TS) |
-| GET | `/api/v1/add-portal/` | Listar portales instalados |
-| GET | `/api/v1/add-portal/{skill_name}` | Detalle de un portal |
 | POST | `/api/v1/reset/` | Resetear perfil/documentos del usuario (requiere confirmación) |
 
 ---
@@ -709,11 +693,8 @@ Job Posting + Candidate Profile
 | `ADMIN_EMAIL` | — | `admin@openajobs.com` | Email del admin (upgrades, donaciones) |
 | `SENTRY_DSN` | — | — | DSN de Sentry para errores en producción |
 | `ORCHESTRATOR_MAX_CONCURRENCY` | — | `4` | Workers LLM concurrentes del orquestador |
-| `SCRAPE_INTERVAL_HOURS` | — | `6` | ⚠️ Legacy — sin uso (la ingesta la hace el microservicio) |
 | `DOCUMENTS_DIR` | — | `documents` | Directorio de documentos de usuario |
 | `TRACKER_PATH` | — | `documents/tracker.json` | Tracker de aplicaciones (CSV) |
-| `LATEX_BIN_DIR` | — | — | Opcional: binarios poppler (`pdftotext`, `pdfinfo`) para el ATS check |
-| `MIKTEX_DOWNLOAD_URL` | — | — | Legacy: descarga de MiKTeX Portable (sin uso con Typst) |
 
 > Las API keys de proveedores LLM se registran vía API (`POST /api/v1/providers/`) y se almacenan **cifradas con Fernet** en DB por usuario. Las variables `*_API_KEY` del `.env` son solo fallback.
 
@@ -749,7 +730,7 @@ python scripts/test_e2e_full.py   # search → select → rank con job_ids
 
 ## Deployment
 
-La app deploya en **Fly.io** con Docker multi-stage sobre `python:3.11-slim-bookworm`. La imagen instala **Bun** (scrapers legacy) y compila los PDFs con **Typst** (vía pip, in-process). No requiere LaTeX/MiKTeX.
+La app deploya en **Fly.io** con Docker sobre `python:3.11-slim-bookworm`. Los PDFs se compilan con **Typst** (vía pip, in-process). No requiere LaTeX, MiKTeX ni Bun.
 
 El `fly.toml` define dos procesos:
 - **`web`** — API HTTP (uvicorn)

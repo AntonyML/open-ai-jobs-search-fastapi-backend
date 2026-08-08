@@ -1,7 +1,6 @@
-"""Business logic — one module per skill (setup, scrape, rank, apply, ...)."""
+"""Business logic — one module per skill (setup, search, rank, apply, ...)."""
 
 from app.services import (
-    add_portal,
     apply,
     ats_check,
     auth,
@@ -19,7 +18,6 @@ from app.services import (
 )
 
 __all__ = [
-    "add_portal",
     "apply",
     "ats_check",
     "auth",

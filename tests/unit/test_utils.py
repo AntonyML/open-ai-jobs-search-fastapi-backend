@@ -1,8 +1,7 @@
-"""Tests for utility tools (FASE 12).
+"""Tests for utility tools.
 
 Tests cover:
 - app/utils/pdf_verifier.py  (wraps existing ats_check)
-- app/utils/skill_linter.py   (skill validation)
 - app/middleware/content_guard.py (content security)
 """
 
@@ -15,15 +14,6 @@ from app.middleware.content_guard import (
     guard_content,
     guard_latex,
     guard_text,
-)
-from app.utils.skill_linter import (
-    KNOWN_SKILLS,
-    add_known_skills,
-    lint_skill,
-    lint_skills_list,
-    lint_skills_dict,
-    _resolve_alias,
-    _find_closest_known_skill,
 )
 from app.utils.pdf_verifier import verify_pdf_sync
 
@@ -44,107 +34,6 @@ class TestPdfVerifier:
         """Module exports verify_pdf and verify_pdf_sync."""
         from app.utils.pdf_verifier import verify_pdf
         assert callable(verify_pdf)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# SKILL LINTER
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestSkillLinter:
-
-    def test_lint_known_good_skill(self):
-        """A well-known skill passes with no errors."""
-        result = lint_skill("Python")
-        assert result.passed
-        assert len(result.errors) == 0
-        assert len(result.warnings) == 0
-
-    def test_lint_vague_skill(self):
-        """Vague skills produce warnings."""
-        result = lint_skill("coding")
-        assert result.passed  # Warnings don't fail
-        assert len(result.warnings) > 0
-        assert "vague" in result.warnings[0].lower()
-
-    def test_lint_empty_skill(self):
-        """Empty skill produces an error."""
-        result = lint_skill("")
-        assert not result.passed
-        assert len(result.errors) > 0
-
-    def test_lint_very_long_skill(self):
-        """Very long skill produces an error."""
-        result = lint_skill("A" * 101)
-        assert not result.passed
-        assert any("too long" in e.lower() for e in result.errors)
-
-    def test_lint_skill_too_short(self):
-        """Single character skill produces an error."""
-        result = lint_skill("X")
-        assert not result.passed
-
-    def test_resolve_alias_exact_match(self):
-        """_resolve_alias returns canonical name for known aliases."""
-        assert _resolve_alias("pytorch") == "PyTorch"
-        assert _resolve_alias("sklearn") == "scikit-learn"
-        assert _resolve_alias("k8s") == "Kubernetes"
-
-    def test_resolve_alias_nonexistent(self):
-        """_resolve_alias returns None for unknown skills."""
-        assert _resolve_alias("flibberflabber") is None
-
-    def test_find_closest_known_skill_substring(self):
-        """_find_closest_known_skill finds match by substring."""
-        match = _find_closest_known_skill("pytorch")
-        assert match == "PyTorch"
-
-    def test_lint_skills_list_multiple(self):
-        """lint_skills_list processes multiple skills."""
-        result = lint_skills_list(["Python", "coding", "Kubernetes"])
-        assert result.passed  # Warnings don't fail
-        assert len(result.warnings) > 0  # "coding" is vague
-
-    def test_lint_skills_dict_programming_ml(self):
-        """lint_skills_dict handles programming_ml section."""
-        skills_dict = {
-            "programming_ml": [
-                {"language": "Python", "proficiency": "Expert", "frameworks": ["PyTorch"]},
-            ],
-            "domain_expertise": ["Machine Learning"],
-            "software_tools": ["Docker", "Kubernetes"],
-        }
-        result = lint_skills_dict(skills_dict)
-        assert result.passed
-
-    def test_lint_skills_dict_vague_skills(self):
-        """lint_skills_dict flags vague skills."""
-        skills_dict = {
-            "programming_ml": [],
-            "domain_expertise": ["computers"],
-            "software_tools": ["coding"],
-        }
-        result = lint_skills_dict(skills_dict)
-        assert result.passed  # Warnings don't fail
-        assert len(result.warnings) > 0
-
-    def test_lint_skills_dict_empty(self):
-        """lint_skills_dict handles empty skills dict."""
-        result = lint_skills_dict({})
-        assert result.passed
-
-    def test_add_known_skills(self):
-        """add_known_skills extends the known skills dictionary."""
-        add_known_skills({"CustomSkill": {"aliases": ["custom"], "category": "custom"}})
-        assert "CustomSkill" in KNOWN_SKILLS
-        assert _resolve_alias("custom") == "CustomSkill"
-
-    def test_lint_skill_with_suggestion(self):
-        """lint_skill suggests canonical name for alias."""
-        # "pytorch" is an alias, should suggest "PyTorch"
-        result = lint_skill("pytorch")
-        assert len(result.suggestions) > 0
-        assert any(s[1] == "PyTorch" for s in result.suggestions)
 
 
 # ═══════════════════════════════════════════════════════════════════

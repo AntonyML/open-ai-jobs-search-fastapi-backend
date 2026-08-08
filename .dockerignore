@@ -22,12 +22,8 @@ htmlcov/
 venv/
 env/
 
-# Node/Bun (CRITICAL - these are huge)
+# Node
 **/node_modules/
-**/bun.lockb
-
-# MiKTeX Portable (CRITICAL - 142 MB)
-**/miktex-portable/
 
 # IDE
 .vscode/
@@ -72,13 +68,6 @@ build/
 # Documentation
 *.md
 !README.md
-
-# MiKTeX Portable (we copy from builder stage)
-app/external/latex/miktex-portable/
-
-# Bun
-node_modules/
-bun.lockb
 
 # Generated documents
 documents/

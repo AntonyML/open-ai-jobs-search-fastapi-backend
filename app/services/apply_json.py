@@ -5,7 +5,6 @@ sanitizes with ``LLMResponseSanitizer``, and renders via Typst.
 
 The reviewer receives the JSON CV (serialised) + profile + job posting only
 — never the drafter's reasoning, maintaining adversarial freshness.
-LaTeX path (existing ``apply.py``) is unchanged.
 """
 
 from __future__ import annotations

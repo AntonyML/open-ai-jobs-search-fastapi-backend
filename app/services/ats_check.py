@@ -1,6 +1,6 @@
 """ATS parseability check service — verifies generated PDFs are ATS-compatible.
 
-This service runs AFTER LaTeX compilation and checks whether the generated
+This service runs after PDF compilation and checks whether the generated
 PDF would pass through Applicant Tracking System (ATS) parsers without
 losing critical information.
 
@@ -52,20 +52,9 @@ _KEYWORD_COVERAGE_THRESHOLD = 0.7
 # ── Binary resolution ───────────────────────────────────────────────
 
 
-def _resolve_binary(name: str) -> str | Path:
-    """Resolve the full path to a poppler binary, or return bare name.
-
-    Uses the same ``latex_bin_dir`` setting as the LaTeX compiler so that
-    a portable MiKTeX install's poppler tools are found automatically.
-
-    Falls back to bare name (system PATH) if the directory is not set.
-    """
-    try:
-        from app.services.apply import _resolve_latex_binary
-
-        return _resolve_latex_binary(name)
-    except (ImportError, AttributeError):
-        return name
+def _resolve_binary(name: str) -> str:
+    """Return the poppler binary name — resolved from the system PATH by subprocess."""
+    return name
 
 
 # ── Text extraction ─────────────────────────────────────────────────
