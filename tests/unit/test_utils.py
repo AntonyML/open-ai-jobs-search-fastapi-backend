@@ -5,9 +5,6 @@ Tests cover:
 - app/middleware/content_guard.py (content security)
 """
 
-import pytest
-from pathlib import Path
-
 from app.middleware.content_guard import (
     check_placeholders,
     check_sensitive_data,

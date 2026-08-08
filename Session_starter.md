@@ -4,12 +4,8 @@
 
 ## 👤 Tareas Manuales (antes del front)
 
-- [X] Configurar `.env` (DATABASE_URL, JWT_SECRET_KEY, CORS_ORIGINS)
+- [X] Configurar `.env` (DATABASE_URL, JWT_SECRET_KEY, CORS_ORIGINS, INGEST_SERVICE_URL)
 - [X] Crear proyecto Supabase (Session Pooler)
-- [x] Instalar Bun
-- [x] `bun install` en los 6 scrapers (`app/external/scrapers/*/cli/`)
-- [x] Instalar MiKTeX Portable en `app/external/latex/miktex-portable/`
-- [x] Configurar `LATEX_BIN_DIR` en `.env` (si se usa portable)
 - [ ] Registrar API keys desde el front vía `/providers` (se cifran en DB)
 - [ ] Probar flujo end-to-end completo
 - [x] Verificar migraciones en Supabase (`alembic upgrade head`)
@@ -19,8 +15,7 @@
 ## 🗺️ Roadmap — Ideas
 
 ### FASE 6 — Async & Persistencia
-- BackgroundTasks para apply/interview/add-portal
-- APScheduler job persistence en DB
+- BackgroundTasks para apply/interview
 - Webhooks/callbacks para jobs async
 - Cola de tareas (Celery / RQ / Dramatiq)
 

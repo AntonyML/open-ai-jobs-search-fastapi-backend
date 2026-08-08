@@ -169,7 +169,7 @@ Luego de la revisión:
 - **ATS Check**: verifica parseabilidad del PDF (sin `(cid:*)` markers, keyword coverage ≥70%, email/nombre como texto literal, orden de lectura correcto). Usa `pdftotext`/`pdfinfo` (poppler) si están disponibles; si no, devuelve advertencia sin bloquear
 - **Verification Checklist**: 10+ checks deterministas + LLM para consistencia y claims fabricados
 
-> La compilación es 100% **Typst** (in-process); no se ejecuta LaTeX en ningún punto del pipeline.
+> La compilación de PDFs es 100% **Typst** (in-process); no se compila LaTeX en ningún punto del pipeline.
 
 ### Fase 5 — Interview (preparación)
 Prep pack completo: research de empresa, preguntas probables mapeadas a ejemplos STAR del candidato, bridge answers para gaps de experiencia, **mock interview** (chat interactivo donde el LLM juega el rol del entrevistador, con historial de conversación persistente).
@@ -221,9 +221,9 @@ FastAPI-backend/
 │   ├── api/
 │   │   ├── deps.py                # get_db, get_current_user, get_llm_provider, get_locale
 │   │   └── v1/                    # auth, providers, orchestrator, setup, rank, apply, interview,
-│   │                              # outcome, expand, upskill, salary, verification, add_portal,
+│   │                              # outcome, expand, upskill, salary, verification,
 │   │                              # pipeline_reset, reset, admin, dashboard, analytics, users, jobs
-│   ├── utils/                     # pdf_verifier.py, skill_linter.py
+│   ├── utils/                     # pdf_verifier.py
 │   └── external/
 │       └── typst/                 # Templates Typst (cv, cover letter, entry)
 ├── tests/
@@ -234,7 +234,7 @@ FastAPI-backend/
 ├── entrypoint.sh                  # Docker entrypoint (API o worker según DOCKER_PROCESS)
 ├── dev.ps1                        # Script desarrollo: arranca API + worker localmente
 ├── pyproject.toml
-├── Dockerfile                     # Multi-stage (Python 3.11 + Bun + Typst)
+├── Dockerfile                     # Python 3.11 + Typst (in-process)
 └── fly.toml                       # Config Fly.io (procesos web + worker)
 ```
 
