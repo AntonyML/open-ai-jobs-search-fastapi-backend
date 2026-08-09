@@ -63,7 +63,7 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 │  │  (failover, rate limits, checkpoints, WebSocket real-time) │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │                                                                  │
-│  Worker separado (app/worker.py) → cola de ranking               │
+│  Microservicio de Ranking (rankjobs :8002) → cola de ranking     │
 │  (FOR UPDATE SKIP LOCKED, sesiones cortas LOAD/RANK/SAVE)        │
 └───────────────┬───────────────────────────────────┬──────────────┘
                 │ LEE ingested_jobs                 │ POST /api/v1/ingest
@@ -87,7 +87,7 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 4. **Sanitización antes de validación.** Las respuestas del LLM se sanitizan (truncar arrays, trim strings, reparar JSON, llenar defaults) ANTES de pasarlas por Pydantic. Solo se rechazan respuestas irrecuperables.
 
-5. **Worker de ranking como proceso separado.** El ranking corre en un worker independiente del API (proceso Fly.io separado). Usa `FOR UPDATE SKIP LOCKED` para evitar contención, sesiones de BD cortas (solo LOAD y SAVE), y LLM calls sin conexión a DB abierta.
+5. **Worker de ranking como microservicio independiente.** El ranking corre en un microservicio propio (repo `open-ai-jobs-search-microservice-rankjobs-backend`, puerto 8002), separado de la API. Usa `FOR UPDATE SKIP LOCKED` para evitar contención, sesiones de BD cortas (solo LOAD y SAVE), y LLM calls sin conexión a DB abierta.
 
 6. **La ingesta de empleos es responsabilidad del microservicio.** La API principal nunca scrapea portales: lee la tabla compartida `ingested_jobs` y, si no hay resultados suficientes, dispara una ingesta al microservicio vía `POST /api/v1/ingest`.
 
@@ -150,12 +150,12 @@ Evaluación multi-dimensión usando el **RankAnalyzer** determinista:
 
 Los jobs a rankear provienen de la búsqueda (`ingested_jobs`) o de `job_ids` explícitos; al rankear se persisten como `JobPosting`.
 
-**Worker separado**: El ranking se ejecuta en un proceso independiente (`app/worker.py`). El API crea los jobs en una cola (`execution_job_items`) y el worker los reclama con `FOR UPDATE SKIP LOCKED`. Cada item se procesa en 3 fases:
+**Microservicio de ranking**: El ranking se ejecuta en un microservicio independiente (repo `open-ai-jobs-search-microservice-rankjobs-backend`, puerto 8002). El API crea los jobs en una cola (`execution_job_items`) y el microservicio los reclama con `FOR UPDATE SKIP LOCKED`. Cada item se procesa en 3 fases:
 1. **LOAD** — sesión corta para cargar candidato + job posting
 2. **RANK** — sin conexión a DB: extracción → scores cuantitativos → llamada LLM
 3. **SAVE** — sesión corta para persistir `RankEvaluation` + actualizar `JobPosting`
 
-Esto permite escalar workers horizontalmente y garantiza que no haya sesiones abiertas durante LLM calls.
+Esto permite escalar el microservicio horizontalmente y garantiza que no haya sesiones abiertas durante LLM calls.
 
 ### Fase 4 — Apply (generación de documentos)
 **Pipeline Drafter-Reviewer-Revise** de 3 etapas:
@@ -197,7 +197,6 @@ Análisis 100% determinista que correlaciona outcomes reales (entrevistas, ofert
 FastAPI-backend/
 ├── app/
 │   ├── main.py                    # app factory: create_app() (+ app = create_app() a nivel módulo)
-│   ├── worker.py                  # Worker separado de ranking (FOR UPDATE SKIP LOCKED)
 │   ├── core/                      # settings, security (JWT + Fernet), logging, task_manager, i18n
 │   ├── llm/                       # adaptador LiteLLM
 │   ├── db/
@@ -231,11 +230,11 @@ FastAPI-backend/
 │   └── integration/
 ├── alembic/                       # 23 migraciones
 ├── scripts/                       # run_api.py, test_e2e.py, test_e2e_full.py, test_e2e_inprocess.py
-├── entrypoint.sh                  # Docker entrypoint (API o worker según DOCKER_PROCESS)
-├── dev.ps1                        # Script desarrollo: arranca API + worker localmente
+├── entrypoint.sh                  # Docker entrypoint (arranca uvicorn)
+├── dev.ps1                        # Script desarrollo: arranca la API
 ├── pyproject.toml
 ├── Dockerfile                     # Python 3.11 + Typst (in-process)
-└── fly.toml                       # Config Fly.io (procesos web + worker)
+└── fly.toml                       # Config Fly.io (proceso web)
 ```
 
 ---
@@ -274,14 +273,14 @@ alembic upgrade head
 
 ### Arranque (2 procesos + microservicio)
 
-El backend consta de dos procesos + el microservicio de ingesta:
+El backend consta de la API + dos microservicios (ingesta y ranking):
 
 - **Microservicio de Ingesta** (puerto 8001) — alimenta `ingested_jobs`. Setup en su propio README (`uvicorn app.main:app --port 8001`).
+- **Microservicio de Ranking** (puerto 8002) — procesa la cola de ranking. Setup en su propio README (repo `open-ai-jobs-search-microservice-rankjobs-backend`).
 - **API** (uvicorn) — sirve endpoints HTTP en `http://127.0.0.1:8000`
-- **Worker** — procesa la cola de ranking en segundo plano
 
 ```powershell
-# Windows — arranca API + worker automáticamente
+# Windows — arranca la API
 .\dev.ps1
 ```
 
@@ -289,8 +288,8 @@ El backend consta de dos procesos + el microservicio de ingesta:
 # Linux/Mac — terminal 1: API
 uvicorn app.main:app --reload
 
-# Terminal 2: Worker
-python -m app.worker
+# Terminal 2: Microservicio de ranking
+cd ../open-ai-jobs-search-microservice-rankjobs-backend && uvicorn app.main:app --port 8002
 
 # Alternativa: script que arranca la API
 python scripts/run_api.py
@@ -732,19 +731,12 @@ python scripts/test_e2e_full.py   # search → select → rank con job_ids
 
 La app deploya en **Fly.io** con Docker sobre `python:3.11-slim-bookworm`. Los PDFs se compilan con **Typst** (vía pip, in-process). No requiere LaTeX, MiKTeX ni Bun.
 
-El `fly.toml` define dos procesos:
+El `fly.toml` define un solo proceso:
 - **`web`** — API HTTP (uvicorn)
-- **`worker`** — worker de ranking
 
 ```bash
 # Desplegar API (proceso web)
 flyctl deploy --process-groups web
-
-# Desplegar worker
-flyctl deploy --process-groups worker
-
-# O ambos a la vez
-flyctl deploy
 
 # Variables de entorno
 flyctl secrets set DATABASE_URL="postgresql+asyncpg://..." \
@@ -753,15 +745,13 @@ flyctl secrets set DATABASE_URL="postgresql+asyncpg://..." \
     CORS_ORIGINS='["https://tu-frontend.com"]' \
     ANTHROPIC_API_KEY="..."
 
-# Escalar workers
-flyctl scale count worker=2
 ```
 
 > **Microservicio de ingesta:** debe estar desplegado y apuntar `INGEST_SERVICE_URL` hacia él (ver su README). La tabla `ingested_jobs` es compartida.
 
 Ver `fly.toml` para configuración de máquina (1GB RAM).
 
-El `entrypoint.sh` permite arrancar API o worker según la variable `DOCKER_PROCESS` (`worker` → `python -m app.worker`; cualquier otro valor → uvicorn).
+El `entrypoint.sh` arranca directamente uvicorn (la variable `DOCKER_PROCESS` ya no se usa: el worker de ranking vive en su propio microservicio).
 
 ---
 

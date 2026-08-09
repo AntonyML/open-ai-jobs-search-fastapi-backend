@@ -17,7 +17,7 @@ _config: LoggingConfig | None = None
 
 
 def setup_logging(config: LoggingConfig | None = None) -> None:
-    """Initialize logging ONCE at startup (call from create_app() and worker.py)."""
+    """Initialize logging ONCE at startup (call from create_app())."""
     global _config
     _config = config or LoggingConfig()
 

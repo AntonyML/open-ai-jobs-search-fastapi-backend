@@ -20,7 +20,6 @@ primary_region = "iad"
 
 [processes]
   web = "uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000"
-  worker = "python -m app.worker"
 
 [[services]]
   internal_port = 8000
