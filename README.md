@@ -6,8 +6,23 @@ Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta
 
 ---
 
+## Repositorios del ecosistema
+
+Open Ai Jobs Search es un **sistema multi-repositorio**: el proyecto completo
+está compuesto por 4 repositorios que comparten la base de datos (Supabase).
+
+| Repositorio | Rol | Puerto |
+|---|---|---|
+| [**Frontend (Next.js)**](https://github.com/AntonyML/open-ai-jobs-search-nextjs-frontend) | UI de usuario | `:3000` |
+| [**Backend FastAPI**](https://github.com/AntonyML/open-ai-jobs-search-FastAPI-backend) | API principal + LLM Orchestrator — **este repo** | `:8000` |
+| [**Microservicio de Ingesta**](https://github.com/AntonyML/open-ai-jobs-search-microservice-searchjobs-backend) | Telegram → `ingested_jobs` (sin LLM) | `:8001` |
+| [**Microservicio de Ranking**](https://github.com/AntonyML/open-ai-jobs-search-microservice-rankjobs-backend) | Cola de ranking con LLM (LOAD/RANK/SAVE) | `:8002` |
+
+---
+
 ## Tabla de contenidos
 
+- [Repositorios del ecosistema](#repositorios-del-ecosistema)
 - [Arquitectura](#arquitectura)
 - [Microservicio de ingesta](#microservicio-de-ingesta)
 - [Pipeline completo](#pipeline-completo)
@@ -150,10 +165,11 @@ Evaluación multi-dimensión usando el **RankAnalyzer** determinista:
 
 Los jobs a rankear provienen de la búsqueda (`ingested_jobs`) o de `job_ids` explícitos; al rankear se persisten como `JobPosting`.
 
-**Microservicio de ranking**: El ranking se ejecuta en un microservicio independiente (repo `open-ai-jobs-search-microservice-rankjobs-backend`, puerto 8002). El API crea los jobs en una cola (`execution_job_items`) y el microservicio los reclama con `FOR UPDATE SKIP LOCKED`. Cada item se procesa en 3 fases:
-1. **LOAD** — sesión corta para cargar candidato + job posting
-2. **RANK** — sin conexión a DB: extracción → scores cuantitativos → llamada LLM
-3. **SAVE** — sesión corta para persistir `RankEvaluation` + actualizar `JobPosting`
+**Microservicio de ranking**: El ranking se ejecuta en un microservicio independiente (repo `open-ai-jobs-search-microservice-rankjobs-backend`, puerto 8002). El API crea los jobs en una cola (`execution_job_items`) y el microservicio los reclama con `FOR UPDATE SKIP LOCKED`. Cada item se procesa en 4 fases:
+1. **CLAIM** — reclamación atómica con `FOR UPDATE SKIP LOCKED` (lease 5 min + heartbeat)
+2. **LOAD** — sesión corta para cargar candidato + job posting
+3. **RANK** — sin conexión a DB: extracción → scores cuantitativos → llamada LLM
+4. **SAVE** — sesión corta para persistir `RankEvaluation` + actualizar `JobPosting`
 
 Esto permite escalar el microservicio horizontalmente y garantiza que no haya sesiones abiertas durante LLM calls.
 
