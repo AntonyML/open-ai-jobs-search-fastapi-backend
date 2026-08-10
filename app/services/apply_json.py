@@ -388,10 +388,38 @@ async def _llm_json(
     constraints = field_constraints or default_field_constraints()
     try:
         cleaned = sanitize_llm_response(raw, schema_type.__name__, constraints)
-    except ValueError as exc:
-        raise LLMError(
-            f"LLM response could not be parsed for {schema_type.__name__}: {exc}"
-        ) from exc
+    except ValueError as first_exc:
+        # Retry once: large schemas often get truncated (max_tokens) or wrapped
+        # in prose. Ask for the complete JSON only, with a larger token budget.
+        logger.warning(
+            "LLM response unparseable for %s — retrying once. %s",
+            schema_type.__name__, str(first_exc)[:160],
+        )
+        retry_messages = [
+            *messages,
+            {
+                "role": "user",
+                "content": (
+                    "Your previous response was not valid JSON. "
+                    "Output ONLY the complete JSON object matching the schema — "
+                    "no explanations, no markdown, and do NOT truncate it."
+                ),
+            },
+        ]
+        raw = await llm_completion(
+            messages=retry_messages,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max(max_tokens, 8000),
+        )
+        try:
+            cleaned = sanitize_llm_response(raw, schema_type.__name__, constraints)
+        except ValueError as exc:
+            raise LLMError(
+                f"LLM response could not be parsed for {schema_type.__name__} (after retry): {exc}"
+            ) from exc
 
     try:
         schema_type.model_validate(cleaned)
@@ -414,7 +442,7 @@ async def generate_cv(
     messages = build_json_drafter_prompt(candidate, job, evaluation)
     raw_dict = await _llm_json(
         messages, GenerateCVOutput, provider_config,
-        temperature=temperature, max_tokens=4000,
+        temperature=temperature, max_tokens=8000,
     )
     return GenerateCVOutput(**raw_dict)
 
@@ -471,6 +499,6 @@ async def generate_revision(
     )
     raw_dict = await _llm_json(
         messages, GenerateCVOutput, provider_config,
-        temperature=temperature, max_tokens=4000,
+        temperature=temperature, max_tokens=8000,
     )
     return GenerateCVOutput(**raw_dict)

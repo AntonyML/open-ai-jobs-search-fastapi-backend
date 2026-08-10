@@ -358,7 +358,13 @@ async def test_execute_apply_profile_incomplete(db_session):
 @pytest.mark.asyncio
 async def test_execute_apply_llm_error(db_session, sample_candidate, sample_job, sample_evaluation):
     """execute_apply raises LLMError when LLM call fails."""
-    with patch("app.llm.adapter.llm_completion") as mock_llm:
+    # Patch both the adapter module AND the apply_json reference: apply_json
+    # binds llm_completion at import time, so patching only the adapter leaks
+    # through when apply_json was already imported by earlier test modules.
+    with (
+        patch("app.llm.adapter.llm_completion"),
+        patch("app.services.apply_json.llm_completion") as mock_llm,
+    ):
         mock_llm.side_effect = LLMError("LLM timeout")
 
         with pytest.raises(LLMError):

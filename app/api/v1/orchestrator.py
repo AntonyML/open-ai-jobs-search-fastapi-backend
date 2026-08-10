@@ -185,15 +185,21 @@ async def queue_websocket(ws: WebSocket):
         while True:
             await notifier.wait_for_change()
 
-            # Re-fetch and send the full status
-            async with async_session_factory() as db:
-                orchestrator = get_orchestrator()
-                try:
+            try:
+                # Re-fetch the full status (short DB session, closed before send)
+                async with async_session_factory() as db:
+                    orchestrator = get_orchestrator()
                     status = await orchestrator.get_queue_status(db, user_id)
-                    await ws.send_text(status.model_dump_json())
-                except Exception as exc:
-                    logger.warning("WS queue fetch failed: %s", exc)
-                    continue
+                await ws.send_text(status.model_dump_json())
+            except (WebSocketDisconnect, RuntimeError):
+                # Client is gone — stop this handler. Sending after close raises
+                # "Cannot call 'send' once a close message has been sent".
+                logger.debug("WebSocket closed for user %s", user_id)
+                break
+            except Exception as exc:
+                # Transient fetch error — wait for the next change and retry
+                logger.warning("WS queue fetch failed: %s", exc)
+                continue
 
     except WebSocketDisconnect:
         logger.debug("WebSocket disconnected for user %s", user_id)
