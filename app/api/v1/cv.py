@@ -20,7 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.db.models import GeneratedCV
-from app.schemas.cv import CVAnalysis, CVBaseCreate, CVPersonalizeCreate, CVResponse
+from app.schemas.cv import (
+    CVAnalysis,
+    CVBaseCreate,
+    CVJobOut,
+    CVPersonalizeCreate,
+    CVPersonalizeJobCreate,
+    CVResponse,
+)
 from app.services import cv_generator
 from app.services.cv_generator import (
     FREE_TIER_CVS_PER_HOUR,
@@ -40,10 +47,21 @@ def _to_response(record: GeneratedCV) -> CVResponse:
             analysis = CVAnalysis(**record.analysis)
         except Exception:
             analysis = None
+    job = None
+    if record.job_posting is not None:
+        jp = record.job_posting
+        job = CVJobOut(
+            id=jp.id,
+            title=jp.title,
+            company=jp.company,
+            location=jp.location,
+        )
     return CVResponse(
         cv_id=record.id,
         cv_type=record.cv_type,  # type: ignore[arg-type]
         job_url=record.job_url,
+        job_posting_id=record.job_posting_id,
+        job=job,
         job_description_text=record.job_description_text,
         json_cv=record.cv_json or {},
         pdf_url=build_pdf_url(record),
@@ -92,6 +110,27 @@ async def create_personalized_cv(
     """Tailor a CV to a free-text job description (no scraping, no URL)."""
     await _enforce_rate_limit(db, user)
     record = await cv_generator.personalize_cv(db, user["sub"], payload.job_description_text)
+    return _to_response(record)
+
+
+@router.post("/personalize-job", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
+async def create_adapted_cv(
+    payload: CVPersonalizeJobCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Adapt the user's base CV to an existing job posting (offer).
+
+    Preconditions:
+    - The user must have generated a base CV (else 422 precondition_failed).
+    - The job posting must exist and belong to the user (else 404).
+
+    The base CV is never modified; a new adapted CV document is stored.
+    """
+    await _enforce_rate_limit(db, user)
+    record = await cv_generator.adapt_cv(
+        db, user["sub"], payload.base_cv_id, payload.job_posting_id
+    )
     return _to_response(record)
 
 

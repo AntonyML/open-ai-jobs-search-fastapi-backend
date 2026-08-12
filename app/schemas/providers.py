@@ -1,5 +1,6 @@
 """Pydantic schemas for LLM provider credentials management."""
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl
@@ -119,6 +120,53 @@ class ActiveModelOut(BaseModel):
     model: str | None = Field(None, description="Selected model, or null if none chosen yet")
 
 
+# ── Admin global provider config schemas ────────────────────────────
+
+
+class AdminProviderConfigUpdate(BaseModel):
+    """Set the global (admin-managed) provider configuration.
+
+    Empty string clears a field; ``None`` leaves it unchanged.  ``api_key``
+    of ``__MASKED__`` keeps the stored encrypted key (sent by the frontend
+    when editing without changing the key).
+    """
+
+    provider: str = Field(
+        ...,
+        description="Provider name: anthropic, openai, nvidia_nim, lm_studio, ollama",
+        examples=["anthropic", "openai", "nvidia_nim"],
+    )
+    api_key: str | None = Field(
+        None,
+        description="Plaintext API key (encrypted at rest). Use __MASKED__ to keep the stored key.",
+    )
+    api_base: HttpUrl | None = Field(
+        None,
+        description="Base URL for self-hosted providers (e.g., LM Studio, NVIDIA NIM)",
+        examples=["http://localhost:1234/v1", "https://integrate.api.nvidia.com/v1"],
+    )
+    model: str | None = Field(
+        None,
+        description="Model name to use with this provider",
+        examples=["claude-sonnet-4-6", "gpt-4.1", "meta/llama-3.3-70b-instruct"],
+    )
+
+
+class AdminProviderConfigOut(BaseModel):
+    """Current global provider configuration (admin view)."""
+
+    provider: str | None = None
+    display_name: str | None = None
+    model: str | None = None
+    api_base: str | None = None
+    has_key: bool = False
+    last_status: str | None = None
+    last_error: str | None = None
+    last_checked_at: datetime | None = None
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
 # ── Known providers catalog ─────────────────────────────────────────
 
 KNOWN_PROVIDERS: list[ProviderInfo] = [
@@ -164,10 +212,9 @@ KNOWN_PROVIDERS: list[ProviderInfo] = [
         display_name="Ollama (Local)",
         requires_api_key=False,
         supports_custom_base=True,
-        default_model="llama3.2",  # was: llama3.1 (3.2 es el tag actual en ollama hub)
+        default_model="llama3.2",  # fue: llama3.1 (3.2 es el tag actual en ollama hub)
         example_base_url="http://localhost:11434/v1",
         ),
 ]
 
 PROVIDER_DISPLAY_MAP: dict[str, str] = {p.name: p.display_name for p in KNOWN_PROVIDERS}
-

@@ -9,8 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.models import Base, CandidateProfile, User
-from app.exceptions import NotFoundError, ProfileIncompleteError, ProviderAuthError
+from app.db.models import Base, CandidateProfile, JobPosting, User
+from app.exceptions import (
+    NotFoundError,
+    PreconditionError,
+    ProfileIncompleteError,
+    ProviderAuthError,
+)
 from app.services import cv_generator
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -96,7 +101,7 @@ PROVIDER_CFG = {"provider": "openai", "model": "gpt-4o", "api_key": "sk-test", "
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())
 @patch("app.services.cv_generator.generate_base_cv_llm", new=AsyncMock(return_value=SAMPLE_OUTPUT))
 @patch(
-    "app.services.cv_generator.get_user_active_provider_config",
+    "app.services.cv_generator.get_active_provider_config",
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
 async def test_generate_base_cv_persists(db_session):
@@ -117,7 +122,7 @@ async def test_generate_base_cv_persists(db_session):
     new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
 )
 @patch(
-    "app.services.cv_generator.get_user_active_provider_config",
+    "app.services.cv_generator.get_active_provider_config",
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
 async def test_personalize_cv_persists_analysis(db_session):
@@ -131,9 +136,13 @@ async def test_personalize_cv_persists_analysis(db_session):
     assert record.job_description_text.startswith("Senior Python")
 
 
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value={"provider": None, "model": None, "api_key": None, "api_base": None}),
+)
 async def test_generate_base_cv_without_provider_raises(db_session):
     with pytest.raises(ProviderAuthError):
-        # test user has no active_provider -> provider_config is None
+        # global provider config is empty -> ProviderAuthError
         await cv_generator.generate_base_cv(db_session, "test-user-id")
 
 
@@ -152,7 +161,7 @@ async def test_generate_without_profile_raises(db_session):
     new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
 )
 @patch(
-    "app.services.cv_generator.get_user_active_provider_config",
+    "app.services.cv_generator.get_active_provider_config",
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
 async def test_list_get_soft_delete_and_rate_count(db_session):
@@ -178,3 +187,113 @@ async def test_list_get_soft_delete_and_rate_count(db_session):
 
     with pytest.raises(NotFoundError):
         await cv_generator.get_cv(db_session, "other-user", second.id)
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.adapt_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_adapt_cv_requires_base_cv(db_session):
+    """Rule 4 — adapting without a base CV raises PreconditionError."""
+    with pytest.raises(PreconditionError):
+        await cv_generator.adapt_cv(
+            db_session, "test-user-id", "missing-base-cv", "missing-job"
+        )
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.adapt_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_adapt_cv_persists_new_document_without_touching_base(db_session):
+    """Rules 5-7 — adapted CV links to the job, base CV record is untouched."""
+    # 1. Create the base CV
+    base = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    base_cv_json_before = base.cv_json
+
+    # 2. Create a job posting owned by the user
+    job = JobPosting(
+        id="job-adapt-1",
+        user_id="test-user-id",
+        portal="linkedin",
+        external_id="ext-1",
+        title="Senior Python Engineer",
+        company="Acme",
+        location="Remote",
+        description="Python, FastAPI, Kubernetes...",
+        requirements=["Python", "Kubernetes"],
+        status="ranked",
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    # 3. Adapt
+    adapted = await cv_generator.adapt_cv(
+        db_session, "test-user-id", base.id, "job-adapt-1"
+    )
+
+    assert adapted.cv_type == "personalized"
+    assert adapted.job_posting_id == "job-adapt-1"
+    assert adapted.job_url is None
+    assert adapted.analysis["match_score"] == 78
+    assert adapted.id != base.id
+
+    # Rule 6 — base CV untouched
+    await db_session.refresh(base)
+    assert base.cv_json == base_cv_json_before
+    assert base.cv_type == "base"
+
+    # Rule 7 — list shows both documents
+    listed = await cv_generator.list_cvs(db_session, "test-user-id")
+    assert {c.id for c in listed} == {base.id, adapted.id}
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.adapt_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_adapt_cv_job_not_owned_raises(db_session):
+    """Job posting must belong to the user (404)."""
+    base = await cv_generator.generate_base_cv(db_session, "test-user-id")
+
+    other_job = JobPosting(
+        id="job-other-1",
+        user_id="someone-else",
+        portal="linkedin",
+        external_id="ext-2",
+        title="Backend Engineer",
+        company="OtherCo",
+        location="NYC",
+        description="Go and SQL...",
+        status="ranked",
+    )
+    db_session.add(other_job)
+    await db_session.commit()
+
+    with pytest.raises(NotFoundError):
+        await cv_generator.adapt_cv(
+            db_session, "test-user-id", base.id, "job-other-1"
+        )

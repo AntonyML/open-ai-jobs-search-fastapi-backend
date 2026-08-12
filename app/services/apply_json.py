@@ -678,3 +678,154 @@ async def personalize_cv_llm(
         max_tokens=8000,
     )
     return analysis_dict, output_dict
+
+
+# ── CV adapter LLM functions (FASE — Perfil → CV base → CV adaptado) ────
+
+
+def _build_adapt_job_summary(job: JobPosting) -> str:
+    """Plain-text summary of a stored JobPosting for adaptation context."""
+    parts = [
+        f"Title: {job.title}",
+        f"Company: {job.company or 'Not specified'}",
+        f"Location: {job.location or 'Not specified'}",
+    ]
+    if job.employment_type:
+        parts.append(f"Employment type: {job.employment_type}")
+    if job.salary:
+        parts.append(f"Salary: {job.salary}")
+    if job.language:
+        parts.append(f"Posting language: {job.language}")
+    if job.description:
+        parts.append(f"\nDescription:\n{job.description[:4000]}")
+    if job.requirements:
+        parts.append(
+            "\nRequirements:\n" + "\n".join(f"  • {r}" for r in job.requirements[:15])
+        )
+    return "\n".join(parts)
+
+
+def build_adapt_analysis_prompt(
+    candidate: CandidateProfile,
+    base_cv_json: dict[str, Any],
+    job: JobPosting,
+) -> list[dict[str, str]]:
+    """Recruiter-lens analysis using the base CV as the candidate representation."""
+    candidate_summary = _build_candidate_summary(candidate)
+    base_cv_text = json.dumps(base_cv_json, indent=2, ensure_ascii=False)
+    job_summary = _build_adapt_job_summary(job)
+
+    system = (
+        "You are a technical recruiter analyzing a candidate's base CV against a "
+        "job posting. Your output must follow this schema:\n"
+        + json.dumps(CVAnalysis.model_json_schema(), indent=2)
+    )
+
+    user = f"""
+Analyze how well the candidate matches the job posting below.
+
+=== CANDIDATE BASE CV ===
+{base_cv_text[:6000]}
+
+=== CANDIDATE PROFILE ===
+{candidate_summary}
+
+=== JOB POSTING ===
+{job_summary}
+
+=== INSTRUCTIONS ===
+1. match_score: estimate a 0–100 score for overall fit
+2. missing_keywords: keywords in the job the candidate should emphasize — ONLY those genuinely supported by the profile
+3. red_flags: potential concerns a recruiter could raise (max 5)
+4. adapted_experience: concrete reframing suggestions the drafter should apply
+
+Output a valid CVAnalysis JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
+def build_adapt_drafter_prompt(
+    candidate: CandidateProfile,
+    base_cv_json: dict[str, Any],
+    job: JobPosting,
+    analysis: CVAnalysis,
+) -> list[dict[str, str]]:
+    """Drafter prompt — adapts the base CV to the job posting (never invents)."""
+    base_cv_text = json.dumps(base_cv_json, indent=2, ensure_ascii=False)
+    job_summary = _build_adapt_job_summary(job)
+    candidate_summary = _build_candidate_summary(candidate)
+
+    system = (
+        "You are an expert CV writer. Adapt a candidate's BASE CV to a specific "
+        "job posting, outputting a new tailored CV document in JSON format.\n\n"
+        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + "Your output MUST have the following structure:\n"
+        + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
+    )
+
+    user = f"""
+Adapt the candidate's base CV to the job posting below.
+
+=== BASE CV (STARTING POINT — never invent beyond it) ===
+{base_cv_text[:6000]}
+
+=== CANDIDATE PROFILE (ground truth) ===
+{candidate_summary}
+
+=== JOB POSTING ===
+{job_summary}
+
+=== RECRUITER ANALYSIS ===
+{analysis.model_dump_json(indent=2)}
+
+=== INSTRUCTIONS ===
+1. Keep the candidate's real experience from the base CV — reframe bullets using the X-Y-Z formula
+2. Incorporate the missing keywords ONLY where genuinely supported by the profile
+3. Address the red flags by honest reframing
+4. Apply the adapted_experience suggestions where defensible
+5. Generate a compelling, role-specific profile statement
+6. Choose skill group labels appropriate to the profession
+7. Set the cv.language field to match the job posting language
+8. If you can generate a strong cover letter, include it; otherwise omit it
+
+Output a valid GenerateCVOutput JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
+async def adapt_cv_llm(
+    candidate: CandidateProfile,
+    base_cv_json: dict[str, Any],
+    job: JobPosting,
+    provider_config: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the two-step adapt pipeline: recruiter analysis → drafter.
+
+    Returns ``(analysis_dict, output_dict)``.  The base CV JSON is only used
+    as context; the generated ``GenerateCVOutput`` becomes a NEW document.
+    """
+    provider_config = provider_config or {}
+
+    analysis_dict = await _llm_json(
+        build_adapt_analysis_prompt(candidate, base_cv_json, job),
+        CVAnalysis,
+        provider_config,
+        temperature=0.2,
+        max_tokens=2000,
+    )
+    analysis = CVAnalysis(**analysis_dict)
+
+    output_dict = await _llm_json(
+        build_adapt_drafter_prompt(candidate, base_cv_json, job, analysis),
+        GenerateCVOutput,
+        provider_config,
+        temperature=0.3,
+        max_tokens=8000,
+    )
+    return analysis_dict, output_dict

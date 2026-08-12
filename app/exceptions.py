@@ -83,6 +83,16 @@ class ConfirmationRequiredError(AppError):
         super().__init__(message or _t("errors.confirmation_required", locale), locale=locale)
 
 
+class PreconditionError(AppError):
+    """A required precondition was not met (e.g. generating an adapted CV without a base CV)."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    code = "precondition_failed"
+
+    def __init__(self, message: str | None = None, locale: str = "en"):
+        super().__init__(message or _t("errors.precondition_failed", locale), locale=locale)
+
+
 # ── Exception handlers (registered in create_app) ────────────────
 
 

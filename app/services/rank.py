@@ -24,7 +24,7 @@ from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.orchestrator.llm_response_sanitizer import default_field_constraints
 from app.schemas.rank import RankQualitativeOutput, RankResult, RankedJobOut
 from app.schemas.rank import JobPostingSummary
-from app.services.provider_credentials import get_user_active_provider_config
+from app.services.provider_config import get_active_provider_config
 from app.services.salary import service as salary_service
 from app.core.logging import get_logger, bind_context
 
@@ -235,7 +235,7 @@ async def execute_rank(
         # ── Phase 1: LOAD (single short session) ─────────────────
         async with db_factory() as db:
             candidate = await _get_candidate_profile(db, user_id)
-            provider_config = await get_user_active_provider_config(db, user_id)
+            provider_config = await get_active_provider_config(db)
 
             jobs = await _select_jobs_to_rank(db, user_id, focus_area, re_rank, max_jobs=max_jobs)
             if not jobs:

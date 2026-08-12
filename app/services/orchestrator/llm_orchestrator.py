@@ -240,10 +240,6 @@ class LLMOrchestrator:
 
                 # ── Phase 3: Record success (short session) ─────────
                 async with async_session_factory() as session:
-                    await pm.record_success(session, user_id, prov, latency_ms)
-                    await mm.mark_model_completed(
-                        session, user_id, prov, mdl, latency_ms, success=True
-                    )
                     await self.queue.complete_job(
                         session, job_id,
                         result_data=result.model_dump() if hasattr(result, "model_dump") else None,
@@ -273,12 +269,6 @@ class LLMOrchestrator:
 
                 # ── Phase 4: Record failure (short session) ─────────
                 async with async_session_factory() as session:
-                    await pm.record_failure(
-                        session, user_id, prov, error_code, str(exc)
-                    )
-                    await mm.mark_model_failed(
-                        session, user_id, prov, mdl, error_code, str(exc)
-                    )
                     if error_code == "rate_limit":
                         await self.queue.rate_limit_job(
                             session, job_id, cooldown_seconds=60
@@ -323,15 +313,16 @@ class LLMOrchestrator:
         preferred_provider: str | None,
         preferred_model: str | None,
     ) -> dict[str, Any]:
-        """Resolve the provider configuration for a user.
+        """Resolve the global provider configuration.
 
-        Uses the user's active provider if none specified, with fallback
-        to the default provider from settings.
+        Uses the admin-managed global provider config (falls back to the
+        default provider from settings).  ``user_id`` is retained only for
+        call-signature compatibility.
         """
-        from app.services.provider_credentials import get_user_active_provider_config
+        from app.services.provider_config import get_active_provider_config
 
         try:
-            config = await get_user_active_provider_config(db, user_id)
+            config = await get_active_provider_config(db)
         except Exception:
             # Fallback to settings defaults
             config = {
@@ -358,39 +349,22 @@ class LLMOrchestrator:
 
         Priority:
         1. Initial provider + model
-        2. Initial provider + alternative models
-        3. Available providers (by priority) + their best model
-        4. Available providers + alternative models
+        2. Same provider + alternative static models
         """
         plan: list[tuple[str, str]] = []
         initial_provider = initial_config["provider"]
         initial_model = initial_config["model"]
 
-        # 1. Initial provider + model
+        # 1. Initial provider + model (single attempt — global config only)
         plan.append((initial_provider, initial_model))
 
-        # 2. Same provider, alternative models
-        available_models = await mm.get_available_models(
-            db, user_id, initial_provider
-        )
-        for m in available_models:
-            if m.model_name != initial_model:
-                plan.append((initial_provider, m.model_name))
+        # 2. Same provider, alternative static models (from the provider catalog)
+        from app.schemas.providers import KNOWN_PROVIDERS
 
-        # 3. Available providers by priority
-        available_providers = await pm.get_available_providers(db, user_id)
-        for p in available_providers:
-            if p.provider == initial_provider:
-                continue  # Already covered above
-            # Get best available model for this provider
-            provider_models = await mm.get_available_models(
-                db, user_id, p.provider
-            )
-            if provider_models:
-                plan.append((p.provider, provider_models[0].model_name))
-                # Alternative models
-                for m in provider_models[1:]:
-                    plan.append((p.provider, m.model_name))
+        static = [p.static_models or [] for p in KNOWN_PROVIDERS if p.name == initial_provider]
+        for m in (static[0] if static else []):
+            if m != initial_model:
+                plan.append((initial_provider, m))
 
         return plan
 

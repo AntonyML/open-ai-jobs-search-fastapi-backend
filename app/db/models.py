@@ -1253,6 +1253,9 @@ class GeneratedCV(Base, TimestampMixin):
         String(20), nullable=False, default="base", index=True
     )
     job_url: Mapped[str | None] = mapped_column(String(500))
+    job_posting_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("job_postings.id", ondelete="SET NULL"), index=True
+    )
     job_description_text: Mapped[str | None] = mapped_column(Text)
     cv_json: Mapped[dict[str, Any]] = mapped_column(FlexJSON, nullable=False)
     pdf_path: Mapped[str | None] = mapped_column(String(1000))
@@ -1266,3 +1269,6 @@ class GeneratedCV(Base, TimestampMixin):
         server_default=func.now(),
         index=True,
     )
+
+    # ── Relationships ─────────────────────────────────────────
+    job_posting: Mapped["JobPosting | None"] = relationship()

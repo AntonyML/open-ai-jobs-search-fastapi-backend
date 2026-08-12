@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import UserModelSelection
 from app.exceptions import LLMError, NotFoundError, ProviderAuthError
 from app.schemas.providers import ModelInfo, ModelListOut
-from app.services.provider_credentials import get_provider_credential
 
 # Default api_base per provider (used only when the credential has no api_base)
 _DEFAULT_API_BASE: dict[str, str] = {
@@ -49,29 +48,36 @@ def _static_models_for(provider: str) -> list[str] | None:
 
 async def _resolve_credential(
     db: AsyncSession,
-    user_id: str,
     provider: str,
 ) -> tuple[str | None, str | None]:
-    """Return (decrypted_api_key, api_base) for the user's stored credential.
+    """Return (decrypted_api_key, api_base) for the global provider config.
 
-    Raises ProviderAuthError if no credential is stored, or (for local
-    providers) if api_base is missing.
+    Falls back to the .env key.  Raises ProviderAuthError if the provider
+    requires a key and none is available (local providers are exempt).
     """
-    credential = await get_provider_credential(db, user_id, provider)
-    if credential is None:
-        raise ProviderAuthError(
-            f"No credential stored for provider '{provider}'. "
-            f"Add it via POST /providers before listing models."
-        )
+    from app.services.provider_config import get_active_provider_config
 
-    api_key = credential.api_key_encrypted  # already decrypted by get_provider_credential
-    api_base = credential.api_base
+    config = await get_active_provider_config(db)
+    api_key = config.get("api_key")
+    api_base = config.get("api_base")
+
+    if api_key is None and provider not in _NO_KEY_PROVIDERS:
+        from app.core.settings import get_settings
+
+        api_key = getattr(get_settings(), f"{provider}_api_key", None)
 
     # Local providers need an api_base to know where to call
     if provider in _NO_KEY_PROVIDERS and not api_base:
         raise ProviderAuthError(
-            f"Provider '{provider}' requires an api_base to be stored. "
-            f"Update it via PATCH /providers/{provider} with an api_base before listing models."
+            f"Provider '{provider}' requires an api_base to be configured. "
+            f"Set it via PUT /admin/providers before listing models."
+        )
+
+    # Remote providers require an API key
+    if provider not in _NO_KEY_PROVIDERS and not api_key:
+        raise ProviderAuthError(
+            f"No API key configured for provider '{provider}'. "
+            f"Set it via PUT /admin/providers before listing models."
         )
 
     return api_key, api_base
@@ -153,19 +159,18 @@ async def _list_ollama(url: str) -> list[ModelInfo]:
 
 async def list_provider_models(
     db: AsyncSession,
-    user_id: str,
     provider: str,
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> ModelListOut:
-    """List the models available to the user for the given provider.
+    """List the models available for the given provider (global config).
 
     For Anthropic, returns a curated static list (no HTTP call).
     For OpenAI/NVIDIA NIM/LM Studio, uses the OpenAI-compatible /models endpoint.
     For Ollama, uses /api/tags.
 
     Raises:
-        ProviderAuthError: no credential stored (or no api_base for local providers).
+        ProviderAuthError: no API key configured (or no api_base for local providers).
         LLMError: the live call failed or could not be parsed.
     """
     # Anthropic: static curated list, no credential needed for listing
@@ -182,7 +187,7 @@ async def list_provider_models(
         raise NotFoundError(f"Unknown provider '{provider}'")
 
     if api_key is None and api_base is None:
-        api_key, api_base = await _resolve_credential(db, user_id, provider)
+        api_key, api_base = await _resolve_credential(db, provider)
     base_url = api_base or _DEFAULT_API_BASE[provider]
 
     if provider == "ollama":

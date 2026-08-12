@@ -12,7 +12,6 @@ from app.api.v1.expand import router as expand_router
 from app.api.v1.upskill import router as upskill_router
 from app.api.v1.reset import router as reset_router
 from app.api.v1.pipeline_reset import router as pipeline_reset_router
-from app.api.v1.providers import router as providers_router
 from app.api.v1.orchestrator import router as orchestrator_router
 from app.api.v1.salary import router as salary_router
 from app.api.v1.verification import router as verification_router
@@ -33,9 +32,6 @@ async def health_check():
 
 # ── Auth router ────────────────────────────────────────────────────
 router.include_router(auth_router)
-
-# ── Providers router ───────────────────────────────────────────────
-router.include_router(providers_router)
 
 # ── Orchestrator router ────────────────────────────────────────────
 router.include_router(orchestrator_router)

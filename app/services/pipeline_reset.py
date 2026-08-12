@@ -6,7 +6,7 @@ that was generated during the pipeline run:
 - ScrapeRuns, ExecutionJobs
 - CompetencyExpansions, Upskill analyses
 - UserSalaryData (uploaded salary benchmarks)
-- Resets: ProviderHealth, ModelHealth, ExecutionQueueState
+- Resets: ExecutionQueueState
 - job_search_tracker.csv (file on disk)
 
 The following are PRESERVED:
@@ -27,8 +27,6 @@ from app.db.models import (
     ExecutionJob,
     ExecutionQueueState,
     JobPosting,
-    ModelHealth,
-    ProviderHealth,
     Upskill,
     User,
     UserSalaryData,
@@ -94,44 +92,7 @@ async def execute_pipeline_reset(
     )
     deleted["salary_data"] = salary_result.rowcount
 
-    # 8. Reset ProviderHealth metrics (keep the rows, zero the counters)
-    health_result = await db.execute(
-        update(ProviderHealth)
-        .where(ProviderHealth.user_id == user_id)
-        .values(
-            status="healthy",
-            cooldown_until=None,
-            last_latency_ms=None,
-            last_error=None,
-            last_error_code=None,
-            total_calls=0,
-            success_count=0,
-            failure_count=0,
-            rate_limit_count=0,
-            timeout_count=0,
-            consecutive_failures=0,
-            health_score=1.0,
-        )
-    )
-    deleted["provider_health_reset"] = health_result.rowcount
-
-    # 9. Reset ModelHealth metrics
-    model_result = await db.execute(
-        update(ModelHealth)
-        .where(ModelHealth.user_id == user_id)
-        .values(
-            state="READY",
-            cooldown_until=None,
-            average_latency_ms=None,
-            average_success_rate=1.0,
-            total_calls=0,
-            last_error=None,
-            last_error_code=None,
-        )
-    )
-    deleted["model_health_reset"] = model_result.rowcount
-
-    # 10. Reset ExecutionQueueState
+    # 8. Reset ExecutionQueueState
     queue_result = await db.execute(
         update(ExecutionQueueState)
         .where(ExecutionQueueState.user_id == user_id)
@@ -146,7 +107,7 @@ async def execute_pipeline_reset(
     )
     deleted["queue_state_reset"] = queue_result.rowcount
 
-    # 11. Delete job_search_tracker.csv (if it exists)
+    # 9. Delete job_search_tracker.csv (if it exists)
     try:
         from app.core.settings import get_settings
         tracker_path = Path(get_settings().tracker_path)
@@ -156,10 +117,10 @@ async def execute_pipeline_reset(
     except Exception:
         pass  # Non-critical — file might not be configured
 
-    # 12. Commit all changes
+    # 10. Commit all changes
     await db.commit()
 
-    # 13. Build summary
+    # 11. Build summary
     total = sum(deleted.values())
     detail_parts = []
     for kind, count in deleted.items():

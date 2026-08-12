@@ -366,6 +366,27 @@ class CVPersonalizeCreate(BaseModel):
     )
 
 
+class CVPersonalizeJobCreate(BaseModel):
+    """Request for POST /cv/personalize-job — adapt the base CV to an existing job posting.
+
+    The adapted CV is generated from the user's base CV + the full context of
+    the selected offer (title, company, description, requirements, ...). The
+    base CV record is never modified.
+    """
+
+    base_cv_id: str = Field(..., description="ID of the user's base CV.")
+    job_posting_id: str = Field(..., description="ID of an existing job posting (offer).")
+
+
+class CVJobOut(BaseModel):
+    """Lightweight reference to the job posting an adapted CV was generated from."""
+
+    id: str = Field(..., description="Job posting ID.")
+    title: str = Field(..., description="Job title.")
+    company: str | None = Field(None, description="Company name.")
+    location: str | None = Field(None, description="Job location.")
+
+
 class CVResponse(BaseModel):
     """API response for a generated CV."""
 
@@ -374,6 +395,12 @@ class CVResponse(BaseModel):
         ..., description="'base' for generic, 'personalized' for job-tailored."
     )
     job_url: str | None = Field(None, description="Source URL, when a job posting was used.")
+    job_posting_id: str | None = Field(
+        None, description="ID of the job posting this CV was adapted from (personalized CVs)."
+    )
+    job: CVJobOut | None = Field(
+        None, description="Job posting reference for adapted CVs (title, company, location)."
+    )
     job_description_text: str | None = Field(None, description="Job text used for personalization.")
     json_cv: dict[str, Any] = Field(..., description="The structured CV (CV + metadata).")
     pdf_url: str | None = Field(None, description="Download URL for the compiled PDF.")
