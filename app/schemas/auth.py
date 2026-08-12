@@ -68,6 +68,20 @@ class AdminUserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AdminUserListOut(BaseModel):
+    """Paginated admin user list with global stats.
+
+    The backend owns filtering, sorting and pagination so the admin table
+    only ever loads the current page (default 5 rows) instead of every user.
+    """
+
+    items: list[AdminUserOut]
+    total: int
+    page: int
+    page_size: int
+    stats: dict[str, int] = {"total": 0, "admins": 0, "premium": 0}
+
+
 # ── Payment / Upgrade schemas ─────────────────────────────────────
 class UpgradeRequest(BaseModel):
     """User upgrade / payment request."""
