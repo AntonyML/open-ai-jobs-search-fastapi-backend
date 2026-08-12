@@ -60,11 +60,15 @@ async def create_profile(
     Raises:
         ProfileIncompleteError: If required fields are missing.
     """
-    # Single query: load User + check if profile already exists
+    # Single query: load User + check if profile already exists.
+    # populate_existing ensures a previously-created profile is re-loaded even
+    # when the User instance is already present in the session identity map
+    # (e.g. after a prior create_profile call in the same session).
     user_result = await db.execute(
         select(User)
         .options(joinedload(User.candidate_profile))
         .where(User.id == user_id)
+        .execution_options(populate_existing=True)
     )
     user = user_result.unique().scalar_one()
     if user.candidate_profile is not None:
