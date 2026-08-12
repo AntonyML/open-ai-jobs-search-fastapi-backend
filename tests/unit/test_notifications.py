@@ -221,6 +221,19 @@ def test_create_and_clear_endpoints(api_client, db_session):
     assert created["title"] == "Ranking done"
     assert created["is_read"] is False
 
+    # Payload round-trips (deep-link metadata for purchase requests).
+    res = api_client.post(
+        "/api/v1/notifications",
+        headers=headers,
+        json={
+            "type": "purchase_request",
+            "title": "Compra: Pro",
+            "payload": {"user_id": "x", "plan_key": "pro"},
+        },
+    )
+    assert res.status_code == 201
+    assert res.json()["payload"] == {"user_id": "x", "plan_key": "pro"}
+
     # Create an error notification.
     res = api_client.post(
         "/api/v1/notifications",
@@ -229,9 +242,9 @@ def test_create_and_clear_endpoints(api_client, db_session):
     )
     assert res.status_code == 201
 
-    # Both appear in the list.
+    # All three appear in the list (rank + rank_error + purchase_request).
     res = api_client.get("/api/v1/notifications", headers=headers)
-    assert len(res.json()) == 2
+    assert len(res.json()) == 3
 
     # Validation: missing title → 422.
     res = api_client.post(

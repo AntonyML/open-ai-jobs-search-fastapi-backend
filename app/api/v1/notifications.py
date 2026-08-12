@@ -53,6 +53,7 @@ async def create_notification(
         type=payload.type,
         title=payload.title,
         body=payload.body,
+        payload=payload.payload,
     )
     db.add(notif)
     await db.flush()

@@ -42,7 +42,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
-async def _notify_admin(db: AsyncSession, type_: str, title: str, body: str | None) -> None:
+async def _notify_admin(
+    db: AsyncSession,
+    type_: str,
+    title: str,
+    body: str | None,
+    payload: dict | None = None,
+) -> None:
     """Create an in-app notification for the first admin user."""
     result = await db.execute(
         select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1)
@@ -56,6 +62,7 @@ async def _notify_admin(db: AsyncSession, type_: str, title: str, body: str | No
             type=type_,
             title=title,
             body=body,
+            payload=payload,
         )
     )
     await db.flush()
@@ -163,6 +170,14 @@ async def request_purchase(
             f"({payload.billing_cycle}) vía {payload.method.value}. "
             f"Correlation ID: {correlation_id}"
         ),
+        payload={
+            "user_id": db_user.id,
+            "user_email": db_user.email,
+            "user_name": db_user.full_name,
+            "plan_key": plan.key,
+            "billing_cycle": payload.billing_cycle,
+            "correlation_id": correlation_id,
+        },
     )
 
     settings = get_settings()

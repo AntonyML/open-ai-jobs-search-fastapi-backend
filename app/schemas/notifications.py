@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +21,7 @@ class AppNotificationOut(BaseModel):
     body: str | None
     is_read: bool
     created_at: datetime | None
+    payload: dict[str, Any] | None = None
 
 
 class AppNotificationCreate(BaseModel):
@@ -28,3 +30,4 @@ class AppNotificationCreate(BaseModel):
     type: str = Field(..., max_length=50)
     title: str = Field(..., max_length=255)
     body: str | None = Field(default=None, max_length=2000)
+    payload: dict[str, Any] | None = None

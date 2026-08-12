@@ -354,6 +354,9 @@ class AppNotification(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str | None] = mapped_column(Text)
     is_read: Mapped[bool] = mapped_column(default=False)
+    # Structured payload for actions (e.g. purchase_request → {user_id, plan_key,
+    # billing_cycle, correlation_id} so the admin can deep-link to activation).
+    payload: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON, default=dict)
 
 
 # ═══════════════════════════════════════════════════════════════════
