@@ -86,6 +86,14 @@ class User(Base, TimestampMixin):
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
 
+    # Billing — active subscription + credit account (both optional)
+    subscriptions: Mapped[list["UserSubscription"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    credit_account: Mapped["CreditAccount | None"] = relationship(
+        back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+
 
 class ProviderCredential(Base, TimestampMixin):
     """Encrypted API key per LLM provider for a user.
@@ -160,6 +168,192 @@ class GlobalProviderConfig(Base, TimestampMixin):
 
     # Admin user who last updated the config (soft reference, no FK).
     updated_by: Mapped[str | None] = mapped_column(String(36))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BILLING / PLANS / CREDITS
+# ═══════════════════════════════════════════════════════════════════
+
+
+class Plan(Base, TimestampMixin):
+    """A configurable subscription plan (free / pro / max + any future tier).
+
+    Plans are stored in the DB so the admin can add / edit / disable tiers
+    without touching code.  ``credits_per_period`` defines how many credits
+    refill at the start of every billing period; ``daily_quota`` and
+    ``weekly_quota`` are coarse usage caps that reset on their own cadence
+    (applies to expensive pipeline actions on ``max``).
+    """
+
+    __tablename__ = "plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)  # free | pro | max
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+
+    # ── Pricing ────────────────────────────────────────────────
+    price_monthly_usd: Mapped[float] = mapped_column(default=0.0)
+    price_yearly_usd: Mapped[float] = mapped_column(default=0.0)
+
+    # ── Credits per billing period ─────────────────────────────
+    credits_per_period: Mapped[int] = mapped_column(default=0)
+    # free = weekly refill cadence; pro/max = every billing period
+    refill_cadence: Mapped[str] = mapped_column(String(20), default="period")  # period | weekly
+    # Weekly refill day for ``free`` (ISO weekday, 0=Monday … 6=Sunday)
+    refill_weekday: Mapped[int] = mapped_column(default=0)
+
+    # ── Usage quotas (reset daily / weekly) ─────────────────────
+    daily_quota: Mapped[int] = mapped_column(default=0)  # 0 = unlimited
+    weekly_quota: Mapped[int] = mapped_column(default=0)
+
+    # ── Feature flags: ["cv_base", "cv_adapted", "pipeline", "expand", "upskill"]
+    features: Mapped[list[str] | None] = mapped_column(FlexJSON)
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+    sort_order: Mapped[int] = mapped_column(default=10)
+
+    def has_feature(self, feature: str) -> bool:
+        return bool(self.features and feature in self.features)
+
+
+class UserSubscription(Base, TimestampMixin):
+    """A user's subscription to a plan.
+
+    ``period_start`` / ``period_end`` bound the current billing period.
+    Credits refill (and expire) at each period boundary.  The admin's own
+    subscription is created with ``auto_renew=True`` so it always stays
+    active without a special "god" plan.
+    """
+
+    __tablename__ = "user_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    plan_key: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+
+    # Correlation ID — every plan/credit can be tracked end-to-end
+    correlation_id: Mapped[str] = mapped_column(
+        String(36), unique=True, nullable=False, default=new_uuid, index=True
+    )
+
+    # ── Period ─────────────────────────────────────────────────
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | expired | cancelled
+    source: Mapped[str] = mapped_column(String(20), default="purchase")  # purchase | admin | signup_bonus
+    auto_renew: Mapped[bool] = mapped_column(default=False)
+    price_paid: Mapped[float] = mapped_column(default=0.0)
+
+    user: Mapped["User"] = relationship(back_populates="subscriptions")
+
+    @property
+    def is_expired(self) -> bool:
+        if self.period_end is None:
+            return False
+        return datetime.now(timezone.utc) > self.period_end
+
+
+class CreditAccount(Base, TimestampMixin):
+    """Per-user credit balance + quota usage, keyed to the active period.
+
+    One row per user (uselist=False).  ``balance`` is the current spendable
+    amount; all mutations go through the immutable ``CreditTransaction``
+    ledger.  ``quota_day_used`` / ``quota_week_used`` track coarse usage
+    against the plan's ``daily_quota`` / ``weekly_quota``.
+    """
+
+    __tablename__ = "credit_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    subscription_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user_subscriptions.id", ondelete="SET NULL")
+    )
+
+    balance: Mapped[int] = mapped_column(default=0)
+    total_earned: Mapped[int] = mapped_column(default=0)
+    total_used: Mapped[int] = mapped_column(default=0)
+
+    # ── Period-bound refill ────────────────────────────────────
+    last_refill_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # ── Quota usage ────────────────────────────────────────────
+    quota_day_used: Mapped[int] = mapped_column(default=0)
+    quota_day_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quota_week_used: Mapped[int] = mapped_column(default=0)
+    quota_week_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped["User"] = relationship(back_populates="credit_account")
+
+
+class CreditTransaction(Base, TimestampMixin):
+    """Immutable ledger of every credit movement (+/-).
+
+    Never edited or deleted — the single source of truth for balances,
+    audit and history.  ``credits_delta`` is negative for consumption,
+    positive for additions (refill, purchase, admin adjust).
+    """
+
+    __tablename__ = "credit_transactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subscription_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user_subscriptions.id", ondelete="SET NULL")
+    )
+
+    # Correlation ID links a transaction to its plan/credit lifecycle
+    correlation_id: Mapped[str | None] = mapped_column(String(36), index=True)
+
+    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    #  'refill' | 'signup_bonus' | 'purchase' | 'admin_adjust' | 'cv_base' | 'cv_adapted' | 'pipeline' | 'expiry'
+    credits_delta: Mapped[int] = mapped_column(nullable=False)
+
+    description: Mapped[str | None] = mapped_column(Text)
+    model_used: Mapped[str | None] = mapped_column(String(100))
+    tokens_input: Mapped[int] = mapped_column(default=0)
+    tokens_output: Mapped[int] = mapped_column(default=0)
+    cost_usd_cents: Mapped[int] = mapped_column(default=0)
+
+
+class AppConfig(Base, TimestampMixin):
+    """Key/value application configuration (admin-editable singleton rows).
+
+    Used for the credit-cost calibration (``credit_costs`` key) and any
+    future tunable parameter.  One row per ``key``.
+    """
+
+    __tablename__ = "app_config"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+
+
+class AppNotification(Base, TimestampMixin):
+    """Server-side notification (admin alerts, credit/quota events).
+
+    Replaces the localStorage-only notification debt: events like a pending
+    purchase request or an exhausted API quota land here and are surfaced
+    by the frontend NotificationBell.
+    """
+
+    __tablename__ = "app_notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type: Mapped[str] = mapped_column(String(50), default="info")  # info | credits_low | quota_exhausted | ia_exhausted | purchase_request | plan_expired
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    is_read: Mapped[bool] = mapped_column(default=False)
 
 
 # ═══════════════════════════════════════════════════════════════════

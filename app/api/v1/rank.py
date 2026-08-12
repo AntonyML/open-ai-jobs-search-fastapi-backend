@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_locale
+from app.api.deps import get_current_user, get_db, get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.core.settings import get_settings
 from app.db.models import ExecutionJob
@@ -33,7 +33,7 @@ router = APIRouter(prefix="/rank", tags=["rank"])
 )
 async def trigger_rank(
     payload: RankRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
     locale: str = Depends(get_locale),
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),

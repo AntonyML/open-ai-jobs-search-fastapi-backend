@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, require_max_or_admin
 from app.db.models import Outcome
 from app.db.session import get_db as _get_db
 from app.schemas.outcome import CalibrationReport, OutcomeCreate, OutcomeOut, OutcomeSummaryOut, OutcomeUpdate, TrackerRowOut
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/outcome", tags=["outcome"])
 )
 async def create_outcome(
     payload: OutcomeCreate,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Record or update an application outcome.

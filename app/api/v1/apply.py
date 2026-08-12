@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_llm_provider, get_locale
+from app.api.deps import get_current_user, get_db, get_llm_provider, get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.db.models import Application, JobPosting, RankEvaluation
 from app.db.session import get_db as _get_db
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/apply", tags=["apply"])
 )
 async def trigger_apply(
     payload: ApplyRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
     provider_config: dict = Depends(get_llm_provider),
     locale: str = Depends(get_locale),

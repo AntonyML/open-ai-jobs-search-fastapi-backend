@@ -21,6 +21,7 @@ from app.api.v1.users import router as users_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v1.cv import router as cv_router
 from app.api.v1.providers import router as providers_router
+from app.api.v1.billing import router as billing_router
 
 router = APIRouter()
 
@@ -69,3 +70,6 @@ router.include_router(cv_router)
 
 # ── Global provider status (read-only, any authenticated user) ────────
 router.include_router(providers_router)
+
+# ── Billing / credits ────────────────────────────────────────────────
+router.include_router(billing_router)

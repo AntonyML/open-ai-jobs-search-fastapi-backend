@@ -93,6 +93,8 @@ CATALOG: dict[str, dict[str, str]] = {
         "orchestrator.all_retried": "Retried {count} failed jobs",
         # ── Pipeline Reset ──────────────────────────────────────
         "pipeline.reset": "Pipeline reset — {count} records deleted",
+        # ── Billing ─────────────────────────────────────────────
+        "billing.purchaseReceived": "Purchase request received. We'll contact you to complete the payment.",
     },
     "es": {
         # ── Common ────────────────────────────────────────────
@@ -174,6 +176,8 @@ CATALOG: dict[str, dict[str, str]] = {
         "orchestrator.all_retried": "{count} trabajos fallidos reintentados",
         # ── Pipeline Reset ──────────────────────────────────────
         "pipeline.reset": "Pipeline reiniciado — {count} registros eliminados",
+        # ── Billing ─────────────────────────────────────────────
+        "billing.purchaseReceived": "Solicitud de compra recibida. Te contactaremos para completar el pago.",
     },
 }
 

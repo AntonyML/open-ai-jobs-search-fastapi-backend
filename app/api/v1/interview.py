@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_locale
+from app.api.deps import get_current_user, get_db, get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.db.models import InterviewPrep
 from app.db.session import get_db as _get_db
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/interview", tags=["interview"])
 )
 async def trigger_interview_prep(
     payload: InterviewPrepRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
     locale: str = Depends(get_locale),
 ):
@@ -77,7 +77,7 @@ async def list_interview_preps(
 async def start_or_answer_mock(
     prep_id: str,
     payload: MockInterviewRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Start a mock interview or submit an answer."""

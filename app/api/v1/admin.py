@@ -12,6 +12,24 @@ from app.core.i18n.locale import t
 from app.db.models import User
 from app.llm.adapter import llm_completion
 from app.schemas.auth import AdminUserListOut, AdminUserOut, AdminUserUpdate
+from app.schemas.billing import (
+    AdminCreditAdjust,
+    AdminSubscriptionCreate,
+    CreditTransactionOut,
+    PlanAdminOut,
+    PlanUpsert,
+    SubscriptionAdminOut,
+    UserSubscriptionOut,
+)
+from app.services import credits
+from app.services.plans import (
+    delete_plan,
+    get_all_plans,
+    get_credit_costs,
+    set_credit_costs,
+    upsert_plan,
+)
+from app.services.subscriptions import activate_subscription
 from app.schemas.providers import (
     AdminProviderConfigOut,
     AdminProviderConfigUpdate,
@@ -318,3 +336,177 @@ async def clear_provider_config(
     await clear_global_provider_config(db)
     await db.commit()
     return await get_global_provider_config_out(db)
+
+
+# ── Plans & credit configuration (admin) ─────────────────────────────
+
+
+@router.get("/plans", response_model=list[PlanAdminOut])
+async def list_plans(
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all plans (active + inactive). Admin only."""
+    return await get_all_plans(db)
+
+
+@router.put("/plans/{plan_key}", response_model=PlanAdminOut)
+async def put_plan(
+    plan_key: str,
+    payload: PlanUpsert,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create or update a plan by key. Admin only."""
+    data = payload.model_dump()
+    data["key"] = plan_key
+    plan = await upsert_plan(db, data)
+    await db.commit()
+    await db.refresh(plan)
+    return plan
+
+
+@router.delete("/plans/{plan_key}", status_code=status.HTTP_200_OK)
+async def remove_plan(
+    plan_key: str,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a plan. Admin only."""
+    deleted = await delete_plan(db, plan_key)
+    await db.commit()
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Plan not found",
+        )
+    return {"message": "Plan deleted"}
+
+
+@router.get("/credit-costs")
+async def get_admin_credit_costs(
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current credit cost per action. Admin only."""
+    return await get_credit_costs(db)
+
+
+@router.put("/credit-costs")
+async def put_admin_credit_costs(
+    payload: dict,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the credit cost per action (calibration). Admin only."""
+    costs = await set_credit_costs(db, payload)
+    await db.commit()
+    return costs
+
+
+# ── Credits & subscriptions (admin) ──────────────────────────────────
+
+
+@router.post("/credits/adjust")
+async def adjust_user_credits(
+    payload: AdminCreditAdjust,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually add/remove credits for a user. Admin only."""
+    result = await db.execute(select(User).where(User.id == payload.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    account = await credits.adjust_credits(
+        db,
+        payload.user_id,
+        payload.delta,
+        description=payload.reason or "Manual admin adjustment",
+    )
+    await db.commit()
+    return {"user_id": payload.user_id, "balance": account.balance}
+
+
+@router.post("/subscriptions", response_model=UserSubscriptionOut)
+async def create_subscription(
+    payload: AdminSubscriptionCreate,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Activate a subscription for a user (manual payment flow). Admin only."""
+    result = await db.execute(select(User).where(User.id == payload.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    try:
+        sub = await activate_subscription(
+            db,
+            user,
+            payload.plan_key,
+            billing_cycle=payload.billing_cycle,
+            source="admin",
+            auto_renew=payload.auto_renew,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    await db.commit()
+    await db.refresh(sub)
+    return sub
+
+
+@router.get("/subscriptions", response_model=list[SubscriptionAdminOut])
+async def list_subscriptions(
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    plan: str = "",
+    status_filter: str = "",
+    limit: int = 100,
+):
+    """List user subscriptions with optional filters. Admin only."""
+    from app.db.models import UserSubscription
+
+    query = select(UserSubscription).order_by(UserSubscription.created_at.desc()).limit(min(max(limit, 1), 500))
+    if plan:
+        query = query.where(UserSubscription.plan_key == plan)
+    if status_filter:
+        query = query.where(UserSubscription.status == status_filter)
+    result = await db.execute(query)
+    subs = list(result.scalars().all())
+
+    # Enrich with user emails (single query, no N+1).
+    user_ids = {s.user_id for s in subs}
+    emails: dict[str, str] = {}
+    if user_ids:
+        rows = await db.execute(select(User.id, User.email).where(User.id.in_(user_ids)))
+        emails = {row[0]: row[1] for row in rows.all()}
+
+    return [
+        SubscriptionAdminOut(
+            **UserSubscriptionOut.model_validate(s).model_dump(),
+            user_id=s.user_id,
+            user_email=emails.get(s.user_id, ""),
+        )
+        for s in subs
+    ]
+
+
+@router.get("/users/{user_id}/transactions", response_model=list[CreditTransactionOut])
+async def user_credit_transactions(
+    user_id: str,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Credit ledger for a user. Admin only."""
+    rows = await credits.get_recent_transactions(db, user_id, limit=100)
+    return [CreditTransactionOut.model_validate(x) for x in rows]

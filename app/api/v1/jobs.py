@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db, require_max_or_admin
 from app.schemas.jobs import (
     JobSearchRequest,
     JobSearchResponse,
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 @router.post("/search", response_model=JobSearchResponse)
 async def search(
     req: JobSearchRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     return await search_jobs(db, req, user)

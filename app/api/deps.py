@@ -7,6 +7,8 @@ get_db / get_current_user / get_llm_provider inline.
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import User
+
 from app.core.i18n.locale import get_locale_from_request
 from app.core.security import decode_access_token
 from app.db.session import get_db as _get_db
@@ -54,6 +56,37 @@ async def get_llm_provider(
     to settings (.env) if the global config is empty.
     """
     return await get_active_provider_config(db)
+
+
+# ── Pipeline access (max plan only) ─────────────────────────────────
+async def require_max_or_admin(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+) -> dict:
+    """Gate pipeline endpoints to ``max`` plan users (or the admin).
+
+    The JWT carries ``tier``; an expired subscription downgrades the DB tier
+    on the next status check, so this is a cheap first line of defence.  The
+    admin is always allowed.
+    """
+    if user.get("role") == "admin":
+        return user
+    tier = user.get("tier", "free")
+    if tier != "max":
+        # Double-check against the DB in case the JWT is stale.
+        result = await db.execute(select(User.tier).where(User.id == user["sub"]))
+        db_tier = result.scalar_one_or_none()
+        if db_tier != "max":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "El pipeline de búsqueda de empleo está disponible solo en el plan Max. "
+                    "Adquiere el plan Max para desbloquear ofertas, rankings, postulaciones, "
+                    "entrevistas, skills y plan de formación."
+                ),
+            )
+        user["tier"] = "max"
+    return user
 
 
 # ── Locale dependency ───────────────────────────────────────────────

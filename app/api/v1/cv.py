@@ -28,11 +28,9 @@ from app.schemas.cv import (
     CVPersonalizeJobCreate,
     CVResponse,
 )
-from app.services import cv_generator
+from app.services import credits, cv_generator, subscriptions
 from app.services.cv_generator import (
-    FREE_TIER_CVS_PER_HOUR,
     build_pdf_url,
-    count_recent_cvs,
     resolve_pdf_path,
 )
 
@@ -70,23 +68,60 @@ def _to_response(record: GeneratedCV) -> CVResponse:
     )
 
 
-async def _enforce_rate_limit(
+async def _enforce_credit_gate(
     db: AsyncSession,
     user: dict[str, Any],
+    action: str,
 ) -> None:
-    """Free tier: max 5 CVs per hour.  Premium: unlimited."""
-    tier = user.get("tier", "free")
-    if tier == "premium":
+    """Gate CV generation on the new credits/quota system.
+
+    - Admin: never blocked.
+    - ``max`` plan: unlimited generation, but subject to daily/weekly quotas.
+    - free / pro: consumes credits from the account balance (402 when empty).
+
+    Raises 429 when the max quota is exhausted and 402 when credits run out
+    (the frontend maps 402 to the purchase modal).
+    """
+    access = await subscriptions.get_user_access(db, user)
+    if access["is_admin"]:
         return
-    recent = await count_recent_cvs(db, user["sub"], window_minutes=60)
-    if recent >= FREE_TIER_CVS_PER_HOUR:
+
+    plan = access["plan"]
+    if plan is not None and "pipeline" in access["features"]:
+        # max plan — quota-gated, not credit-gated.
+        ok = await credits.check_quota(db, user["sub"], plan)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    "You reached the usage quota for this period. "
+                    "Please try again later or adjust limits in the admin panel."
+                ),
+            )
+        await credits.consume_quota(db, user["sub"], plan)
+        return
+
+    # free / pro — credit-gated.
+    required = await credits.get_action_cost(db, action)
+    if required <= 0:
+        return
+    can, account, correlation_id = await credits.check_credits(db, user["sub"], action, required)
+    if not can:
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=(
-                f"You have reached the limit of {FREE_TIER_CVS_PER_HOUR} CVs per hour "
-                "on your current plan. Upgrade to Premium for unlimited CV generation."
+                "Not enough AI credits. Add credits or upgrade your plan. "
+                f"Correlation ID: {correlation_id}"
             ),
         )
+    await credits.consume_credits(
+        db,
+        user["sub"],
+        action,
+        required,
+        correlation_id=correlation_id,
+        description=f"{action}: CV generation",
+    )
 
 
 @router.post("/base", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
@@ -96,7 +131,7 @@ async def create_base_cv(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a generic base CV from the candidate profile."""
-    await _enforce_rate_limit(db, user)
+    await _enforce_credit_gate(db, user, "cv_base")
     record = await cv_generator.generate_base_cv(db, user["sub"])
     return _to_response(record)
 
@@ -108,7 +143,7 @@ async def create_personalized_cv(
     db: AsyncSession = Depends(get_db),
 ):
     """Tailor a CV to a free-text job description (no scraping, no URL)."""
-    await _enforce_rate_limit(db, user)
+    await _enforce_credit_gate(db, user, "cv_base")
     record = await cv_generator.personalize_cv(db, user["sub"], payload.job_description_text)
     return _to_response(record)
 
@@ -127,7 +162,7 @@ async def create_adapted_cv(
 
     The base CV is never modified; a new adapted CV document is stored.
     """
-    await _enforce_rate_limit(db, user)
+    await _enforce_credit_gate(db, user, "cv_adapted")
     record = await cv_generator.adapt_cv(
         db, user["sub"], payload.base_cv_id, payload.job_posting_id
     )

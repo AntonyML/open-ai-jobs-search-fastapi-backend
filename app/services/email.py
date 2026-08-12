@@ -83,6 +83,40 @@ async def send_upgrade_request(
     )
 
 
+async def send_purchase_request(
+    admin_email: str,
+    user_email: str,
+    user_name: str,
+    plan_key: str,
+    billing_cycle: str,
+    method: str,
+    phone: str | None = None,
+    note: str | None = None,
+    correlation_id: str = "",
+) -> dict:
+    """Notify the admin that a user wants to purchase a plan (manual flow)."""
+    method_label = {"sinpe": "SINPE Móvil", "whatsapp": "WhatsApp", "email": "Correo electrónico"}.get(
+        method, method
+    )
+    phone_line = f"<p><strong>Teléfono (SINPE):</strong> {phone}</p>" if phone else ""
+    note_line = f"<p><strong>Nota:</strong> {note}</p>" if note else ""
+    html = f"""<h2>Solicitud de compra de plan</h2>
+<p><strong>Usuario:</strong> {user_name}</p>
+<p><strong>Email:</strong> {user_email}</p>
+<p><strong>Plan:</strong> {plan_key}</p>
+<p><strong>Ciclo:</strong> {billing_cycle}</p>
+<p><strong>Método de pago:</strong> {method_label}</p>
+{phone_line}
+{note_line}
+<p><strong>Correlation ID:</strong> {correlation_id}</p>
+<p>Contactar al usuario para gestionar el pago (SINPE / WhatsApp) y activar el plan desde el panel de administración.</p>"""
+    return await send_resend_email(
+        to=admin_email,
+        subject=f"Solicitud de compra — {user_name} ({plan_key})",
+        html_body=html,
+    )
+
+
 async def send_donation_notification(
     admin_email: str,
     user_email: str,
