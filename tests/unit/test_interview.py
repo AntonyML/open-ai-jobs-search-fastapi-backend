@@ -117,6 +117,12 @@ async def sample_candidate(db_session):
     )
     db_session.add(candidate)
     await db_session.commit()
+
+    # Identity is owned by User — sync it so CandidateProfile.full_name reads "Jane Doe".
+    user = await db_session.get(User, "test-user-id")
+    user.full_name = "Jane Doe"
+    user.email = "jane@example.com"
+    await db_session.commit()
     await db_session.refresh(candidate)
     return candidate
 

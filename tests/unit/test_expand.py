@@ -115,6 +115,12 @@ async def sample_candidate(db_session):
     )
     db_session.add(candidate)
     await db_session.commit()
+
+    # Identity is owned by User — sync it so CandidateProfile.full_name reads "Jane Doe".
+    user = await db_session.get(User, "test-user-id")
+    user.full_name = "Jane Doe"
+    user.email = "jane@example.com"
+    await db_session.commit()
     await db_session.refresh(candidate)
     return candidate
 
@@ -299,7 +305,7 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
                         with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls", return_value=[]):
                                 expansion = await expand.execute_expand(
                                     db=db_session,
                                     user_id="test-user-id",
@@ -411,6 +417,14 @@ async def test_list_expansions(db_session, sample_candidate):
             mock_enriched_competencies(),
             mock_proposed_additions(),
         ] * 3
+
+        with patch("app.services.expand._scan_cv_folder", return_value=[]):
+            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
+                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
+                    with patch("app.services.expand._scan_references_folder", return_value=[]):
+                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
+                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
+                                for _ in range(3):
                                     await expand.execute_expand(
                                         db=db_session,
                                         user_id="test-user-id",
