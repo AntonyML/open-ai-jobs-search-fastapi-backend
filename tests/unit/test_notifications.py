@@ -408,7 +408,6 @@ def test_startup_purge_deletes_stale_notifications(api_client, db_session):
     from fastapi.testclient import TestClient
 
     from app.db import session as db_session_module
-    from app.main import create_app
 
     user_id = "user-startup-ttl"
     asyncio.run(_make_user(db_session, user_id, "startup-ttl@example.com"))
@@ -436,14 +435,7 @@ def test_startup_purge_deletes_stale_notifications(api_client, db_session):
 
     asyncio.run(seed())
 
-    app = create_app()
-
-    async def override_get_db():
-        yield db_session
-
-    from app.api.deps import get_db
-
-    app.dependency_overrides[get_db] = override_get_db
+    app = api_client.app
 
     # Patch the session factory so the lifespan purge uses the test DB.
     class _FakeFactory:
@@ -456,10 +448,12 @@ def test_startup_purge_deletes_stale_notifications(api_client, db_session):
         async def __aexit__(self, *args):
             return False
 
-    with patch.object(db_session_module, "async_session_factory", _FakeFactory()):
-        with TestClient(app) as client:
-            res = client.get("/health")
-            assert res.status_code == 200
+    with (
+        patch.object(db_session_module, "async_session_factory", _FakeFactory()),
+        TestClient(app) as client,
+    ):
+        res = client.get("/health")
+        assert res.status_code == 200
 
     # The 40-day-old notification was purged at boot; the recent one remains.
     from sqlalchemy import select
