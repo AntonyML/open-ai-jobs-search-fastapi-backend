@@ -30,7 +30,7 @@ async def get_notification_ttl_days(db: AsyncSession) -> int:
     row = result.scalar_one_or_none()
     stored = (row.value if row is not None else None) or {}
     days = stored.get("days")
-    if isinstance(days, int) and days > 0:
+    if isinstance(days, int) and not isinstance(days, bool) and days > 0:
         return days
     return NOTIFICATION_TTL_DAYS
 
