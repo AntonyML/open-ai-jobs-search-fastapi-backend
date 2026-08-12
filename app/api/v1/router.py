@@ -20,6 +20,7 @@ from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.dashboard import analytics_router
 from app.api.v1.users import router as users_router
 from app.api.v1.jobs import router as jobs_router
+from app.api.v1.cv import router as cv_router
 
 router = APIRouter()
 
@@ -65,3 +66,6 @@ router.include_router(users_router)
 
 # ── Jobs (microservice ingesta) ──────────────────────────────────────
 router.include_router(jobs_router)
+
+# ── CV generator ─────────────────────────────────────────────────────
+router.include_router(cv_router)

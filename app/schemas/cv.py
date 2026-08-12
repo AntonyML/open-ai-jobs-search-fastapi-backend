@@ -10,7 +10,8 @@ so the Typst template never sees pipeline internals.
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -314,3 +315,67 @@ class GenerateCVOutput(BaseModel):
         default_factory=CVMetadata,
         description="Generation metadata (used by reviewer, verification checklist).",
     )
+
+
+# ── CV generator API (POST /cv/base, POST /cv/personalize) ────────────
+
+
+class CVAnalysis(BaseModel):
+    """Recruiter-lens analysis of a job description against the candidate profile.
+
+    Produced before drafting so the drafter can inject missing keywords and
+    preemptively address red flags.
+    """
+
+    match_score: int = Field(
+        ...,
+        description="Estimated match score 0–100 (keyword/skill overlap with the job).",
+        ge=0,
+        le=100,
+    )
+    missing_keywords: list[str] = Field(
+        default_factory=list,
+        description="Keywords in the job description the candidate should emphasize.",
+    )
+    red_flags: list[str] = Field(
+        default_factory=list,
+        description="Potential concerns a recruiter could raise about this candidate.",
+    )
+    adapted_experience: list[str] = Field(
+        default_factory=list,
+        description="Concrete reframing suggestions the drafter should apply.",
+    )
+
+
+class CVBaseCreate(BaseModel):
+    """Request for POST /cv/base — generate a generic base CV (no job context)."""
+
+
+class CVPersonalizeCreate(BaseModel):
+    """Request for POST /cv/personalize — tailor the base CV to a job description.
+
+    Only the description text is required; it is passed directly to the LLM
+    pipeline (no scraping, no JobPosting record needed).
+    """
+
+    job_description_text: str = Field(
+        ...,
+        description="Full job posting text to tailor the CV against.",
+        min_length=50,
+        max_length=20000,
+    )
+
+
+class CVResponse(BaseModel):
+    """API response for a generated CV."""
+
+    cv_id: str = Field(..., description="ID of the generated CV record.")
+    cv_type: Literal["base", "personalized"] = Field(
+        ..., description="'base' for generic, 'personalized' for job-tailored."
+    )
+    job_url: str | None = Field(None, description="Source URL, when a job posting was used.")
+    job_description_text: str | None = Field(None, description="Job text used for personalization.")
+    json_cv: dict[str, Any] = Field(..., description="The structured CV (CV + metadata).")
+    pdf_url: str | None = Field(None, description="Download URL for the compiled PDF.")
+    analysis: CVAnalysis | None = Field(None, description="Recruiter-lens analysis, when available.")
+    created_at: datetime = Field(..., description="Creation timestamp.")

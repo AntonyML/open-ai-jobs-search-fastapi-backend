@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -1190,4 +1190,43 @@ class IngestJob(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CV GENERATOR (POST /cv/base, POST /cv/personalize)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class GeneratedCV(Base, TimestampMixin):
+    """A CV produced by the CV generator pipeline.
+
+    ``cv_type`` distinguishes a generic base CV from a job-tailored one.
+    ``is_deleted`` implements soft deletion so downloaded PDFs and the download
+    route keep working after the user hides a CV from the list.
+    """
+
+    __tablename__ = "generated_cvs"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
+    )
+    cv_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="base", index=True
+    )
+    job_url: Mapped[str | None] = mapped_column(String(500))
+    job_description_text: Mapped[str | None] = mapped_column(Text)
+    cv_json: Mapped[dict[str, Any]] = mapped_column(FlexJSON, nullable=False)
+    pdf_path: Mapped[str | None] = mapped_column(String(1000))
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=func.false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        index=True,
     )

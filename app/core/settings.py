@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # -- Paths -------------------------------------------------
     documents_dir: str = "documents"
     tracker_path: str = "documents/tracker.json"
+    # Directory where the CV generator stores compiled PDFs (per user subfolder).
+    cv_storage_path: str = "generated_cvs"
+    # Public base URL used to build the pdf_url in CV responses.
+    base_url: str = "http://localhost:8000"
 
     # -- Orchestrator -------------------------------------------
     # Max concurrent LLM workers in the execution queue

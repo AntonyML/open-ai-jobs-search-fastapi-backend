@@ -20,7 +20,7 @@ from app.db.models import CandidateProfile, JobPosting, RankEvaluation
 from app.exceptions import LLMError
 from app.llm.adapter import llm_completion
 from app.schemas.apply import ReviewFeedback
-from app.schemas.cv import CV, CoverLetter, CVMetadata, GenerateCVOutput
+from app.schemas.cv import CV, CVAnalysis, CoverLetter, CVMetadata, GenerateCVOutput
 from app.services.orchestrator.llm_response_sanitizer import (
     default_field_constraints,
     sanitize_llm_response,
@@ -356,6 +356,133 @@ Output the revised CV as a valid GenerateCVOutput JSON object.
     ]
 
 
+# ── CV generator prompts (FASE 1 — no JobPosting required) ────────────
+
+
+def build_base_cv_prompt(candidate: CandidateProfile) -> list[dict[str, str]]:
+    """Build the prompt for a generic base CV (no job context).
+
+    Used by ``POST /cv/base``.  The output is ``GenerateCVOutput`` without any
+    job-tailoring, so it can later be personalized via ``POST /cv/personalize``.
+    """
+    candidate_summary = _build_candidate_summary(candidate)
+
+    system = (
+        "You are an expert CV writer. Generate a complete, polished CV document "
+        "in JSON format according to the provided schema.\n\n"
+        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + "Your output MUST have the following structure:\n"
+        + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
+    )
+
+    user = f"""
+Generate a generic base CV for the following candidate.
+
+=== CANDIDATE PROFILE ===
+{candidate_summary}
+
+=== INSTRUCTIONS ===
+1. Present experience bullets using the X-Y-Z formula
+2. Choose skill group labels appropriate to the profession
+3. Generate a compelling profile statement
+4. Keep the CV generic but polished — it may be tailored to specific jobs later
+5. Set the cv.language field to the candidate's primary language when determinable, otherwise 'en'
+6. If you can generate a strong generic cover letter, include it; otherwise omit it
+
+Output a valid GenerateCVOutput JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
+def build_recruiter_analysis_prompt(
+    candidate: CandidateProfile,
+    job_description_text: str,
+) -> list[dict[str, str]]:
+    """Build the recruiter-lens analysis prompt for ``CVAnalysis``.
+
+    Run BEFORE drafting so the drafter can inject missing keywords and preempt
+    red flags.  Only free-text job description is required — no scraping.
+    """
+    candidate_summary = _build_candidate_summary(candidate)
+
+    system = (
+        "You are a technical recruiter analyzing a candidate's profile against a "
+        "job description. Your output must follow this schema:\n"
+        + json.dumps(CVAnalysis.model_json_schema(), indent=2)
+    )
+
+    user = f"""
+Analyze how well the candidate matches the job description below.
+
+=== CANDIDATE PROFILE ===
+{candidate_summary}
+
+=== JOB DESCRIPTION ===
+{job_description_text}
+
+=== INSTRUCTIONS ===
+1. match_score: estimate a 0–100 score for overall fit
+2. missing_keywords: keywords in the job the candidate should emphasize — ONLY those genuinely supported by the profile
+3. red_flags: potential concerns a recruiter could raise (max 5)
+4. adapted_experience: concrete reframing suggestions the drafter should apply
+
+Output a valid CVAnalysis JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
+def build_personalize_drafter_prompt(
+    candidate: CandidateProfile,
+    job_description_text: str,
+    analysis: CVAnalysis,
+) -> list[dict[str, str]]:
+    """Build the personalize drafter prompt — tailors a CV to free-text job text."""
+    candidate_summary = _build_candidate_summary(candidate)
+
+    system = (
+        "You are an expert CV writer. Generate a complete, tailored CV document "
+        "in JSON format according to the provided schema.\n\n"
+        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + "Your output MUST have the following structure:\n"
+        + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
+    )
+
+    user = f"""
+Tailor the candidate's CV to the job description below.
+
+=== CANDIDATE PROFILE ===
+{candidate_summary}
+
+=== JOB DESCRIPTION ===
+{job_description_text}
+
+=== RECRUITER ANALYSIS ===
+{analysis.model_dump_json(indent=2)}
+
+=== INSTRUCTIONS ===
+1. Tailor the experience bullets using the X-Y-Z formula
+2. Incorporate the missing keywords ONLY where genuinely supported by the profile
+3. Address the red flags by honest reframing
+4. Apply the adapted_experience suggestions where defensible
+5. Generate a compelling, role-specific profile statement
+6. Choose skill group labels appropriate to the profession
+7. Set the cv.language field to match the job description language
+8. If you can generate a strong cover letter, include it; otherwise omit it
+
+Output a valid GenerateCVOutput JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
 # ── LLM generation functions (with sanitizer) ────────────────────────
 
 
@@ -502,3 +629,52 @@ async def generate_revision(
         temperature=temperature, max_tokens=8000,
     )
     return GenerateCVOutput(**raw_dict)
+
+
+# ── CV generator LLM functions (FASE 1) ──────────────────────────────
+
+
+async def generate_base_cv_llm(
+    candidate: CandidateProfile,
+    provider_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Generate a generic base CV (``GenerateCVOutput``) with no job context."""
+    provider_config = provider_config or {}
+    messages = build_base_cv_prompt(candidate)
+    raw_dict = await _llm_json(
+        messages, GenerateCVOutput, provider_config,
+        temperature=0.3, max_tokens=8000,
+    )
+    return raw_dict
+
+
+async def personalize_cv_llm(
+    candidate: CandidateProfile,
+    job_description_text: str,
+    provider_config: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the two-step personalize pipeline for free-text job descriptions.
+
+    Returns ``(analysis_dict, generate_output_dict)``.  The analysis is a
+    ``CVAnalysis``-shaped dict (match score, missing keywords, red flags,
+    adapted experience); the second element is the tailored ``GenerateCVOutput``.
+    """
+    provider_config = provider_config or {}
+
+    analysis_dict = await _llm_json(
+        build_recruiter_analysis_prompt(candidate, job_description_text),
+        CVAnalysis,
+        provider_config,
+        temperature=0.2,
+        max_tokens=2000,
+    )
+    analysis = CVAnalysis(**analysis_dict)
+
+    output_dict = await _llm_json(
+        build_personalize_drafter_prompt(candidate, job_description_text, analysis),
+        GenerateCVOutput,
+        provider_config,
+        temperature=0.3,
+        max_tokens=8000,
+    )
+    return analysis_dict, output_dict
