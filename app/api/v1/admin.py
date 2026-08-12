@@ -22,6 +22,7 @@ from app.schemas.billing import (
     UserSubscriptionOut,
 )
 from app.services import credits
+from app.services.notifications import mark_purchase_requests_read
 from app.services.plans import (
     delete_plan,
     get_all_plans,
@@ -463,6 +464,8 @@ async def create_subscription(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+    # Auto-close the admin's pending purchase notifications for this user.
+    await mark_purchase_requests_read(db, admin["sub"], payload.user_id)
     await db.commit()
     await db.refresh(sub)
     return sub

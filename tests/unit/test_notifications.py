@@ -258,3 +258,89 @@ def test_create_and_clear_endpoints(api_client, db_session):
     assert res.json() == {"ok": True}
     res = api_client.get("/api/v1/notifications", headers=headers)
     assert res.json() == []
+
+
+# ── Auto-mark purchase requests on subscription activation ──────────
+
+
+async def test_mark_purchase_requests_read_matches_payload_user(db_session):
+    from app.services.notifications import mark_purchase_requests_read
+
+    admin = await _make_user(db_session, "admin-1", "admin@example.com", role="admin")
+
+    db_session.add_all(
+        [
+            AppNotification(
+                user_id=admin.id,
+                type="purchase_request",
+                title="Compra: Pro (user-A)",
+                payload={"user_id": "user-A", "plan_key": "pro"},
+            ),
+            AppNotification(
+                user_id=admin.id,
+                type="purchase_request",
+                title="Compra: Pro (user-B)",
+                payload={"user_id": "user-B", "plan_key": "pro"},
+            ),
+            AppNotification(
+                user_id=admin.id,
+                type="purchase_request",
+                title="Compra ya leída (user-A)",
+                payload={"user_id": "user-A", "plan_key": "pro"},
+                is_read=True,
+            ),
+            # Different type — must not be touched.
+            AppNotification(
+                user_id=admin.id,
+                type="rank",
+                title="Ranking done",
+                payload={"user_id": "user-A"},
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    marked = await mark_purchase_requests_read(db_session, admin.id, "user-A")
+    await db_session.commit()
+
+    # Only the unread purchase_request for user-A is marked (not user-B,
+    # not the already-read one, not the rank notification).
+    assert marked == 1
+
+    from sqlalchemy import select
+
+    rows = (
+        await db_session.execute(select(AppNotification).order_by(AppNotification.title))
+    ).scalars().all()
+    state = {r.title: r.is_read for r in rows}
+    assert state["Compra: Pro (user-A)"] is True
+    assert state["Compra: Pro (user-B)"] is False
+    assert state["Compra ya leída (user-A)"] is True
+    assert state["Ranking done"] is False
+
+
+async def test_mark_purchase_requests_read_no_match(db_session):
+    from app.services.notifications import mark_purchase_requests_read
+
+    admin = await _make_user(db_session, "admin-1", "admin@example.com", role="admin")
+    db_session.add(
+        AppNotification(
+            user_id=admin.id,
+            type="purchase_request",
+            title="Compra: Pro (user-X)",
+            payload={"user_id": "user-X", "plan_key": "pro"},
+        )
+    )
+    await db_session.commit()
+
+    marked = await mark_purchase_requests_read(db_session, admin.id, "other-user")
+    await db_session.commit()
+    assert marked == 0
+
+    # The unrelated notification stays unread.
+    from sqlalchemy import select
+
+    row = (
+        await db_session.execute(select(AppNotification))
+    ).scalar_one()
+    assert row.is_read is False
