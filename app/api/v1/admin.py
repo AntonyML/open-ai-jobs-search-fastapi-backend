@@ -88,7 +88,7 @@ async def list_users(
         )
     if role in ("admin", "client"):
         conditions.append(User.role == role)
-    if tier in ("free", "premium"):
+    if tier:
         conditions.append(User.tier == tier)
 
     query = select(User).where(*conditions)
@@ -160,10 +160,13 @@ async def update_user(
         )
 
     if payload.tier is not None:
-        if payload.tier not in ("free", "premium"):
+        # Accept any plan key from the DB catalog (free / pro / max + future).
+        from app.services.plans import get_plan as _get_plan
+
+        if await _get_plan(db, payload.tier) is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Tier must be 'free' or 'premium'",
+                detail=f"Unknown plan key '{payload.tier}'",
             )
         user.tier = payload.tier
 
