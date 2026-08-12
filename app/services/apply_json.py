@@ -479,7 +479,7 @@ async def generate_review(
     messages = build_json_review_prompt(cv_json, candidate, job, evaluation)
     raw_dict = await _llm_json(
         messages, ReviewFeedback, provider_config,
-        temperature=0.0, max_tokens=2000,
+        temperature=0.0, max_tokens=4000,
     )
     return ReviewFeedback(**raw_dict)
 

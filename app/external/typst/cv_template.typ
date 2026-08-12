@@ -192,8 +192,13 @@
         dstr
       )
 
-      if topics != none and topics != "" {
-        text(size: 9.5pt, fill: muted, topics)
+      let topics-text = if type(topics) == array {
+        topics.map(t => str(t)).join(", ")
+      } else {
+        topics
+      }
+      if type(topics-text) == str and topics-text != "" {
+        text(size: 9.5pt, fill: muted, topics-text)
         linebreak()
       }
       v(0.15em)
