@@ -45,6 +45,11 @@ def new_uuid() -> str:
     return str(uuid.uuid4())
 
 
+# Fixed primary key for the global provider config singleton.  A single
+# row is enforced by inserting/updating on this id (upsert).
+GLOBAL_PROVIDER_CONFIG_ID = "global-provider-config"
+
+
 # ═══════════════════════════════════════════════════════════════════
 # USERS & AUTH
 # ═══════════════════════════════════════════════════════════════════
@@ -124,6 +129,37 @@ class UserModelSelection(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "provider", name="uq_user_model_selection_user_provider"),
     )
+
+
+class GlobalProviderConfig(Base, TimestampMixin):
+    """Admin-managed global LLM provider configuration (singleton).
+
+    Exactly one row exists, enforced by a fixed primary key (upsert on
+    ``GLOBAL_PROVIDER_CONFIG_ID``).  When the row is empty (provider NULL)
+    the system falls back to ``.env`` settings until an admin configures
+    the global provider.  The old per-user tables are untouched for now
+    and dropped in the cleanup phase.
+    """
+
+    __tablename__ = "global_provider_config"
+
+    # Fixed singleton id — one row, upserted on this id.
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: GLOBAL_PROVIDER_CONFIG_ID
+    )
+
+    provider: Mapped[str | None] = mapped_column(String(50))
+    model: Mapped[str | None] = mapped_column(String(100))
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text)
+    api_base: Mapped[str | None] = mapped_column(String(500))
+
+    # ── Minimal health state for the admin panel ─────────────
+    last_status: Mapped[str | None] = mapped_column(String(20))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Admin user who last updated the config (soft reference, no FK).
+    updated_by: Mapped[str | None] = mapped_column(String(36))
 
 
 # ═══════════════════════════════════════════════════════════════════
