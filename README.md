@@ -696,7 +696,7 @@ Job Posting + Candidate Profile
 | `NVIDIA_NIM_API_KEY` | — | — | Fallback si no hay credencial en DB |
 | `LM_STUDIO_API_BASE` | — | `http://localhost:1234/v1` | Base URL para LM Studio |
 | `JWT_ALGORITHM` | — | `HS256` | Algoritmo JWT |
-| `JWT_EXPIRE_MINUTES` | — | `1440` | Expiración JWT (24h) |
+| `JWT_EXPIRE_MINUTES` | — | `480` | Expiración JWT (8h) |
 | `APP_ENV` | — | `development` | `development` / `production` |
 | `LOG_LEVEL` | — | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `CORS_ORIGINS` | — | `http://localhost:3000` | Orígenes CORS (separados por coma) |

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # -- Auth / JWT --------------------------------------------
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 1440
+    jwt_expire_minutes: int = 480  # 8 horas
 
     # -- Resend (Email) ----------------------------------------
     resend_api_key: str | None = None
