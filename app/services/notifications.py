@@ -7,22 +7,68 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AppNotification
+from app.db.models import AppConfig, AppNotification
 
 # TTL: notifications older than this are purged lazily on read.
 NOTIFICATION_TTL_DAYS = 30
 
+# AppConfig key where the admin-tunable TTL (days) lives.  Stored as
+# {"days": N} to match the ``credit_costs`` AppConfig pattern.
+NOTIFICATION_TTL_CONFIG_KEY = "notification_ttl_days"
+
+
+async def get_notification_ttl_days(db: AsyncSession) -> int:
+    """Return the effective notification retention in days.
+
+    Reads the admin-configurable value from ``app_config`` under
+    ``NOTIFICATION_TTL_CONFIG_KEY``; falls back to ``NOTIFICATION_TTL_DAYS``
+    when unset or invalid.
+    """
+    result = await db.execute(
+        select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY)
+    )
+    row = result.scalar_one_or_none()
+    stored = (row.value if row is not None else None) or {}
+    days = stored.get("days")
+    if isinstance(days, int) and days > 0:
+        return days
+    return NOTIFICATION_TTL_DAYS
+
+
+async def set_notification_ttl_days(db: AsyncSession, days: int) -> int:
+    """Persist the admin-tunable notification retention (days).
+
+    Clamps to a minimum of 1 day and upserts the ``app_config`` row.
+    Returns the effective value.
+    """
+    days = max(1, int(days))
+    result = await db.execute(
+        select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = AppConfig(key=NOTIFICATION_TTL_CONFIG_KEY, value={"days": days})
+        db.add(row)
+    else:
+        row.value = {**(row.value or {}), "days": days}
+    await db.flush()
+    return days
+
 
 async def purge_expired_notifications(
     db: AsyncSession,
-    max_age_days: int = NOTIFICATION_TTL_DAYS,
+    max_age_days: int | None = None,
 ) -> int:
-    """Delete notifications older than ``max_age_days`` (TTL).
+    """Delete notifications older than the TTL.
 
-    Called lazily from the notifications router (same pattern as
-    ``seed_default_plans``) so no background scheduler is needed — the
-    table self-cleans on every read.  Returns the number of rows removed.
+    When ``max_age_days`` is None (the default), the admin-configurable
+    value from ``app_config`` is used.  Called lazily from the notifications
+    router and once at startup (same pattern as ``seed_default_plans``) so
+    no background scheduler is needed — the table self-cleans on every read.
+    Returns the number of rows removed.
     """
+    if max_age_days is None:
+        max_age_days = await get_notification_ttl_days(db)
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
     result = await db.execute(
         delete(AppNotification).where(AppNotification.created_at < cutoff)

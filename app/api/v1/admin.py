@@ -22,7 +22,11 @@ from app.schemas.billing import (
     UserSubscriptionOut,
 )
 from app.services import credits
-from app.services.notifications import mark_purchase_requests_read
+from app.services.notifications import (
+    get_notification_ttl_days,
+    mark_purchase_requests_read,
+    set_notification_ttl_days,
+)
 from app.services.plans import (
     delete_plan,
     get_all_plans,
@@ -406,6 +410,40 @@ async def put_admin_credit_costs(
     costs = await set_credit_costs(db, payload)
     await db.commit()
     return costs
+
+
+# ── Notification retention TTL (admin) ────────────────────────────────
+
+
+@router.get("/notification-ttl")
+async def get_admin_notification_ttl(
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current notification retention in days. Admin only."""
+    return {"days": await get_notification_ttl_days(db)}
+
+
+@router.put("/notification-ttl")
+async def put_admin_notification_ttl(
+    payload: dict,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the notification retention in days. Admin only.
+
+    Accepts ``{"days": N}`` with N >= 1; anything else falls back to the
+    default when read.
+    """
+    raw = payload.get("days")
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="days must be a positive integer",
+        )
+    days = await set_notification_ttl_days(db, raw)
+    await db.commit()
+    return {"days": days}
 
 
 # ── Credits & subscriptions (admin) ──────────────────────────────────

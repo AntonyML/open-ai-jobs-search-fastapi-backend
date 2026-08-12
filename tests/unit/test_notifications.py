@@ -397,6 +397,85 @@ def test_list_endpoint_purges_old_notifications(api_client, db_session):
     assert [r["title"] for r in rows] == ["Reciente"]
 
 
+# ── Admin-configurable TTL (AppConfig) ───────────────────────────────
+
+
+async def test_get_set_notification_ttl_roundtrip(db_session):
+    from sqlalchemy import select
+
+    from app.services.notifications import (
+        NOTIFICATION_TTL_DAYS,
+        get_notification_ttl_days,
+        set_notification_ttl_days,
+    )
+
+    # Default when unset.
+    assert await get_notification_ttl_days(db_session) == NOTIFICATION_TTL_DAYS
+
+    # Set a custom value and read it back.
+    await set_notification_ttl_days(db_session, 7)
+    await db_session.commit()
+    assert await get_notification_ttl_days(db_session) == 7
+
+    # Clamped to >= 1.
+    await set_notification_ttl_days(db_session, 0)
+    await db_session.commit()
+    assert await get_notification_ttl_days(db_session) == 1
+
+    # Invalid stored value falls back to the default.
+    from app.db.models import AppConfig
+    from app.services.notifications import NOTIFICATION_TTL_CONFIG_KEY
+
+    row = (
+        await db_session.execute(
+            select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY)
+        )
+    ).scalar_one()
+    row.value = {"days": "nope"}
+    await db_session.commit()
+    assert await get_notification_ttl_days(db_session) == NOTIFICATION_TTL_DAYS
+
+
+async def test_purge_uses_configured_ttl(db_session):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+
+    from app.services.notifications import purge_expired_notifications, set_notification_ttl_days
+
+    user = await _make_user(db_session, "user-ttl-cfg", "ttl-cfg@example.com")
+    now = datetime.now(timezone.utc)
+
+    db_session.add_all(
+        [
+            AppNotification(
+                user_id=user.id,
+                type="info",
+                title="Vieja (8 días)",
+                created_at=now - timedelta(days=8),
+            ),
+            AppNotification(
+                user_id=user.id,
+                type="info",
+                title="Reciente (2 días)",
+                created_at=now - timedelta(days=2),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    # TTL of 7 days → the 8-day-old one is purged, the 2-day-old survives.
+    await set_notification_ttl_days(db_session, 7)
+    await db_session.commit()
+    purged = await purge_expired_notifications(db_session)
+    await db_session.commit()
+
+    assert purged == 1
+    remaining = (
+        (await db_session.execute(select(AppNotification))).scalars().all()
+    )
+    assert [r.title for r in remaining] == ["Reciente (2 días)"]
+
+
 # ── Startup TTL purge (runs once on app boot) ────────────────────────
 
 
@@ -465,6 +544,48 @@ def test_startup_purge_deletes_stale_notifications(api_client, db_session):
         return [r.title for r in remaining]
 
     assert asyncio.run(check()) == ["Reciente"]
+
+
+def test_admin_notification_ttl_endpoints(api_client, db_session):
+    import asyncio
+
+    admin_id = "admin-ttl-ep"
+    asyncio.run(_make_user(db_session, admin_id, "ttl-admin@example.com", role="admin"))
+    client_id = "client-ttl-ep"
+    asyncio.run(_make_user(db_session, client_id, "ttl-client@example.com"))
+
+    admin_headers = {"Authorization": f"Bearer {_token(admin_id, role='admin')}"}
+    client_headers = {"Authorization": f"Bearer {_token(client_id)}"}
+
+    # GET returns the default (30).
+    res = api_client.get("/api/v1/admin/notification-ttl", headers=admin_headers)
+    assert res.status_code == 200
+    assert res.json() == {"days": 30}
+
+    # PUT updates the value.
+    res = api_client.put(
+        "/api/v1/admin/notification-ttl",
+        headers=admin_headers,
+        json={"days": 14},
+    )
+    assert res.status_code == 200
+    assert res.json() == {"days": 14}
+
+    # Invalid value → 422.
+    res = api_client.put(
+        "/api/v1/admin/notification-ttl",
+        headers=admin_headers,
+        json={"days": 0},
+    )
+    assert res.status_code == 422
+
+    # Non-admin → 403.
+    res = api_client.get("/api/v1/admin/notification-ttl", headers=client_headers)
+    assert res.status_code == 403
+
+    # The purge now honors the admin-set value through the GET endpoint.
+    res = api_client.get("/api/v1/admin/notification-ttl", headers=admin_headers)
+    assert res.json() == {"days": 14}
 
 
 async def test_mark_purchase_requests_read_no_match(db_session):
