@@ -358,6 +358,11 @@ class AppNotification(Base, TimestampMixin):
     # billing_cycle, correlation_id} so the admin can deep-link to activation).
     payload: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON, default=dict)
 
+    __table_args__ = (
+        # TTL purge (DELETE WHERE created_at < cutoff) scans on this column.
+        Index("ix_app_notifications_created_at", "created_at"),
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════
 # CANDIDATE PROFILE  (maps to 01-candidate-profile.md)

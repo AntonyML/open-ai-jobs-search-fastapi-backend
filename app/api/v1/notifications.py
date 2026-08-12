@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.db.models import AppNotification
 from app.schemas.notifications import AppNotificationCreate, AppNotificationOut
+from app.services.notifications import purge_expired_notifications
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -25,7 +26,12 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
     unread_only: bool = False,
 ) -> list[AppNotificationOut]:
-    """Return the authenticated user's notifications, newest first."""
+    """Return the authenticated user's notifications, newest first.
+
+    Lazily purges notifications older than the TTL (30 days) so the
+    table self-cleans without a background scheduler.
+    """
+    await purge_expired_notifications(db)
     stmt = (
         select(AppNotification)
         .where(AppNotification.user_id == user["sub"])

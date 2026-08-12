@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, update
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AppNotification
+
+# TTL: notifications older than this are purged lazily on read.
+NOTIFICATION_TTL_DAYS = 30
+
+
+async def purge_expired_notifications(
+    db: AsyncSession,
+    max_age_days: int = NOTIFICATION_TTL_DAYS,
+) -> int:
+    """Delete notifications older than ``max_age_days`` (TTL).
+
+    Called lazily from the notifications router (same pattern as
+    ``seed_default_plans``) so no background scheduler is needed — the
+    table self-cleans on every read.  Returns the number of rows removed.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    result = await db.execute(
+        delete(AppNotification).where(AppNotification.created_at < cutoff)
+    )
+    await db.flush()
+    return max(result.rowcount or 0, 0)
 
 
 async def mark_purchase_requests_read(

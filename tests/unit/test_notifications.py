@@ -319,6 +319,84 @@ async def test_mark_purchase_requests_read_matches_payload_user(db_session):
     assert state["Ranking done"] is False
 
 
+# ── TTL purge (notifications older than 30 days) ─────────────────────
+
+
+async def test_purge_expired_notifications_deletes_only_old(db_session):
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.notifications import purge_expired_notifications
+
+    admin = await _make_user(db_session, "admin-ttl", "ttl@example.com")
+    now = datetime.now(timezone.utc)
+
+    db_session.add_all(
+        [
+            AppNotification(
+                user_id=admin.id,
+                type="info",
+                title="Vieja (>30 días)",
+                created_at=now - timedelta(days=31),
+            ),
+            AppNotification(
+                user_id=admin.id,
+                type="info",
+                title="Reciente",
+                created_at=now - timedelta(days=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    purged = await purge_expired_notifications(db_session)
+    await db_session.commit()
+
+    assert purged == 1
+    from sqlalchemy import select
+
+    remaining = (
+        (await db_session.execute(select(AppNotification))).scalars().all()
+    )
+    assert [r.title for r in remaining] == ["Reciente"]
+
+
+def test_list_endpoint_purges_old_notifications(api_client, db_session):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    user_id = "user-ttl-ep"
+    asyncio.run(_make_user(db_session, user_id, "ttl-ep@example.com"))
+
+    now = datetime.now(timezone.utc)
+
+    async def seed():
+        db_session.add_all(
+            [
+                AppNotification(
+                    user_id=user_id,
+                    type="info",
+                    title="Vieja",
+                    created_at=now - timedelta(days=40),
+                ),
+                AppNotification(
+                    user_id=user_id,
+                    type="info",
+                    title="Reciente",
+                    created_at=now - timedelta(days=2),
+                ),
+            ]
+        )
+        await db_session.commit()
+
+    asyncio.run(seed())
+
+    headers = {"Authorization": f"Bearer {_token(user_id)}"}
+    res = api_client.get("/api/v1/notifications", headers=headers)
+    assert res.status_code == 200
+    rows = res.json()
+    assert [r["title"] for r in rows] == ["Reciente"]
+
+
 async def test_mark_purchase_requests_read_no_match(db_session):
     from app.services.notifications import mark_purchase_requests_read
 
