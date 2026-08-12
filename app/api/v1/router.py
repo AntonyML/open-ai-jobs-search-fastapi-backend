@@ -22,6 +22,7 @@ from app.api.v1.jobs import router as jobs_router
 from app.api.v1.cv import router as cv_router
 from app.api.v1.providers import router as providers_router
 from app.api.v1.billing import router as billing_router
+from app.api.v1.notifications import router as notifications_router
 
 router = APIRouter()
 
@@ -73,3 +74,6 @@ router.include_router(providers_router)
 
 # ── Billing / credits ────────────────────────────────────────────────
 router.include_router(billing_router)
+
+# ── Notifications ─────────────────────────────────────────────────────
+router.include_router(notifications_router)
