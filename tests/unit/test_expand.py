@@ -240,7 +240,7 @@ async def test_execute_expand_llm_error(db_session, sample_candidate):
     with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
         mock_orc.side_effect = LLMError("LLM timeout")
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[{"id": "cv_0", "title": "Test"}]):
+        with patch("app.services.expand._scan_cv_folder", return_value=[{"id": "cv_0", "source": "cv", "type": "job_bullet", "title": "Test", "description": "Test", "date": "2020-01", "source_file": "cv.pdf"}]):
             with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
                 with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
                     with patch("app.services.expand._scan_references_folder", return_value=[]):
@@ -261,7 +261,7 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
         # Create a dynamic mock that returns enrichments based on the input items
         call_count = 0
 
-        async def dynamic_mock_enriched(db, user_id, messages, output_schema, pipeline, description, temperature, max_tokens):
+        async def dynamic_mock_enriched(user_id, messages, output_schema=None, pipeline="expand", description=None, temperature=0.2, **kwargs):
             nonlocal call_count
             call_count += 1
 
@@ -410,15 +410,7 @@ async def test_list_expansions(db_session, sample_candidate):
         mock_orc.side_effect = [
             mock_enriched_competencies(),
             mock_proposed_additions(),
-        ]
-
-        with patch("app.services.expand._scan_cv_folder", return_value=[]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
-                                for i in range(3):
+        ] * 3
                                     await expand.execute_expand(
                                         db=db_session,
                                         user_id="test-user-id",
