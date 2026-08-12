@@ -34,6 +34,21 @@ from app.exceptions import AppError, app_error_handler, validation_error_handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown logic for the app."""
+    # Startup: purge notifications older than the TTL so the table does not
+    # grow from inactive users who never poll the bell. Best-effort — a
+    # failing DB must not block the app from starting.
+    try:
+        from app.db.session import async_session_factory
+        from app.services.notifications import purge_expired_notifications
+
+        async with async_session_factory() as db:
+            purged = await purge_expired_notifications(db)
+            await db.commit()
+        if purged:
+            logger.info("Startup TTL purge: removed %s stale notification(s)", purged)
+    except Exception:
+        logger.exception("Startup notification TTL purge failed — continuing")
+
     yield
     # Shutdown: wait for background tasks, then dispose engine
     from app.core.task_manager import background_tasks

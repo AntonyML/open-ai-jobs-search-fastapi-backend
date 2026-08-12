@@ -397,6 +397,82 @@ def test_list_endpoint_purges_old_notifications(api_client, db_session):
     assert [r["title"] for r in rows] == ["Reciente"]
 
 
+# ── Startup TTL purge (runs once on app boot) ────────────────────────
+
+
+def test_startup_purge_deletes_stale_notifications(api_client, db_session):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from app.db import session as db_session_module
+    from app.main import create_app
+
+    user_id = "user-startup-ttl"
+    asyncio.run(_make_user(db_session, user_id, "startup-ttl@example.com"))
+
+    now = datetime.now(timezone.utc)
+
+    async def seed():
+        db_session.add_all(
+            [
+                AppNotification(
+                    user_id=user_id,
+                    type="info",
+                    title="Vieja",
+                    created_at=now - timedelta(days=40),
+                ),
+                AppNotification(
+                    user_id=user_id,
+                    type="info",
+                    title="Reciente",
+                    created_at=now - timedelta(days=2),
+                ),
+            ]
+        )
+        await db_session.commit()
+
+    asyncio.run(seed())
+
+    app = create_app()
+
+    async def override_get_db():
+        yield db_session
+
+    from app.api.deps import get_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # Patch the session factory so the lifespan purge uses the test DB.
+    class _FakeFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return db_session
+
+        async def __aexit__(self, *args):
+            return False
+
+    with patch.object(db_session_module, "async_session_factory", _FakeFactory()):
+        with TestClient(app) as client:
+            res = client.get("/health")
+            assert res.status_code == 200
+
+    # The 40-day-old notification was purged at boot; the recent one remains.
+    from sqlalchemy import select
+
+    async def check():
+        remaining = (
+            (await db_session.execute(select(AppNotification))).scalars().all()
+        )
+        return [r.title for r in remaining]
+
+    assert asyncio.run(check()) == ["Reciente"]
+
+
 async def test_mark_purchase_requests_read_no_match(db_session):
     from app.services.notifications import mark_purchase_requests_read
 
