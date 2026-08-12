@@ -143,8 +143,10 @@ async def get_provider_config(
 
 
 @router.get("/providers/catalog", response_model=list[ProviderInfo])
-async def list_global_providers_catalog() -> list[ProviderInfo]:
-    """Return catalog of known providers with metadata for the admin UI."""
+async def list_global_providers_catalog(
+    admin: dict = Depends(require_admin),
+) -> list[ProviderInfo]:
+    """Return catalog of known providers with metadata for the admin UI. Admin only."""
     from app.schemas.providers import KNOWN_PROVIDERS
 
     return KNOWN_PROVIDERS
