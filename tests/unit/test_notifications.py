@@ -438,6 +438,7 @@ async def test_get_set_notification_ttl_roundtrip(db_session):
 
 async def test_purge_uses_configured_ttl(db_session):
     from datetime import datetime, timedelta, timezone
+
     from sqlalchemy import select
 
     from app.services.notifications import purge_expired_notifications, set_notification_ttl_days
