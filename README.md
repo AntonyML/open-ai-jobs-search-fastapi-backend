@@ -1,6 +1,6 @@
 # Open Ai Jobs Search — FastAPI Backend
 
-Backend multi-proveedor de IA para la búsqueda automatizada de empleo. Orquesta un pipeline completo: desde la búsqueda de empleos (alimentada por el **microservicio de ingesta**) hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas, tracking de resultados y calibración de fit.
+Backend multi-proveedor de IA para la búsqueda de empleo. Orquesta un pipeline completo: desde la búsqueda de empleos (alimentada por el **microservicio de ingesta**) hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas, tracking de resultados y calibración de fit. Incluye un **sistema de planes y créditos** (free / pro / max) y un **CV Builder** (base + adaptado por oferta).
 
 > **Inspirado en:** [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search)
 
@@ -47,6 +47,7 @@ está compuesto por 4 repositorios que comparten la base de datos (Supabase).
 - **LiteLLM** — capa adaptadora multi-proveedor (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama)
 - **LLMOrchestrator** — sistema de colas persistente, failover automático, rate limiting, health monitoring, WebSocket real-time
 - **Supabase** (PostgreSQL) — Session Pooler o Direct Connection
+- **Planes + créditos** — catálogo en DB (`plans`), suscripciones (`subscriptions`) y cuentas de créditos (`credit_accounts`) con recarga por período, cuotas diarias/semanales y flujo de compra manual (SINPE/WhatsApp → admin)
 - **Typst** — compilación de PDFs (CV + cover letter) **in-process**, sin subprocesos ni LaTeX
 - **Microservicio de Ingesta** (Telegram → `ingested_jobs`) — la API principal **lee** los empleos de la tabla compartida
 - **i18n** — soporte multi-idioma (en, es) con detección automática vía cookie/Accept-Language
@@ -54,7 +55,7 @@ está compuesto por 4 repositorios que comparten la base de datos (Supabase).
 - **Fernet** (cryptography) — cifrado de API keys por usuario en DB
 - **aiocache** — cache en memoria de KPIs de dashboard
 - **Sentry** — monitoreo de errores en producción
-- **Resend** — email transaccional (upgrades, donaciones)
+- **Resend** — email transaccional (solicitudes de compra de plan)
 
 ---
 
@@ -231,13 +232,16 @@ FastAPI-backend/
 │   │   ├── interview.py / outcome.py / upskill.py / expand.py
 │   │   ├── fit_calibration.py / pipeline_reset.py / reset.py
 │   │   ├── provider_credentials.py / provider_models.py / tiers.py / email.py
+│   │   ├── plans.py / subscriptions.py / credits.py / cv_generator.py  # Planes, créditos, CV Builder
 │   │   ├── orchestrator/          # LLMOrchestrator, ExecutionQueue, ProviderManager, etc.
 │   │   └── salary/                # Salary benchmarking
 │   ├── api/
-│   │   ├── deps.py                # get_db, get_current_user, get_llm_provider, get_locale
+│   │   ├── deps.py                # get_db, get_current_user, get_llm_provider, get_locale,
+│   │   │                          # require_max_or_admin (gate del plan max)
 │   │   └── v1/                    # auth, providers, orchestrator, setup, rank, apply, interview,
-│   │                              # outcome, expand, upskill, salary, verification,
-│   │                              # pipeline_reset, reset, admin, dashboard, analytics, users, jobs
+│   │                              # outcome, expand, upskill, salary, verification, cv, billing,
+│   │                              # notifications, pipeline_reset, reset, admin, dashboard, analytics,
+│   │                              # users, jobs
 │   ├── utils/                     # pdf_verifier.py
 │   └── external/
 │       └── typst/                 # Templates Typst (cv, cover letter, entry)
@@ -264,6 +268,8 @@ FastAPI-backend/
 | **poppler-utils** (opcional) | `pdftotext` / `pdfinfo` para el ATS check | `apt install poppler-utils` (o binarios en el PATH) |
 | **Supabase** | Base de datos PostgreSQL | Proyecto en supabase.com |
 | **LLM Provider** | API key (Anthropic, OpenAI, NVIDIA NIM, LM Studio, Ollama) | Según provider |
+
+> Los planes del catálogo se siembran automáticamente en la primera petición (tabla `plans` vacía → `seed_default_plans`). No hace falta crear planes a mano.
 
 > No se requiere LaTeX/MiKTeX: los PDFs se compilan con **Typst** (pip, in-process).
 
@@ -323,7 +329,7 @@ Para promover un usuario existente a administrador, ejecuta esta query directame
 -- 🔥 Cambiar rol a admin para el usuario con email específico
 UPDATE users
 SET role = 'admin',
-    tier = 'premium',
+    tier = 'max',
     updated_at = NOW()
 WHERE email = 'tu-email@ejemplo.com';
 
@@ -331,7 +337,7 @@ WHERE email = 'tu-email@ejemplo.com';
 SELECT id, email, role, tier, is_active FROM users WHERE email = 'tu-email@ejemplo.com';
 ```
 
-> ⚠️ Después de cambiar el rol, el usuario debe **cerrar sesión y volver a iniciarla** para que el JWT se genere con el nuevo rol (`admin`). Una vez logueado como admin, accede a `/admin` en el frontend.
+> ⚠️ Los `tier` válidos son las claves del catálogo de planes: `free`, `pro` o `max` (ver `app/services/plans.py`). `max` desbloquea el pipeline completo. Después de cambiar el rol, el usuario debe **cerrar sesión y volver a iniciarla** para que el JWT se genere con el nuevo rol (`admin`). Una vez logueado como admin, accede a `/admin` en el frontend.
 
 ### Insertar un admin desde cero
 
@@ -361,7 +367,7 @@ VALUES (
   'Admin User',
   TRUE,
   'admin',
-  'premium',
+  'max',
   'anthropic',
   'en',
   NOW(),
@@ -403,6 +409,34 @@ Todos bajo `/api/v1` (salvo el WebSocket).
 | DELETE | `/api/v1/auth/account` | Eliminar cuenta (requiere contraseña + confirmación) |
 | POST | `/api/v1/auth/upgrade` | Solicitar upgrade de plan (notifica al admin) |
 | POST | `/api/v1/auth/donate` | Notificar donación |
+
+### CV Builder — Generación de CV
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/cv/base` | Generar CV base listo para ATS (consume créditos) |
+| POST | `/api/v1/cv/personalize` | Personalizar CV según dirección profesional |
+| POST | `/api/v1/cv/personalize-job` | Adaptar CV a una oferta específica (consume créditos) |
+| GET | `/api/v1/cv/` | Listar CVs del usuario |
+| GET | `/api/v1/cv/{cv_id}` | Obtener CV por ID |
+| GET | `/api/v1/cv/{cv_id}/download` | Descargar PDF (Typst) |
+| DELETE | `/api/v1/cv/{cv_id}` | Eliminar CV |
+
+> **Créditos:** `cv_base` y `cv_adapted` consumen créditos de la cuenta. El plan `max` no consume créditos sino **cuotas** diarias/semanales. Costos editables por el admin (`/api/v1/admin/credit-costs`).
+
+### Billing — Planes, créditos y compras
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/billing/status` | Estado del usuario: plan, balance de créditos, cuotas |
+| GET | `/api/v1/billing/catalog` | Catálogo de planes (free/pro/max) + costos de créditos |
+| GET | `/api/v1/billing/transactions` | Historial de transacciones de créditos |
+| POST | `/api/v1/billing/purchase` | Solicitar compra de plan (notifica al admin, flujo SINPE/WhatsApp) |
+
+> **Modelo de planes** (seeded en `app/services/plans.py`, editable desde `/api/v1/admin/plans`):
+> - **free** — 2 créditos/semana (1 CV base + 1 CV adaptado). Pipeline bloqueado.
+> - **pro** — 100 créditos por período ($19.99/mes o $200/año). Solo CV Builder.
+> - **max** — 500 créditos por período + cuotas (20/día, 80/semana). Pipeline completo: búsqueda, ranking, postulaciones, entrevistas, expand y upskill ($59.99/mes o $600/año).
 
 ### Providers — Configuración LLM
 
@@ -543,6 +577,27 @@ Todos bajo `/api/v1` (salvo el WebSocket).
 | GET | `/api/v1/admin/users/{user_id}` | Detalle de un usuario (admin) |
 | PATCH | `/api/v1/admin/users/{user_id}` | Actualizar usuario: role, tier (admin) |
 | DELETE | `/api/v1/admin/users/{user_id}` | Eliminar usuario (admin) |
+| GET | `/api/v1/admin/providers` | Configuración global de proveedores (admin) |
+| GET | `/api/v1/admin/providers/catalog` | Catálogo de proveedores conocidos |
+| PUT | `/api/v1/admin/providers` | Guardar configuración global de proveedores |
+| POST | `/api/v1/admin/providers/test` | Probar conexión de proveedor global |
+| GET/PUT/DELETE | `/api/v1/admin/plans` · `/api/v1/admin/plans/{plan_key}` | Gestionar catálogo de planes |
+| GET/PUT | `/api/v1/admin/credit-costs` | Costos de créditos por acción |
+| GET/PUT | `/api/v1/admin/notification-ttl` | TTL de notificaciones |
+| POST | `/api/v1/admin/credits/adjust` | Ajustar créditos de un usuario (admin) |
+| POST | `/api/v1/admin/subscriptions` | Activar/crear suscripción de un usuario (admin) |
+| GET | `/api/v1/admin/subscriptions` | Listar suscripciones (admin) |
+| GET | `/api/v1/admin/users/{user_id}/transactions` | Transacciones de créditos de un usuario |
+
+### Notificaciones
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/notifications/` | Listar notificaciones del usuario |
+| POST | `/api/v1/notifications/` | Crear notificación |
+| DELETE | `/api/v1/notifications/` | Limpiar notificaciones |
+| POST | `/api/v1/notifications/{id}/read` | Marcar como leída |
+| POST | `/api/v1/notifications/read-all` | Marcar todas como leídas |
 
 ### Configuración
 
