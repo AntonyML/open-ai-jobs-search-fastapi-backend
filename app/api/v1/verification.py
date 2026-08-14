@@ -20,6 +20,7 @@ from app.db.models import Application, CandidateProfile, JobPosting
 from app.db.session import get_db
 from app.schemas.verification import VerificationResponse
 from app.services import verification
+from app.services.access_gate import enforce_action_gate
 
 router = APIRouter(tags=["verification"])
 
@@ -76,7 +77,15 @@ async def verify_application(
     )
     candidate = cand_result.scalar_one_or_none()
 
-    # 4. Run verification checklist
+    # 4. Gate LLM usage (quota/credits) and get a correlation_id for usage accounting.
+    correlation_id = await enforce_action_gate(
+        db,
+        user,
+        "verify",
+        label="Application verification checklist",
+    )
+
+    # 5. Run verification checklist
     verify_result = await verification.run_verification_checklist(
         application=app,
         candidate=candidate,
@@ -85,13 +94,15 @@ async def verify_application(
         cover_letter_latex=app.draft_cover_letter_tex or "",
         cv_pdf_path=app.cv_pdf_path,
         provider_config=provider_config,
+        correlation_id=correlation_id,
+        db=db,
     )
 
-    # 5. Store result in DB
+    # 6. Store result in DB
     app.verification_result = verify_result.model_dump()
     await db.commit()
 
-    # 6. Build response
+    # 7. Build response
     pass_count = len(verify_result.passes)
     total_count = len(verify_result.checks)
     status_emoji = "✅" if verify_result.overall_pass else "❌"

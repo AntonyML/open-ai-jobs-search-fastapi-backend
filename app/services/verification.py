@@ -23,13 +23,15 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Application, CandidateProfile, JobPosting
 from app.llm.adapter import llm_completion_structured, get_provider_kwargs
 from app.schemas.ats_check import ATSResult
 from app.schemas.verification import LlmContentCheckOutput, VerificationCheck, VerificationResult
-from app.services import ats_check
+from app.services import ats_check, credits
 from app.core.logging import get_logger, bind_context
 
 logger = get_logger(__name__)
@@ -46,6 +48,8 @@ async def run_verification_checklist(
         cover_letter_latex: str | None = None,
         cv_pdf_path: str | Path | None = None,
         provider_config: dict | None = None,
+        correlation_id: str | None = None,
+        db: AsyncSession | None = None,
 ) -> VerificationResult:
     """Run the complete verification checklist on generated documents.
 
@@ -57,11 +61,13 @@ async def run_verification_checklist(
         cover_letter_latex: The LaTeX source of the cover letter.
         cv_pdf_path: Path to compiled CV PDF (optional, for ATS checks).
         provider_config: LLM provider config for the single LLM check.
+        correlation_id: Ledger correlation id for credit usage accounting.
 
     Returns:
         VerificationResult with ALL checks, their outcomes, and a
         summary. Never raises — all failures are captured in the result.
     """
+    usage: dict[str, Any] = {}
     with bind_context(stage="verify"):
         # Resolve from DB if not provided
         if cv_latex is None and application.draft_cv_tex:
@@ -144,6 +150,7 @@ async def run_verification_checklist(
             cv_latex, cover_letter_latex,
             job_posting, candidate,
             provider_config,
+            usage=usage,
         )
         checks.extend(llm_checks)
 
@@ -164,6 +171,22 @@ async def run_verification_checklist(
             + (f", {len(failures)} failure(s)" if failures else " — all clear!")
             + (f", {len(llm_checks)} LLM check(s)" if llm_checks else "")
         )
+
+        # Record LLM usage against the gated ledger row (if any). Best-effort —
+        # verification must never raise, so failures here are swallowed.
+        if db is not None and correlation_id and usage.get("tokens_input"):
+            try:
+                await credits.record_llm_usage(
+                    db,
+                    correlation_id,
+                    model_used=usage.get("model_used"),
+                    tokens_input=usage.get("tokens_input", 0),
+                    tokens_output=usage.get("tokens_output", 0),
+                    cost_usd_cents=usage.get("cost_usd_cents", 0),
+                )
+                await db.commit()
+            except Exception as record_err:  # pragma: no cover — defensive
+                logger.warning(f"Failed to record verification LLM usage: {record_err}")
 
         return VerificationResult(
             application_id=application.id,
@@ -723,6 +746,7 @@ async def _run_llm_content_checks(
     job_posting: JobPosting,
     candidate: CandidateProfile | None,
     provider_config: dict | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> list[VerificationCheck]:
     """Run LLM-based content quality checks (single call).
 
@@ -768,6 +792,7 @@ Evaluate these documents for fabricated claims, profile specificity, and tone co
             **provider_kwargs,
             temperature=0.0,
             max_tokens=800,
+            usage=usage,
         )
 
         checks = []

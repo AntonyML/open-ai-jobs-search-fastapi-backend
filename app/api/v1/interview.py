@@ -1,7 +1,7 @@
 """Interview router — endpoints for interview preparation."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_locale, require_max_or_admin
@@ -10,7 +10,7 @@ from app.db.models import InterviewPrep
 from app.db.session import get_db as _get_db
 from app.schemas.interview import InterviewPrepOut, InterviewPrepRequest, InterviewPrepSummaryOut, MockInterviewRequest, MockInterviewResponse
 from app.services import interview
-from app.services.tiers import get_tier_limits
+from app.services.access_gate import enforce_action_gate
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
@@ -27,16 +27,13 @@ async def trigger_interview_prep(
     locale: str = Depends(get_locale),
 ):
     """Generate interview preparation pack for an application."""
-    tier = user.get("tier", "free")
-    max_prepare = get_tier_limits(tier).get("max_prepare_count")
-    if max_prepare is not None and tier == "free":
-        result = await db.execute(select(func.count()).where(InterviewPrep.user_id == user["sub"]))
-        prep_count = result.scalar()
-        if prep_count >= max_prepare:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="You have reached the maximum number of interview preps on your current plan. Upgrade to Premium for unlimited.",
-            )
+    # Gate LLM usage (quota/credits) and get a correlation_id for usage accounting.
+    correlation_id = await enforce_action_gate(
+        db,
+        user,
+        "interview",
+        label="Interview preparation pack",
+    )
     result = await interview.execute_interview_prep(
         db=db,
         user_id=user["sub"],
@@ -45,6 +42,7 @@ async def trigger_interview_prep(
         interview_date=payload.interview_date,
         interview_format=payload.interview_format,
         interviewer_names=payload.interviewer_names,
+        correlation_id=correlation_id,
     )
     return result
 
@@ -85,13 +83,19 @@ async def start_or_answer_mock(
     if not payload.user_answer:
         return await interview.start_mock_interview(db, user["sub"], prep_id)
 
-    # Otherwise, submit an answer
+    # Otherwise, submit an answer — each turn is an LLM call, so gate it
+    correlation_id = await enforce_action_gate(
+        db,
+        user,
+        "interview",
+        label="Mock interview feedback",
+    )
     # Load prep once (avoids N+1 — used by both transcript parsing and service)
     prep = await interview.get_interview_prep(db, prep_id, user["sub"])
     transcript = _parse_transcript(prep.mock_transcript)
 
     return await interview.submit_mock_answer(
-        db, user["sub"], prep_id, payload.user_answer, prep, transcript
+        db, user["sub"], prep_id, payload.user_answer, prep, transcript, correlation_id
     )
 
 

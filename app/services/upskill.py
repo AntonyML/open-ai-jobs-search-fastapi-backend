@@ -31,6 +31,36 @@ from app.schemas.upskill import (
     SynthesizedGapsLLMOutput,
     UpskillSummaryOut,
 )
+from app.services import credits
+
+# Sink shape used to accumulate real token/cost usage across the LLM passes.
+def _new_usage_sink() -> dict[str, Any]:
+    return {"tokens_input": 0, "tokens_output": 0, "cost_usd_cents": 0, "model_used": None}
+
+
+async def _record_usage_best_effort(
+    db: AsyncSession,
+    correlation_id: str | None,
+    usage: dict[str, Any],
+) -> None:
+    """Attach real token/cost usage to the ledger row, if one was created.
+
+    Best-effort: usage accounting must never break the upskill flow.
+    """
+    if not correlation_id:
+        return
+    try:
+        await credits.record_llm_usage(
+            db,
+            correlation_id,
+            model_used=usage.get("model_used"),
+            tokens_input=usage.get("tokens_input", 0),
+            tokens_output=usage.get("tokens_output", 0),
+            cost_usd_cents=usage.get("cost_usd_cents", 0),
+        )
+        await db.commit()
+    except Exception:
+        logger.warning("Failed to record LLM usage for upskill %s", correlation_id, exc_info=True)
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -283,6 +313,8 @@ async def execute_upskill(
         mode: str = "aggregate",
         target_job_url: str | None = None,
         target_job_posting_id: str | None = None,
+        usage: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
 ) -> Upskill:
     """Execute a full upskill analysis run.
 
@@ -297,6 +329,8 @@ async def execute_upskill(
         The created Upskill record with full analysis
     """
     with bind_context(stage="upskill"):
+        usage = usage if usage is not None else _new_usage_sink()
+
         # 1. Get candidate profile
         candidate_result = await db.execute(
             select(CandidateProfile).where(CandidateProfile.user_id == user_id)
@@ -362,23 +396,25 @@ async def execute_upskill(
                     "fit_rating": fit_rating,
                 })
 
-            hard_gaps = await _run_pass1(db, candidate_skills, job_requirements)
+            hard_gaps = await _run_pass1(db, candidate_skills, job_requirements, usage=usage)
             upskill.hard_skill_gaps = hard_gaps
             await db.flush()
 
             # 6. Pass 2: LLM synthesis
             job_context = "\n".join(f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements)
-            synthesized_gaps = await _run_pass2(db, candidate_skills, hard_gaps, job_context)
+            synthesized_gaps = await _run_pass2(
+                db, candidate_skills, hard_gaps, job_context, usage=usage,
+            )
             upskill.synthesized_gaps = synthesized_gaps
             await db.flush()
 
             # 7. Pass 3: Heatmap
-            heatmap = await _run_heatmap(db, hard_gaps, synthesized_gaps)
+            heatmap = await _run_heatmap(db, hard_gaps, synthesized_gaps, usage=usage)
             upskill.gap_heatmap = heatmap
             await db.flush()
 
             # 8. Pass 4: Learning plan
-            learning_plan = await _run_learning_plan(db, candidate, heatmap)
+            learning_plan = await _run_learning_plan(db, candidate, heatmap, usage=usage)
             upskill.learning_plan = learning_plan
             upskill.status = "completed"
             await db.commit()
@@ -390,6 +426,8 @@ async def execute_upskill(
             await db.commit()
             raise
 
+        await _record_usage_best_effort(db, correlation_id, usage)
+
         return upskill
 
 
@@ -397,6 +435,7 @@ async def _run_pass1(
     db: AsyncSession,
     candidate_skills: set[str],
     job_requirements: list[dict[str, Any]],
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Run Pass 1: Hard skill diff with frequency + fit weighting."""
     messages = build_pass1_prompt(candidate_skills, job_requirements)
@@ -408,6 +447,7 @@ async def _run_pass1(
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=3000,
+            usage=usage,
         )
         return [gap.model_dump() for gap in result.gaps]
     except Exception as e:
@@ -419,6 +459,7 @@ async def _run_pass2(
     candidate_skills: set[str],
     hard_gaps: list[dict[str, Any]],
     job_context: str,
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Run Pass 2: LLM synthesis of domain/soft/tooling/credential gaps."""
     messages = build_pass2_prompt(candidate_skills, hard_gaps, job_context)
@@ -430,6 +471,7 @@ async def _run_pass2(
             provider=settings.llm_default_provider,
             temperature=0.4,
             max_tokens=3000,
+            usage=usage,
         )
         return [gap.model_dump() for gap in result.gaps]
     except Exception as e:
@@ -440,6 +482,7 @@ async def _run_heatmap(
     db: AsyncSession,
     hard_gaps: list[dict[str, Any]],
     synthesized_gaps: list[dict[str, Any]],
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Combine Pass 1 + Pass 2 into unified gap heatmap."""
     messages = build_heatmap_prompt(hard_gaps, synthesized_gaps)
@@ -451,6 +494,7 @@ async def _run_heatmap(
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=2000,
+            usage=usage,
         )
         return [h.model_dump() for h in result.heatmap]
     except Exception as e:
@@ -461,6 +505,7 @@ async def _run_learning_plan(
     db: AsyncSession,
     candidate: CandidateProfile,
     heatmap: list[dict[str, Any]],
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate learning plan with web-searched resources."""
     messages = build_learning_plan_prompt(candidate, heatmap)
@@ -472,18 +517,26 @@ async def _run_learning_plan(
             provider=settings.llm_default_provider,
             temperature=0.4,
             max_tokens=4000,
+            usage=usage,
         )
         return [item.model_dump() for item in result.plan]
     except Exception as e:
         raise LLMError(f"Learning plan generation failed: {e}") from e
 
 
-async def _execute_upskill_background(upskill_id: str) -> None:
+async def _execute_upskill_background(
+    upskill_id: str,
+    correlation_id: str | None = None,
+) -> None:
     """Background task to execute upskill analysis.
 
     This function runs in a background task with its own database session.
+    ``correlation_id`` comes from the access gate; real LLM token/cost usage
+    accumulates on the ledger row at the end (best-effort).
     """
     from app.db.session import async_session_factory
+
+    usage = _new_usage_sink()
 
     async with async_session_factory() as db:
         try:
@@ -559,23 +612,25 @@ async def _execute_upskill_background(upskill_id: str) -> None:
                     "fit_rating": fit_rating,
                 })
 
-            hard_gaps = await _run_pass1(db, candidate_skills, job_requirements)
+            hard_gaps = await _run_pass1(db, candidate_skills, job_requirements, usage=usage)
             upskill.hard_skill_gaps = hard_gaps
             await db.flush()
 
             # 6. Pass 2: LLM synthesis
             job_context = "\n".join(f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements)
-            synthesized_gaps = await _run_pass2(db, candidate_skills, hard_gaps, job_context)
+            synthesized_gaps = await _run_pass2(
+                db, candidate_skills, hard_gaps, job_context, usage=usage,
+            )
             upskill.synthesized_gaps = synthesized_gaps
             await db.flush()
 
             # 7. Pass 3: Heatmap
-            heatmap = await _run_heatmap(db, hard_gaps, synthesized_gaps)
+            heatmap = await _run_heatmap(db, hard_gaps, synthesized_gaps, usage=usage)
             upskill.gap_heatmap = heatmap
             await db.flush()
 
             # 8. Pass 4: Learning plan
-            learning_plan = await _run_learning_plan(db, candidate, heatmap)
+            learning_plan = await _run_learning_plan(db, candidate, heatmap, usage=usage)
             upskill.learning_plan = learning_plan
             upskill.status = "completed"
             await db.commit()
@@ -584,6 +639,8 @@ async def _execute_upskill_background(upskill_id: str) -> None:
             upskill.status = "failed"
             upskill.error_message = str(e)
             await db.commit()
+
+        await _record_usage_best_effort(db, correlation_id, usage)
 
 
 # ── Query helpers ───────────────────────────────────────────────────

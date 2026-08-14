@@ -35,6 +35,7 @@ DEFAULT_CREDIT_COSTS: dict[str, int] = {
     "upskill": 1,
     "apply": 1,
     "interview": 1,
+    "verify": 1,
 }
 
 

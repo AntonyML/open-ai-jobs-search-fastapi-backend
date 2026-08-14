@@ -15,6 +15,7 @@ from app.schemas.expand import (
     ExpandRequest,
 )
 from app.services import expand
+from app.services.access_gate import enforce_action_gate
 
 router = APIRouter(prefix="/expand", tags=["expand"])
 
@@ -48,6 +49,13 @@ async def trigger_expand(
     if candidate is None:
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
+    # Gate LLM usage (quota/credits) before starting the pipeline; the ledger
+    # correlation id is attached to the background task so the real usage is
+    # recorded once the expansions complete.
+    correlation_id = await enforce_action_gate(
+        db, user, "expand", label=f"Competency expansion ({payload.scan_cv=} {payload.scan_linkedin=})"
+    )
+
     # 2. Create expansion record with pending status
     expansion = CompetencyExpansion(
         user_id=user["sub"],
@@ -65,7 +73,9 @@ async def trigger_expand(
     await db.refresh(expansion)
 
     # 3. Add background task
-    background_tasks.add_task(expand._execute_expand_background, expansion.id)
+    background_tasks.add_task(
+        expand._execute_expand_background, expansion.id, correlation_id
+    )
 
     return expansion
 

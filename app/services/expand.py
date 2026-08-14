@@ -31,6 +31,7 @@ from app.schemas.expand import (
     ExpandRequest,  # noqa: F401 — re-export for tests/callers
     ProposedAdditionsLLMOutput,
 )
+from app.services import credits
 from app.services.apply import _get_pdf_page_count  # noqa: F401 — re-export for tests
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 
@@ -88,12 +89,20 @@ async def execute_expand(
     scan_github: bool = True,
     scan_other_urls: bool = True,
     candidate: CandidateProfile | None = None,
+    usage: dict | None = None,
+    correlation_id: str | None = None,
 ) -> CompetencyExpansion:
     """Run a full competency expansion synchronously.
 
     Scans all configured sources, enriches via LLM, and proposes additions.
+    ``usage`` (optional) is a sink dict accumulating real token/cost usage
+    from the orchestrator LLM calls.  When ``correlation_id`` is provided the
+    actual usage is recorded onto the credit ledger row created by the gate.
     """
     with bind_context(stage="expand"):
+        if usage is None:
+            usage = {}
+
         if candidate is None:
             result = await db.execute(
                 select(CandidateProfile).where(CandidateProfile.user_id == user_id)
@@ -156,6 +165,7 @@ async def execute_expand(
                 pipeline="expand",
                 description="Competency enrichment",
                 temperature=0.2,
+                usage=usage,
             )
 
             enriched_list = [
@@ -178,6 +188,7 @@ async def execute_expand(
                 pipeline="expand",
                 description="Proposed additions",
                 temperature=0.2,
+                usage=usage,
             )
 
             proposed_list = [
@@ -192,6 +203,17 @@ async def execute_expand(
             expansion.status = "completed"
             await db.commit()
 
+            if correlation_id and usage.get("tokens_input"):
+                await credits.record_llm_usage(
+                    db,
+                    correlation_id=correlation_id,
+                    model_used=usage.get("model_used"),
+                    tokens_input=usage.get("tokens_input", 0),
+                    tokens_output=usage.get("tokens_output", 0),
+                    cost_usd_cents=usage.get("cost_usd_cents", 0),
+                )
+                await db.commit()
+
         except Exception as exc:
             expansion.status = "failed"
             expansion.error_message = str(exc)
@@ -202,7 +224,10 @@ async def execute_expand(
         return expansion
 
 
-async def _execute_expand_background(expansion_id: str) -> None:
+async def _execute_expand_background(
+    expansion_id: str,
+    correlation_id: str | None = None,
+) -> None:
     """Run expand as a background task (called from API)."""
     from app.db.session import async_session_factory
 
@@ -225,6 +250,7 @@ async def _execute_expand_background(expansion_id: str) -> None:
                 scan_references=expansion.scanned_references,
                 scan_github=expansion.scanned_github,
                 scan_other_urls=expansion.scanned_other_urls,
+                correlation_id=correlation_id,
             )
         except Exception as exc:
             logger.error("Background expand failed for %s: %s", expansion_id, exc)

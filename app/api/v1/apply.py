@@ -3,7 +3,7 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_llm_provider, get_locale, require_max_or_admin
@@ -14,7 +14,6 @@ from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, Applica
 from app.schemas.rank import JobPostingSummary
 from app.services import apply
 from app.services.access_gate import enforce_action_gate
-from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/apply", tags=["apply"])
 
@@ -37,17 +36,6 @@ async def trigger_apply(
     pipeline via a background task.  Poll ``GET /{id}/status`` for
     real-time progress.
     """
-    tier = user.get("tier", "free")
-    max_apply = get_tier_limits(tier).get("max_apply_count")
-    if max_apply is not None and tier == "free":
-        result = await db.execute(select(func.count()).where(Application.user_id == user["sub"]))
-        app_count = result.scalar()
-        if app_count >= max_apply:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="You have reached the maximum number of applications on your current plan. Upgrade to Premium for unlimited applications.",
-            )
-
     # Gate LLM usage (quota/credits) and get a correlation_id for usage accounting
     correlation_id = await enforce_action_gate(
         db, user, "apply", label=f"Apply for job {payload.job_posting_id}"

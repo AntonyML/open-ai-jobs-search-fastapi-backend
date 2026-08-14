@@ -83,6 +83,7 @@ class LLMOrchestrator:
         max_retries: int = 3,
         field_constraints: dict[str, dict[str, int]] | None = None,
         checkpoint_data: dict | None = None,
+        usage: dict | None = None,
     ) -> Any:
         """Execute an LLM call through the orchestrator.
 
@@ -104,6 +105,9 @@ class LLMOrchestrator:
             max_retries: Max retry attempts.
             field_constraints: Optional array length constraints for sanitization.
             checkpoint_data: Optional checkpoint data for batch progress tracking.
+            usage: Optional sink dict (``tokens_input``/``tokens_output``/
+                ``cost_usd_cents``/``model_used``) accumulated from the real
+                LiteLLM response, mutated in place across all pipeline calls.
 
         Returns:
             If output_schema is provided: validated Pydantic model instance.
@@ -164,6 +168,7 @@ class LLMOrchestrator:
             max_retries=max_retries,
             field_constraints=field_constraints,
             execution_plan=execution_plan,
+            usage=usage,
         )
 
         return result
@@ -180,6 +185,7 @@ class LLMOrchestrator:
         max_retries: int,
         field_constraints: dict | None,
         execution_plan: list[tuple[str, str]],
+        usage: dict | None = None,
     ) -> Any:
         """Execute with automatic failover across providers and models.
 
@@ -224,6 +230,7 @@ class LLMOrchestrator:
                     max_tokens=max_tokens,
                     api_key=provider_config.get("api_key"),
                     api_base=provider_config.get("api_base"),
+                    usage=usage,
                 )
                 latency_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -378,6 +385,7 @@ class LLMOrchestrator:
         max_tokens: int = 2048,
         api_key: str | None = None,
         api_base: str | None = None,
+        usage: dict | None = None,
     ) -> str:
         """Make the actual LiteLLM call.
 
@@ -435,6 +443,8 @@ class LLMOrchestrator:
             llm_logger = LLMCallLogger()
             async with llm_logger.track(provider=provider, model=model, purpose=self.__class__.__name__):
                 response = await acompletion(messages=messages, **kwargs)
+            from app.llm.adapter import _record_usage
+            _record_usage(response, usage)
             message = response.choices[0].message
             content = message.content or getattr(message, "reasoning_content", None)
             if content is None:

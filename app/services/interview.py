@@ -31,6 +31,7 @@ from app.db.models import (
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 
 from app.llm.adapter import llm_completion_structured
+from app.services import credits
 from app.core.logging import get_logger, bind_context
 from app.schemas.interview import (
     CompanyResearchLLMOutput,
@@ -618,6 +619,7 @@ async def execute_interview_prep(
         interview_date: str | None = None,
         interview_format: str | None = None,
         interviewer_names: list[str] | None = None,
+        correlation_id: str | None = None,
 ) -> InterviewPrep:
     """Execute the full interview preparation workflow.
 
@@ -629,10 +631,12 @@ async def execute_interview_prep(
         interview_date: Optional YYYY-MM-DD
         interview_format: Optional phone, video, onsite
         interviewer_names: Optional list of names/titles
+        correlation_id: Ledger correlation id for credit usage accounting
 
     Returns:
         The created InterviewPrep record
     """
+    usage: dict[str, Any] = {}
     with bind_context(stage="interview"):
         # 1. Load application + related data
         app_result = await db.execute(
@@ -673,30 +677,30 @@ async def execute_interview_prep(
         star_examples = list(star_result.scalars().all())
 
         # 6. Company research
-        company_research = await _do_company_research(candidate, job, application)
+        company_research = await _do_company_research(candidate, job, application, usage=usage)
 
         # 7. Likely questions
-        likely_questions = await _do_likely_questions(candidate, job, application, evaluation, stage)
+        likely_questions = await _do_likely_questions(candidate, job, application, evaluation, stage, usage=usage)
 
         # 8. STAR mapping
-        star_mapping = await _do_star_mapping(candidate, job, likely_questions, star_examples)
+        star_mapping = await _do_star_mapping(candidate, job, likely_questions, star_examples, usage=usage)
 
         # 9. New STAR drafts for unmapped questions
         mapped_question_texts = {m["question"] for m in star_mapping}
         unmapped = [q for q in likely_questions if q["question"] not in mapped_question_texts]
-        new_star_drafts = await _do_new_star_drafts(candidate, job, unmapped)
+        new_star_drafts = await _do_new_star_drafts(candidate, job, unmapped, usage=usage)
 
         # 10. Consistency brief
-        consistency_brief = await _do_consistency_brief(application)
+        consistency_brief = await _do_consistency_brief(application, usage=usage)
 
         # 11. Tough questions
-        tough_questions = await _do_tough_questions(candidate, job, evaluation, stage)
+        tough_questions = await _do_tough_questions(candidate, job, evaluation, stage, usage=usage)
 
         # 12. Questions to ask
-        questions_to_ask = await _do_questions_to_ask(candidate, job, company_research, stage)
+        questions_to_ask = await _do_questions_to_ask(candidate, job, company_research, stage, usage=usage)
 
         # 13. Logistics
-        logistics = await _do_logistics(stage, interview_format, interview_date, interviewer_names)
+        logistics = await _do_logistics(stage, interview_format, interview_date, interviewer_names, usage=usage)
 
         # 14. Conversation hooks from company research
         conversation_hooks = _extract_conversation_hooks(company_research)
@@ -724,6 +728,18 @@ async def execute_interview_prep(
         await db.commit()
         await db.refresh(prep)
 
+        # 16. Record LLM usage against the gated ledger row (if any)
+        if correlation_id and usage.get("tokens_input"):
+            await credits.record_llm_usage(
+                db,
+                correlation_id,
+                model_used=usage.get("model_used"),
+                tokens_input=usage.get("tokens_input", 0),
+                tokens_output=usage.get("tokens_output", 0),
+                cost_usd_cents=usage.get("cost_usd_cents", 0),
+            )
+            await db.commit()
+
         return prep
 
 
@@ -734,6 +750,7 @@ async def _do_company_research(
     candidate: CandidateProfile,
     job: JobPosting,
     application: Application,
+    usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Research the company for interview preparation."""
     messages = build_company_research_prompt(candidate, job, application)
@@ -745,6 +762,7 @@ async def _do_company_research(
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=2048,
+            usage=usage,
         )
         return result.model_dump()
     except Exception as e:
@@ -757,6 +775,7 @@ async def _do_likely_questions(
     application: Application,
     evaluation: RankEvaluation | None,
     stage: str,
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate likely interview questions."""
     messages = build_likely_questions_prompt(candidate, job, application, evaluation, stage)
@@ -768,6 +787,7 @@ async def _do_likely_questions(
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=2048,
+            usage=usage,
         )
         return [q.model_dump() for q in result.questions]
     except Exception as e:
@@ -779,6 +799,7 @@ async def _do_star_mapping(
     job: JobPosting,
     likely_questions: list[dict[str, Any]],
     star_examples: list[StarExample],
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Map existing STAR examples to likely questions."""
     messages = build_star_mapping_prompt(candidate, job, likely_questions, star_examples)
@@ -790,6 +811,7 @@ async def _do_star_mapping(
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=2048,
+            usage=usage,
         )
         return [m.model_dump() for m in result.mappings]
     except Exception as e:
@@ -800,6 +822,7 @@ async def _do_new_star_drafts(
     candidate: CandidateProfile,
     job: JobPosting,
     unmapped_questions: list[dict[str, Any]],
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Draft new STAR examples for unmapped questions."""
     if not unmapped_questions:
@@ -814,13 +837,17 @@ async def _do_new_star_drafts(
             provider=settings.llm_default_provider,
             temperature=0.4,
             max_tokens=3000,
+            usage=usage,
         )
         return [d.model_dump() for d in result.drafts]
     except Exception as e:
         raise LLMError(f"New STAR drafts failed: {e}") from e
 
 
-async def _do_consistency_brief(application: Application) -> list[dict[str, Any]]:
+async def _do_consistency_brief(
+    application: Application,
+    usage: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Generate consistency brief from submitted application."""
     messages = build_consistency_brief_prompt(application)
 
@@ -831,6 +858,7 @@ async def _do_consistency_brief(application: Application) -> list[dict[str, Any]
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=2048,
+            usage=usage,
         )
         return [c.model_dump() for c in result.claims]
     except Exception as e:
@@ -842,6 +870,7 @@ async def _do_tough_questions(
     job: JobPosting,
     evaluation: RankEvaluation | None,
     stage: str,
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate customized tough questions."""
     messages = build_tough_questions_prompt(candidate, job, evaluation, stage)
@@ -853,6 +882,7 @@ async def _do_tough_questions(
             provider=settings.llm_default_provider,
             temperature=0.4,
             max_tokens=2048,
+            usage=usage,
         )
         return [q.model_dump() for q in result.questions]
     except Exception as e:
@@ -864,6 +894,7 @@ async def _do_questions_to_ask(
     job: JobPosting,
     company_research: dict[str, Any] | None,
     stage: str,
+    usage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate questions for the candidate to ask the interviewer."""
     messages = build_questions_to_ask_prompt(candidate, job, company_research, stage)
@@ -875,6 +906,7 @@ async def _do_questions_to_ask(
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=2048,
+            usage=usage,
         )
         return [q.model_dump() for q in result.questions]
     except Exception as e:
@@ -886,6 +918,7 @@ async def _do_logistics(
     interview_format: str | None,
     interview_date: str | None,
     interviewer_names: list[str] | None,
+    usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate logistics advice."""
     messages = build_logistics_prompt(stage, interview_format, interview_date, interviewer_names)
@@ -897,6 +930,7 @@ async def _do_logistics(
             provider=settings.llm_default_provider,
             temperature=0.3,
             max_tokens=1024,
+            usage=usage,
         )
         return result.model_dump()
     except Exception as e:
@@ -1104,6 +1138,7 @@ async def submit_mock_answer(
     user_answer: str,
     prep: InterviewPrep,
     transcript: list[dict[str, str]],
+    correlation_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit an answer during a mock interview and get feedback + next question.
 
@@ -1118,10 +1153,12 @@ async def submit_mock_answer(
         user_answer: The candidate's answer to the current question
         prep: Pre-loaded InterviewPrep object (avoids N+1 query)
         transcript: Transcript so far (list of {role, content})
+        correlation_id: Ledger correlation id for credit usage accounting
 
     Returns:
         dict with feedback, next question, and updated transcript
     """
+    usage: dict[str, Any] = {}
     # Prep is already loaded by the caller (avoids duplicate query)
     # Verify ownership
     if prep.user_id != user_id:
@@ -1162,6 +1199,7 @@ async def submit_mock_answer(
             provider=settings.llm_default_provider,
             temperature=0.7,
             max_tokens=1024,
+            usage=usage,
         )
 
         # Parse JSON from response (handle both dict and string return types)
@@ -1185,6 +1223,17 @@ async def submit_mock_answer(
     except Exception as e:
         feedback = f"Note: I couldn't generate detailed feedback right now. Let's continue with the next question."
         next_question = "__COMPLETE__"
+
+    # Record LLM usage against the gated ledger row (if any)
+    if correlation_id and usage.get("tokens_input"):
+        await credits.record_llm_usage(
+            db,
+            correlation_id,
+            model_used=usage.get("model_used"),
+            tokens_input=usage.get("tokens_input", 0),
+            tokens_output=usage.get("tokens_output", 0),
+            cost_usd_cents=usage.get("cost_usd_cents", 0),
+        )
 
     # 5. Check if complete
     is_complete = next_question == "__COMPLETE__"

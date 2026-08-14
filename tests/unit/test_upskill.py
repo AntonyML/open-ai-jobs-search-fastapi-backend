@@ -392,3 +392,122 @@ def test_upskill_summary_gaps_found():
 
     assert summary.gaps_found == 3  # 2 hard + 1 synthesized
     assert summary.learning_plan_items == 2
+
+
+# ── LLM usage accounting (gate → correlation_id → record_llm_usage) ──
+
+
+@pytest.mark.asyncio
+async def test_execute_upskill_records_llm_usage(
+    db_session, sample_candidate, sample_job, sample_evaluation,
+):
+    """execute_upskill calls credits.record_llm_usage with the correlation_id when one is passed."""
+    from unittest.mock import AsyncMock
+
+    with (
+        patch("app.services.upskill.llm_completion_structured", side_effect=_all_4_passes()),
+        patch("app.services.upskill.credits.record_llm_usage", new=AsyncMock()) as mock_record,
+    ):
+        result = await upskill.execute_upskill(
+            db=db_session,
+            user_id="test-user-id",
+            mode="aggregate",
+            correlation_id="cid-upskill-test",
+        )
+
+    assert result.status == "completed"
+    mock_record.assert_awaited_once()
+    args, call_kwargs = mock_record.await_args
+    assert args[1] == "cid-upskill-test"  # positional correlation_id
+    assert call_kwargs["tokens_input"] >= 0
+    assert call_kwargs["tokens_output"] >= 0
+    assert call_kwargs["cost_usd_cents"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_execute_upskill_without_correlation_id_skips_usage(
+    db_session, sample_candidate, sample_job, sample_evaluation,
+):
+    """No correlation_id (e.g. admin bypass) → record_llm_usage is never called."""
+    from unittest.mock import AsyncMock
+
+    with (
+        patch("app.services.upskill.llm_completion_structured", side_effect=_all_4_passes()),
+        patch("app.services.upskill.credits.record_llm_usage", new=AsyncMock()) as mock_record,
+    ):
+        result = await upskill.execute_upskill(
+            db=db_session, user_id="test-user-id", mode="aggregate"
+        )
+
+    assert result.status == "completed"
+    mock_record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_upskill_threads_usage_sink_to_all_llm_passes(
+    db_session, sample_candidate, sample_job, sample_evaluation,
+):
+    """The same usage sink dict flows into every llm_completion_structured call."""
+    from unittest.mock import AsyncMock
+
+    mock_llm = AsyncMock(side_effect=_all_4_passes())
+    with patch("app.services.upskill.llm_completion_structured", mock_llm):
+        await upskill.execute_upskill(
+            db=db_session,
+            user_id="test-user-id",
+            mode="aggregate",
+            correlation_id="cid-upskill-test",
+        )
+
+    assert mock_llm.await_count == 4
+    sinks = [call.kwargs.get("usage") for call in mock_llm.await_args_list]
+    assert all(s is not None for s in sinks)
+    # All four passes share the same sink object so usage accumulates.
+    assert len({id(s) for s in sinks}) == 1
+
+
+@pytest.mark.asyncio
+async def test_background_task_records_usage(
+    db_session, sample_candidate, sample_job, sample_evaluation,
+):
+    """_execute_upskill_background records LLM usage on its own session with the correlation_id."""
+    from unittest.mock import AsyncMock
+    from unittest.mock import patch as _patch
+
+    # Create a pending upskill record like the router does.
+    record = Upskill(
+        user_id="test-user-id",
+        candidate_id=sample_candidate.id,
+        mode="aggregate",
+        status="pending",
+    )
+    db_session.add(record)
+    await db_session.commit()
+    await db_session.refresh(record)
+
+    class _Ctx:
+        def __init__(self, session):
+            self._session = session
+
+        async def __aenter__(self):
+            return self._session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    with (
+        _patch("app.services.upskill.llm_completion_structured", side_effect=_all_4_passes()),
+        _patch("app.db.session.async_session_factory", return_value=_Ctx(db_session)),
+        _patch("app.services.upskill.credits.record_llm_usage", new=AsyncMock()) as mock_record,
+    ):
+        await upskill._execute_upskill_background(record.id, correlation_id="cid-bg-test")
+
+    mock_record.assert_awaited_once()
+    assert mock_record.await_args.args[1] == "cid-bg-test"  # positional correlation_id
+
+    # The record completed on its own session.
+    from sqlalchemy import select
+    result = await db_session.execute(select(Upskill).where(Upskill.id == record.id))
+    refreshed = result.scalar_one_or_none()
+    assert refreshed is not None
+    assert refreshed.status == "completed"

@@ -14,6 +14,7 @@ from app.schemas.upskill import (
     UpskillSummaryOut,
 )
 from app.services import upskill
+from app.services.access_gate import enforce_action_gate
 
 router = APIRouter(prefix="/upskill", tags=["upskill"])
 
@@ -47,7 +48,14 @@ async def trigger_upskill(
     if candidate is None:
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
-    # 2. Create upskill record with pending status
+    # 2. Gate LLM usage (quota/credits) and get a correlation_id for usage accounting.
+    #    Consumed now; the background worker accumulates real token/cost usage on
+    #    the ledger row via the same correlation_id.
+    correlation_id = await enforce_action_gate(
+        db, user, "upskill", label=f"Upskill analysis ({payload.mode})"
+    )
+
+    # 3. Create upskill record with pending status
     upskill_record = Upskill(
         user_id=user["sub"],
         candidate_id=candidate.id,
@@ -60,8 +68,12 @@ async def trigger_upskill(
     await db.commit()
     await db.refresh(upskill_record)
 
-    # 3. Add background task
-    background_tasks.add_task(upskill._execute_upskill_background, upskill_record.id)
+    # 4. Add background task
+    background_tasks.add_task(
+        upskill._execute_upskill_background,
+        upskill_record.id,
+        correlation_id,
+    )
 
     return upskill_record
 
