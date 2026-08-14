@@ -1,0 +1,241 @@
+"""Tests for the unified access gate and LLM usage accumulation on the ledger.
+
+Follows the same service-level style as ``test_rank.py`` / ``test_credits.py``:
+in-memory SQLite + seeded plan catalog, no HTTP client, no network.
+
+Covers the single source of truth for apply/rank gating:
+- 402 when the action's credit cost cannot be paid (free/pro: credit-only).
+- 429 when a quota-bearing plan (max) exhausts its daily/weekly quota.
+- 200-equivalent success path: credits consumed and a correlation_id returned.
+- ``credits.record_llm_usage`` accumulating real tokens/cost onto the same
+  ledger row the gate created (usage accounting, not a second gate).
+"""
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.db.models import Base, CreditTransaction, User
+from app.services import credits
+from app.services.access_gate import enforce_action_gate
+from app.services.plans import get_credit_costs, get_plan, seed_default_plans
+from app.services.subscriptions import activate_subscription
+
+
+@pytest.fixture
+async def db_session():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as session:
+        await seed_default_plans(session)
+        await session.commit()
+        yield session
+
+    await engine.dispose()
+
+
+@pytest.fixture
+async def free_user(db_session):
+    u = User(id="free-1", email="free@example.com", hashed_password="x", role="client", tier="free")
+    db_session.add(u)
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
+@pytest.fixture
+async def max_user(db_session):
+    u = User(id="max-1", email="max@example.com", hashed_password="x", role="client", tier="max")
+    db_session.add(u)
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
+def _client_ctx(user_id: str) -> dict:
+    """The user dict the routers pass to the gate (JWT shape)."""
+    return {"sub": user_id, "role": "client"}
+
+
+# ── Gate: HTTP 402 without credits (apply + rank) ───────────────────
+
+
+async def test_gate_apply_402_without_credits(db_session, free_user):
+    """Free user with zero credits → gate('apply') raises HTTP 402."""
+    await activate_subscription(db_session, free_user, "free", source="signup_bonus")
+    await db_session.commit()
+
+    # Free plan refills 2 credits on first check; spend them both.
+    bal = await credits.get_balance(db_session, free_user.id)
+    assert bal["balance"] == 2
+    await credits.consume_credits(db_session, free_user.id, "cv_base", 2)
+    assert (await credits.get_balance(db_session, free_user.id))["balance"] == 0
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(
+            db_session, _client_ctx(free_user.id), "apply",
+            label="Apply for job job-1",
+        )
+    assert exc.value.status_code == 402
+
+
+async def test_gate_rank_402_without_credits(db_session, free_user):
+    """Free user with zero credits → gate('rank') raises HTTP 402."""
+    await activate_subscription(db_session, free_user, "free", source="signup_bonus")
+    await db_session.commit()
+
+    await credits.consume_credits(db_session, free_user.id, "cv_base", 2)
+    assert (await credits.get_balance(db_session, free_user.id))["balance"] == 0
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(free_user.id), "rank")
+    assert exc.value.status_code == 402
+
+
+async def test_gate_apply_402_without_subscription(db_session, free_user):
+    """No subscription/plan and no credits → gate('apply') raises HTTP 402."""
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(free_user.id), "apply")
+    assert exc.value.status_code == 402
+
+
+# ── Gate: HTTP 429 on quota exhaustion (max) ────────────────────────
+
+
+async def test_gate_rank_429_quota_exhausted(db_session, max_user):
+    """Max user past the daily quota → gate('rank') raises HTTP 429 before
+    any credit is charged."""
+    await activate_subscription(db_session, max_user, "max", source="admin")
+    await db_session.commit()
+
+    plan = await get_plan(db_session, "max")
+    assert plan is not None and plan.daily_quota > 0
+    for _ in range(plan.daily_quota):
+        await credits.consume_quota(db_session, max_user.id, plan)
+    bal = await credits.get_balance(db_session, max_user.id)
+    assert bal["quota_day_used"] == plan.daily_quota
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(max_user.id), "rank")
+    assert exc.value.status_code == 429
+
+
+async def test_gate_apply_429_quota_exhausted(db_session, max_user):
+    """Same quota circuit breaker for the apply action."""
+    await activate_subscription(db_session, max_user, "max", source="admin")
+    await db_session.commit()
+
+    plan = await get_plan(db_session, "max")
+    for _ in range(plan.daily_quota):
+        await credits.consume_quota(db_session, max_user.id, plan)
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(max_user.id), "apply")
+    assert exc.value.status_code == 429
+
+
+# ── Gate: success path ──────────────────────────────────────────────
+
+
+async def test_gate_apply_success_consumes_credit_and_returns_correlation_id(db_session, free_user):
+    """Free user with credits → gate('apply') charges the action cost and
+    returns a correlation_id for usage accounting."""
+    await activate_subscription(db_session, free_user, "free", source="signup_bonus")
+    await db_session.commit()
+    assert (await credits.get_balance(db_session, free_user.id))["balance"] == 2
+
+    cid = await enforce_action_gate(
+        db_session, _client_ctx(free_user.id), "apply", label="Apply for job job-1"
+    )
+    assert cid is not None
+
+    bal = await credits.get_balance(db_session, free_user.id)
+    assert bal["balance"] == 1  # apply costs 1 credit
+
+    txn = (await db_session.execute(
+        select(CreditTransaction).where(CreditTransaction.correlation_id == cid)
+    )).scalar_one()
+    assert txn.action == "apply"
+    assert txn.credits_delta == -1
+
+
+async def test_gate_max_charges_quota_and_credit(db_session, max_user):
+    """Max is quota-gated AND credit-charged in the same call."""
+    await activate_subscription(db_session, max_user, "max", source="admin")
+    await db_session.commit()
+    costs = await get_credit_costs(db_session)
+    assert costs["rank"] == 1
+
+    cid = await enforce_action_gate(db_session, _client_ctx(max_user.id), "rank")
+    assert cid is not None
+
+    bal = await credits.get_balance(db_session, max_user.id)
+    assert bal["quota_day_used"] == 1
+    assert bal["balance"] == 500 - 1
+
+
+async def test_gate_admin_bypass(db_session, free_user):
+    """Admin bypasses the gate entirely: no credit consumed, no correlation_id."""
+    admin = User(
+        id="admin-1", email="admin@example.com", hashed_password="x",
+        role="admin", tier="free",
+    )
+    db_session.add(admin)
+    await db_session.commit()
+
+    cid = await enforce_action_gate(
+        db_session, {"sub": admin.id, "role": "admin"}, "apply"
+    )
+    assert cid is None
+    # No credit account/ledger rows created for the admin.
+    rows = (await db_session.execute(select(CreditTransaction))).scalars().all()
+    assert rows == []
+
+
+# ── Usage accumulation on the ledger ────────────────────────────────
+
+
+async def test_record_llm_usage_accumulates_on_ledger_row(db_session, free_user):
+    """record_llm_usage accumulates real tokens/cost onto the ledger row the
+    gate created — repeated sub-calls add up on the same correlation_id."""
+    await activate_subscription(db_session, free_user, "free", source="signup_bonus")
+    await db_session.commit()
+
+    cid = await enforce_action_gate(db_session, _client_ctx(free_user.id), "apply")
+    assert cid is not None
+
+    # First LLM sub-call
+    await credits.record_llm_usage(
+        db_session, cid,
+        model_used="anthropic/claude-sonnet-4-5",
+        tokens_input=100, tokens_output=50, cost_usd_cents=2,
+    )
+    # Second LLM sub-call (same request) — must accumulate, not overwrite
+    await credits.record_llm_usage(
+        db_session, cid,
+        model_used="anthropic/claude-sonnet-4-5",
+        tokens_input=50, tokens_output=25, cost_usd_cents=3,
+    )
+
+    txn = (await db_session.execute(
+        select(CreditTransaction).where(CreditTransaction.correlation_id == cid)
+    )).scalar_one()
+    assert txn.tokens_input == 150
+    assert txn.tokens_output == 75
+    assert txn.cost_usd_cents == 5
+    assert txn.model_used == "anthropic/claude-sonnet-4-5"
+    assert txn.credits_delta == -1  # immutable delta untouched
+
+
+async def test_record_llm_usage_unknown_correlation_id_is_noop(db_session, free_user):
+    """Unknown correlation_id (e.g. admin bypass) → record_llm_usage no-ops
+    without raising."""
+    result = await credits.record_llm_usage(
+        db_session, "does-not-exist",
+        tokens_input=10, tokens_output=5, cost_usd_cents=1,
+    )
+    assert result is None
