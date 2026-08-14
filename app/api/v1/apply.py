@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_llm_provider, get_locale, require_max_or_admin
+from app.api.deps import get_llm_provider, get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.db.models import Application, JobPosting, RankEvaluation
 from app.db.session import get_db as _get_db
@@ -127,7 +127,7 @@ async def trigger_apply(
 async def list_available_jobs(
     limit: int = 200,
     offset: int = 0,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List ranked jobs available to apply.
@@ -158,7 +158,7 @@ async def list_available_jobs(
 @router.get("/{application_id}", response_model=ApplicationOut)
 async def get_application(
     application_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Get a generated application by ID."""
@@ -168,7 +168,7 @@ async def get_application(
 @router.get("/{application_id}/status", response_model=ApplicationStatusOut)
 async def get_application_status(
     application_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
     locale: str = Depends(get_locale),
 ):
@@ -215,7 +215,7 @@ async def get_application_status(
 async def list_applications(
     limit: int = 20,
     offset: int = 0,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List all generated applications for the authenticated user."""

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, require_max_or_admin
+from app.api.deps import require_max_or_admin
 from app.db.models import Outcome
 from app.db.session import get_db as _get_db
 from app.schemas.outcome import CalibrationReport, OutcomeCreate, OutcomeOut, OutcomeSummaryOut, OutcomeUpdate, TrackerRowOut
@@ -50,7 +50,7 @@ async def create_outcome(
 async def update_outcome(
     outcome_id: str,
     payload: OutcomeUpdate,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Update an existing outcome."""
@@ -60,7 +60,7 @@ async def update_outcome(
 @router.get("/{outcome_id}", response_model=OutcomeOut)
 async def get_outcome(
     outcome_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Get an outcome by ID."""
@@ -71,7 +71,7 @@ async def get_outcome(
 async def list_outcomes(
     limit: int = 20,
     offset: int = 0,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List all outcomes for the authenticated user."""
@@ -82,7 +82,7 @@ async def list_outcomes(
 async def list_tracker_rows(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List rows from job_search_tracker.csv with pagination."""
@@ -91,7 +91,7 @@ async def list_tracker_rows(
 
 @router.get("/calibration", response_model=CalibrationReport)
 async def get_calibration_report(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Generate a calibration report based on all recorded outcomes.

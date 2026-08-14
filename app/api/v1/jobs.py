@@ -26,6 +26,7 @@ async def search(
 @router.get("/search/{ingest_job_id}/status", response_model=IngestStatusResponse)
 async def ingest_status(
     ingest_job_id: str,
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     return await get_ingest_status(db, ingest_job_id)

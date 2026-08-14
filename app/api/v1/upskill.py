@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_max_or_admin
+from app.api.deps import require_max_or_admin
 from app.db.models import CandidateProfile, Upskill
 from app.db.session import get_db as _get_db
 from app.exceptions import ProfileIncompleteError
@@ -69,7 +69,7 @@ async def trigger_upskill(
 @router.get("/{upskill_id}", response_model=UpskillOut)
 async def get_upskill(
     upskill_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Get an upskill analysis by ID."""
@@ -80,7 +80,7 @@ async def get_upskill(
 async def list_upskills(
     limit: int = 20,
     offset: int = 0,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List all upskill analyses for the authenticated user.

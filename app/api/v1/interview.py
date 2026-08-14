@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_locale, require_max_or_admin
+from app.api.deps import get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.db.models import InterviewPrep
 from app.db.session import get_db as _get_db
@@ -52,7 +52,7 @@ async def trigger_interview_prep(
 @router.get("/{prep_id}", response_model=InterviewPrepOut)
 async def get_interview_prep(
     prep_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Get an interview preparation pack by ID."""
@@ -63,7 +63,7 @@ async def get_interview_prep(
 async def list_interview_preps(
     limit: int = 20,
     offset: int = 0,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List all interview preparation packs for the authenticated user."""

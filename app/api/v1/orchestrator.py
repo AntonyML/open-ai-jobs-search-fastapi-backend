@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db, require_max_or_admin
 from app.core.security import decode_access_token
 from app.schemas.orchestrator import (
     ExecutionJobOut,
@@ -46,7 +46,7 @@ router = APIRouter(prefix="/orchestrator", tags=["orchestrator"])
 
 @router.get("/queue", response_model=QueueStatusOut)
 async def get_queue_status(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(get_db),
     orchestrator: LLMOrchestrator = Depends(get_orchestrator),
 ):
@@ -66,7 +66,7 @@ async def get_queue_status(
 @router.post("/queue/control", response_model=QueueControlResult)
 async def control_queue(
     payload: QueueControlRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(get_db),
     orchestrator: LLMOrchestrator = Depends(get_orchestrator),
 ):
@@ -91,7 +91,7 @@ async def control_queue(
 @router.get("/jobs/{job_id}", response_model=ExecutionJobOut | None)
 async def get_execution_job(
     job_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(get_db),
     orchestrator: LLMOrchestrator = Depends(get_orchestrator),
 ):
@@ -104,7 +104,7 @@ async def get_execution_job(
 
 @router.get("/providers", response_model=ProviderListOut)
 async def get_provider_health(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(get_db),
     orchestrator: LLMOrchestrator = Depends(get_orchestrator),
 ):
@@ -126,7 +126,7 @@ async def get_provider_health(
 @router.get("/models", response_model=ModelListOut)
 async def get_model_health(
     provider: str | None = Query(None, description="Filter by provider"),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(get_db),
     orchestrator: LLMOrchestrator = Depends(get_orchestrator),
 ):

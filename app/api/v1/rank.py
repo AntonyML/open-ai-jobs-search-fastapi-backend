@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_locale, require_max_or_admin
+from app.api.deps import get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.core.settings import get_settings
 from app.db.models import ExecutionJob
@@ -73,7 +73,7 @@ async def trigger_rank(
 @router.get("/status/{job_id}")
 async def rank_status(
     job_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     locale: str = Depends(get_locale),
 ):
     """Get the status of a ranking job. Only returns jobs owned by the authenticated user."""
@@ -86,7 +86,7 @@ async def rank_status(
 @router.post("/cancel/{job_id}")
 async def cancel_rank(
     job_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     locale: str = Depends(get_locale),
 ):
     """Cancel a ranking job. Only cancels if owned by the authenticated user."""
@@ -98,7 +98,7 @@ async def cancel_rank(
 
 @router.get("/jobs/count")
 async def get_jobs_count(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Get count of total jobs to rank and how many are already ranked."""
@@ -111,7 +111,7 @@ async def list_ranked_jobs_endpoint(
     verdict: str | None = Query(None, pattern="^(Strong Fit|Good Fit|Moderate Fit|Weak Fit|Poor Fit)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List ranked jobs with optional filters."""
@@ -128,7 +128,7 @@ async def list_ranked_jobs_endpoint(
 @router.get("/jobs/{job_id}/evaluation", response_model=RankEvaluationOutSchema)
 async def get_job_evaluation(
     job_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Get the detailed rank evaluation for a specific job."""

@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_locale, require_max_or_admin
+from app.api.deps import require_max_or_admin
 from app.core.i18n.locale import t
 from app.db.models import CandidateProfile, CompetencyExpansion
 from app.db.session import get_db as _get_db
@@ -73,7 +73,7 @@ async def trigger_expand(
 @router.get("/{expansion_id}", response_model=CompetencyExpansionOut)
 async def get_expansion(
     expansion_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """Get a competency expansion by ID."""
@@ -84,7 +84,7 @@ async def get_expansion(
 async def list_expansions(
     limit: int = 20,
     offset: int = 0,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_max_or_admin),
     db: AsyncSession = Depends(_get_db),
 ):
     """List all competency expansions for the authenticated user.
