@@ -6,7 +6,6 @@ import pytest
 
 from app.exceptions import LLMError, ProviderAuthError, WebSearchUnavailableError
 from app.llm.adapter import has_web_search_support, llm_completion_with_web_search
-from app.services import apply_json
 from app.services.apply_json import adapt_cv_llm_with_url
 
 SAMPLE_ANALYSIS = {
@@ -40,9 +39,16 @@ def test_has_web_search_support_true_for_search_models():
     assert has_web_search_support("openai/gpt-4o-search-preview") is True
 
 
+def test_has_web_search_support_true_for_anthropic():
+    """Claude exposes the native web_fetch server tool on the API."""
+    assert has_web_search_support("anthropic/claude-sonnet-4-5") is True
+    assert has_web_search_support("anthropic/claude-opus-4-1") is True
+    assert has_web_search_support("anthropic/claude-sonnet-4-6") is True
+
+
 def test_has_web_search_support_false_for_plain_models():
     assert has_web_search_support("openai/gpt-4o") is False
-    assert has_web_search_support("anthropic/claude-sonnet-4-20250514") is False
+    assert has_web_search_support("nvidia_nim/meta/llama-3.3-70b-instruct") is False
 
 
 # ── llm_completion_with_web_search (adapter) ───────────────────────
@@ -79,30 +85,64 @@ async def test_llm_completion_with_web_search_extracts_text():
 
 
 async def test_llm_completion_with_web_search_raises_on_empty():
-    with patch("app.llm.adapter.responses", new=AsyncMock(return_value=FakeResponse([]))):
-        with pytest.raises(LLMError):
-            await llm_completion_with_web_search(
-                messages=[{"role": "user", "content": "hi"}],
-                provider="openai",
-                model="gpt-5",
-            )
+    with (
+        patch("app.llm.adapter.responses", new=AsyncMock(return_value=FakeResponse([]))),
+        pytest.raises(LLMError),
+    ):
+        await llm_completion_with_web_search(
+            messages=[{"role": "user", "content": "hi"}],
+            provider="openai",
+            model="gpt-5",
+        )
+
+
+async def test_llm_completion_with_web_search_anthropic_uses_web_fetch():
+    """For Claude, the call goes through acompletion with the web_fetch server tool."""
+
+    class FakeMessage:
+        content = "Adapted CV JSON"
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeResp:
+        choices = [FakeChoice()]
+
+    with patch(
+        "app.llm.adapter.litellm.acompletion",
+        new=AsyncMock(return_value=FakeResp()),
+    ) as mock_acompletion:
+        text = await llm_completion_with_web_search(
+            messages=[{"role": "user", "content": f"Read {URL} and adapt"}],
+            provider="anthropic",
+            model="claude-sonnet-4-5",
+        )
+
+    assert text == "Adapted CV JSON"
+    kwargs = mock_acompletion.call_args.kwargs
+    assert kwargs["model"] == "anthropic/claude-sonnet-4-5"
+    assert kwargs["tools"] == [
+        {"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 3}
+    ]
 
 
 async def test_llm_completion_with_web_search_auth_error():
     from litellm.exceptions import AuthenticationError
 
-    with patch(
-        "app.llm.adapter.responses",
-        new=AsyncMock(
-            side_effect=AuthenticationError("bad key", llm_provider="openai", model="gpt-5")
+    with (
+        patch(
+            "app.llm.adapter.responses",
+            new=AsyncMock(
+                side_effect=AuthenticationError("bad key", llm_provider="openai", model="gpt-5")
+            ),
         ),
+        pytest.raises(ProviderAuthError),
     ):
-        with pytest.raises(ProviderAuthError):
-            await llm_completion_with_web_search(
-                messages=[{"role": "user", "content": "hi"}],
-                provider="openai",
-                model="gpt-5",
-            )
+        await llm_completion_with_web_search(
+            messages=[{"role": "user", "content": "hi"}],
+            provider="openai",
+            model="gpt-5",
+        )
 
 
 # ── adapt_cv_llm_with_url (service) ────────────────────────────────
@@ -116,10 +156,29 @@ async def test_adapt_cv_llm_with_url_rejects_model_without_web_search():
         pytest.raises(WebSearchUnavailableError),
     ):
         await adapt_cv_llm_with_url(
-            CANDIDATE, BASE_CV_JSON, URL, {"provider": "anthropic", "model": "claude-sonnet-4-20250514"}
+            CANDIDATE,
+            BASE_CV_JSON,
+            URL,
+            {"provider": "nvidia_nim", "model": "meta/llama-3.3-70b-instruct"},
         )
 
     mock_llm.assert_not_awaited()
+
+
+async def test_adapt_cv_llm_with_url_allows_anthropic():
+    """Claude supports web_fetch, so the URL flow runs for Anthropic models."""
+    with patch(
+        "app.services.apply_json._llm_json",
+        new=AsyncMock(side_effect=[SAMPLE_ANALYSIS, SAMPLE_OUTPUT]),
+    ) as mock_llm:
+        analysis, output = await adapt_cv_llm_with_url(
+            CANDIDATE, BASE_CV_JSON, URL, {"provider": "anthropic", "model": "claude-sonnet-4-5"}
+        )
+
+    assert analysis == SAMPLE_ANALYSIS
+    assert output == SAMPLE_OUTPUT
+    for call in mock_llm.await_args_list:
+        assert call.kwargs.get("web_search") is True
 
 
 async def test_adapt_cv_llm_with_url_passes_url_and_web_search():

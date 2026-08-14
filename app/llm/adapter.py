@@ -147,12 +147,20 @@ async def llm_completion(
 
 
 def has_web_search_support(model: str) -> bool:
-    """Whether the given provider/model supports the OpenAI ``web_search`` tool.
+    """Whether the given provider/model can open URLs at inference time.
 
-    Only models with native web access (e.g. ``gpt-5``, ``gpt-4o-search-preview``)
-    can open a URL at inference time. The provider's own infrastructure fetches
-    the page — our backend never scrapes.
+    - Anthropic: Claude exposes the ``web_fetch`` / ``web_search`` server tools
+      on the API, so every Claude model can read a URL (basic
+      ``web_fetch_20250910`` for maximum compatibility).
+    - Other providers: falls back to LiteLLM's ``web_search`` support, i.e. the
+      OpenAI search models (``gpt-5``, ``gpt-4o-search-preview``).
+
+    In every case the provider's own infrastructure fetches the page under its
+    agreements — our backend never scrapes.
     """
+    provider = model.split("/", 1)[0] if "/" in model else ""
+    if provider == "anthropic":
+        return True
     try:
         return bool(supports_web_search(model))
     except Exception:
@@ -168,15 +176,26 @@ async def llm_completion_with_web_search(
     api_base: str | None = None,
     max_tokens: int = 4096,
 ) -> str:
-    """Chat completion with the OpenAI ``web_search`` tool (Responses API).
+    """Chat completion with native web access (web_search / web_fetch).
 
     Use when the prompt references a public URL (e.g. "adapt my CV to the job
     at <link>"): the provider fetches and reads the page under its own
-    agreements, so we never scrape from our servers. Only works for models
-    with web access (see ``has_web_search_support``).
+    agreements, so we never scrape from our servers. Provider-specific:
+
+    - Anthropic → ``acompletion`` with the ``web_fetch_20250910`` server tool.
+    - OpenAI → Responses API with the ``web_search`` tool.
 
     Raises ``ProviderAuthError`` / ``LLMError`` like ``llm_completion``.
     """
+    if provider == "anthropic":
+        return await _anthropic_web_fetch_completion(
+            messages=messages,
+            model=model,
+            api_key=api_key,
+            api_base=api_base,
+            max_tokens=max_tokens,
+        )
+
     model_ref = f"{provider}/{model}"
 
     try:
@@ -216,6 +235,55 @@ async def llm_completion_with_web_search(
     if not text:
         raise LLMError("LLM returned empty response")
     return text
+
+
+async def _anthropic_web_fetch_completion(
+    messages: list[dict[str, str]],
+    *,
+    model: str,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    max_tokens: int,
+) -> str:
+    """Claude chat completion with the native ``web_fetch`` server tool.
+
+    ``web_fetch`` is a server tool: the API fetches the URL (referenced in the
+    prompt) on Anthropic's infrastructure and inserts the page content into
+    the conversation — we never run anything or scrape. Basic tool version
+    ``web_fetch_20250910`` for maximum model compatibility.
+
+    Raises ``ProviderAuthError`` / ``LLMError`` like ``llm_completion``.
+    """
+    try:
+        response = await litellm.acompletion(
+            model=f"anthropic/{model}",
+            messages=messages,
+            api_key=api_key,
+            api_base=api_base,
+            tools=[{"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 3}],
+            max_tokens=max_tokens,
+            timeout=settings.llm_timeout,
+        )
+    except litellm.exceptions.AuthenticationError as exc:
+        raise ProviderAuthError(str(exc)) from exc
+    except litellm.exceptions.BadRequestError as exc:
+        raise LLMError(f"LLM request error: {exc}") from exc
+    except litellm.exceptions.RateLimitError as exc:
+        raise LLMError(f"LLM rate-limited: {exc}") from exc
+    except litellm.exceptions.Timeout as exc:
+        raise LLMError(f"LLM timed out: {exc}") from exc
+    except Exception as exc:
+        raise LLMError(f"LLM call failed: {exc}") from exc
+
+    message = response.choices[0].message
+    content = message.content
+    if isinstance(content, list):
+        content = "\n".join(
+            part.get("text", "") for part in content if isinstance(part, dict)
+        ).strip()
+    if not content:
+        raise LLMError("LLM returned empty response")
+    return content
 
 
 async def llm_completion_structured(
