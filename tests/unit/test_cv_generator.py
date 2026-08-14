@@ -9,12 +9,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.models import Base, CandidateProfile, GeneratedCV, JobPosting, User
+from sqlalchemy import select
+
+from app.db.models import AppNotification, Base, CandidateProfile, GeneratedCV, JobPosting, User
 from app.exceptions import (
     NotFoundError,
     PreconditionError,
     ProfileIncompleteError,
     ProviderAuthError,
+    WebSearchUnavailableError,
 )
 from app.services import cv_generator
 
@@ -531,7 +534,7 @@ async def test_adapt_cv_from_url_persists_with_source(db_session):
 @patch(
     "app.services.cv_generator.adapt_cv_llm_with_url",
     new=AsyncMock(
-        side_effect=PreconditionError(
+        side_effect=WebSearchUnavailableError(
             "The configured AI model can't open links. Use a model with web search."
         )
     ),
@@ -544,11 +547,22 @@ async def test_adapt_cv_from_url_persists_with_source(db_session):
     "app.services.cv_generator.get_active_provider_config",
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
-async def test_adapt_cv_from_url_propagates_no_web_search_error(db_session):
-    """A model without web access surfaces the error without persisting anything."""
+async def test_adapt_cv_from_url_propagates_no_web_search_error_and_notifies_admin(db_session):
+    """A model without web access surfaces the error, persists nothing and
+    notifies the admin so the provider config gets fixed."""
+    admin = User(
+        id="admin-user-id",
+        email="admin@example.com",
+        hashed_password="fakehash",
+        full_name="Admin",
+        role="admin",
+    )
+    db_session.add(admin)
+    await db_session.commit()
+
     base = await cv_generator.generate_base_cv(db_session, "test-user-id")
 
-    with pytest.raises(PreconditionError, match="web search"):
+    with pytest.raises(WebSearchUnavailableError, match="web search"):
         await cv_generator.adapt_cv_from_url(
             db_session, "test-user-id", base.id, "https://www.example.com/job"
         )
@@ -556,6 +570,16 @@ async def test_adapt_cv_from_url_propagates_no_web_search_error(db_session):
     # No personalized CV was persisted.
     listed = await cv_generator.list_cvs(db_session, "test-user-id")
     assert [c.id for c in listed] == [base.id]
+
+    # The admin received an in-app notification about the config issue.
+    result = await db_session.execute(
+        select(AppNotification).where(AppNotification.user_id == "admin-user-id")
+    )
+    notes = list(result.scalars().all())
+    assert len(notes) == 1
+    assert notes[0].type == "provider_config_issue"
+    assert notes[0].payload["user_id"] == "test-user-id"
+    assert notes[0].payload["url"] == "https://www.example.com/job"
 
 
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())

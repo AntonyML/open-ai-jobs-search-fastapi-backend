@@ -60,8 +60,12 @@ class TestStaticModelsFor:
         assert len(result) > 0
         assert "claude-sonnet-4-5" in result
 
-    def test_openai_returns_none(self):
-        assert _static_models_for("openai") is None
+    def test_openai_returns_static_fallback_list(self):
+        """OpenAI has a static fallback list (includes web-search models)."""
+        result = _static_models_for("openai")
+        assert isinstance(result, list)
+        assert "gpt-5" in result
+        assert "gpt-4o-search-preview" in result
 
     def test_unknown_returns_none(self):
         assert _static_models_for("unknown_provider") is None

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.exceptions import LLMError, PreconditionError, ProviderAuthError
+from app.exceptions import LLMError, ProviderAuthError, WebSearchUnavailableError
 from app.llm.adapter import has_web_search_support, llm_completion_with_web_search
 from app.services import apply_json
 from app.services.apply_json import adapt_cv_llm_with_url
@@ -113,7 +113,7 @@ async def test_adapt_cv_llm_with_url_rejects_model_without_web_search():
     with (
         patch("app.services.apply_json.has_web_search_support", return_value=False),
         patch("app.services.apply_json._llm_json", new=AsyncMock()) as mock_llm,
-        pytest.raises(PreconditionError, match="web search"),
+        pytest.raises(WebSearchUnavailableError),
     ):
         await adapt_cv_llm_with_url(
             CANDIDATE, BASE_CV_JSON, URL, {"provider": "anthropic", "model": "claude-sonnet-4-20250514"}

@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 from app.core.logging import bind_context, get_logger
 from app.db.models import CandidateProfile, JobPosting, RankEvaluation
-from app.exceptions import LLMError, PreconditionError
+from app.exceptions import LLMError, WebSearchUnavailableError
 from app.llm.adapter import (
     has_web_search_support,
     llm_completion,
@@ -978,7 +978,7 @@ async def adapt_cv_llm_with_url(
         f"{provider_config.get('provider', '')}/{provider_config.get('model', '')}".strip("/")
     )
     if not has_web_search_support(model_ref):
-        raise PreconditionError(
+        raise WebSearchUnavailableError(
             "The configured AI model can't open links. Use a model with web "
             "search (e.g. gpt-5) or paste the job description instead."
         )

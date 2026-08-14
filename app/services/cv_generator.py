@@ -33,6 +33,7 @@ from app.exceptions import (
     PreconditionError,
     ProfileIncompleteError,
     ProviderAuthError,
+    WebSearchUnavailableError,
 )
 from app.services.apply_json import (
     adapt_cv_llm,
@@ -40,6 +41,7 @@ from app.services.apply_json import (
     generate_base_cv_llm,
     personalize_cv_llm,
 )
+from app.services.notifications import notify_admin
 from app.services.pdf_compiler_typst import compile_cv
 from app.services.provider_config import get_active_provider_config
 from app.services.setup import get_profile
@@ -204,10 +206,32 @@ async def adapt_cv_from_url(
         )
 
     # The model reads the URL (provider web_search). If the configured model
-    # can't open links, this raises PreconditionError before any LLM call.
-    analysis_dict, output_dict = await adapt_cv_llm_with_url(
-        profile, base_cv.cv_json, url, provider_config,
-    )
+    # can't open links, this raises WebSearchUnavailableError before any LLM
+    # call — the admin is notified so the config issue gets fixed.
+    try:
+        analysis_dict, output_dict = await adapt_cv_llm_with_url(
+            profile, base_cv.cv_json, url, provider_config,
+        )
+    except WebSearchUnavailableError as exc:
+        await notify_admin(
+            db,
+            "provider_config_issue",
+            "URL adaptation unavailable: model has no web search",
+            (
+                f"User {user_id} tried to adapt a CV by URL but the configured "
+                f"model {provider_config.get('provider')}/{provider_config.get('model')} "
+                "cannot open links. Configure a web-search capable model "
+                "(e.g. OpenAI gpt-5) to enable the feature."
+            ),
+            payload={
+                "user_id": user_id,
+                "provider": provider_config.get("provider"),
+                "model": provider_config.get("model"),
+                "url": url,
+            },
+        )
+        raise
+
     return await _persist_and_compile(
         db, user_id,
         cv_type="personalized",

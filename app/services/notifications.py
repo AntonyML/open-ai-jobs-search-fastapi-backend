@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AppConfig, AppNotification
+from app.db.models import AppConfig, AppNotification, User
 
 # TTL: notifications older than this are purged lazily on read.
 NOTIFICATION_TTL_DAYS = 30
@@ -15,6 +15,37 @@ NOTIFICATION_TTL_DAYS = 30
 # AppConfig key where the admin-tunable TTL (days) lives.  Stored as
 # {"days": N} to match the ``credit_costs`` AppConfig pattern.
 NOTIFICATION_TTL_CONFIG_KEY = "notification_ttl_days"
+
+
+async def notify_admin(
+    db: AsyncSession,
+    type_: str,
+    title: str,
+    body: str | None = None,
+    payload: dict | None = None,
+) -> bool:
+    """Create an in-app notification for the first admin user.
+
+    Returns ``True`` when an admin exists and the notification was created,
+    ``False`` otherwise (no admin configured).
+    """
+    result = await db.execute(
+        select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1)
+    )
+    admin = result.scalar_one_or_none()
+    if admin is None:
+        return False
+    db.add(
+        AppNotification(
+            user_id=admin.id,
+            type=type_,
+            title=title,
+            body=body,
+            payload=payload,
+        )
+    )
+    await db.flush()
+    return True
 
 
 async def get_notification_ttl_days(db: AsyncSession) -> int:

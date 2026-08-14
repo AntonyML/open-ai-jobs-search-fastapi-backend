@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_api_key, encrypt_api_key
 from app.db.models import GLOBAL_PROVIDER_CONFIG_ID, GlobalProviderConfig
+from app.llm.adapter import has_web_search_support
 
 # Sentinel sent by the admin frontend when editing without changing the key.
 MASKED_KEY = "__MASKED__"
@@ -83,10 +84,11 @@ async def get_global_provider_config_out(db: AsyncSession) -> dict[str, Any]:
     row = await get_global_provider_config(db)
 
     if row is not None and row.provider:
+        model = row.model or (await _default_model_for(row.provider))
         return {
             "provider": row.provider,
             "display_name": PROVIDER_DISPLAY_MAP.get(row.provider),
-            "model": row.model or (await _default_model_for(row.provider)),
+            "model": model,
             "api_base": row.api_base,
             "has_key": bool(row.api_key_encrypted),
             "last_status": row.last_status,
@@ -94,16 +96,18 @@ async def get_global_provider_config_out(db: AsyncSession) -> dict[str, Any]:
             "last_checked_at": row.last_checked_at,
             "updated_by": row.updated_by,
             "updated_at": row.updated_at,
+            "web_search_enabled": _web_search_for(row.provider, model),
         }
 
     from app.core.settings import get_settings
 
     settings = get_settings()
     display = PROVIDER_DISPLAY_MAP.get(settings.llm_default_provider)
+    model = await _default_model_for(settings.llm_default_provider)
     return {
         "provider": settings.llm_default_provider,
         "display_name": display,
-        "model": await _default_model_for(settings.llm_default_provider),
+        "model": model,
         "api_base": None,
         "has_key": False,
         "last_status": None,
@@ -111,7 +115,15 @@ async def get_global_provider_config_out(db: AsyncSession) -> dict[str, Any]:
         "last_checked_at": None,
         "updated_by": None,
         "updated_at": None,
+        "web_search_enabled": _web_search_for(settings.llm_default_provider, model),
     }
+
+
+def _web_search_for(provider: str | None, model: str | None) -> bool:
+    """Whether the given provider/model combination supports the web_search tool."""
+    if not provider or not model:
+        return False
+    return has_web_search_support(f"{provider}/{model}")
 
 
 async def set_global_provider_config(

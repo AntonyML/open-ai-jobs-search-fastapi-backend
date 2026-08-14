@@ -93,6 +93,16 @@ class PreconditionError(AppError):
         super().__init__(message or _t("errors.precondition_failed", locale), locale=locale)
 
 
+class WebSearchUnavailableError(PreconditionError):
+    """The configured AI model cannot open URLs (no web search support).
+
+    Surfaced to the client as a friendly, localized message via its ``code``
+    (the technical detail stays server-side and is notified to the admin).
+    """
+
+    code = "web_search_unavailable"
+
+
 # ── Exception handlers (registered in create_app) ────────────────
 
 

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db, get_locale
 from app.core.i18n.locale import t
 from app.core.settings import get_settings
-from app.db.models import AppNotification, User
+from app.db.models import User
 from app.schemas.billing import (
     CreditStatusOut,
     CreditTransactionOut,
@@ -30,6 +30,7 @@ from app.schemas.billing import (
 )
 from app.services import credits
 from app.services.email import send_purchase_request
+from app.services.notifications import notify_admin
 from app.services.plans import build_catalog, get_plan
 from app.services.subscriptions import (
     ensure_admin_subscription,
@@ -50,22 +51,7 @@ async def _notify_admin(
     payload: dict | None = None,
 ) -> None:
     """Create an in-app notification for the first admin user."""
-    result = await db.execute(
-        select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1)
-    )
-    admin = result.scalar_one_or_none()
-    if admin is None:
-        return
-    db.add(
-        AppNotification(
-            user_id=admin.id,
-            type=type_,
-            title=title,
-            body=body,
-            payload=payload,
-        )
-    )
-    await db.flush()
+    await notify_admin(db, type_, title, body, payload)
 
 
 @router.get("/status", response_model=CreditStatusOut)

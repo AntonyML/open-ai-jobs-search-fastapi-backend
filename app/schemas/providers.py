@@ -74,6 +74,11 @@ class ProviderInfo(BaseModel):
         None,
         description="Curated static model list for providers without a public list-models endpoint (e.g. Anthropic).",
     )
+    web_search_models: list[str] = Field(
+        default_factory=list,
+        description="Models of this provider that support the web_search tool "
+        "(used by the adapt-by-URL feature).",
+    )
 
 
 class ActiveProviderOut(BaseModel):
@@ -165,6 +170,10 @@ class AdminProviderConfigOut(BaseModel):
     last_checked_at: datetime | None = None
     updated_by: str | None = None
     updated_at: datetime | None = None
+    web_search_enabled: bool = Field(
+        default=False,
+        description="Whether the configured model supports web search (adapt-by-URL capability).",
+    )
 
 
 # ── Known providers catalog ─────────────────────────────────────────
@@ -190,6 +199,23 @@ KNOWN_PROVIDERS: list[ProviderInfo] = [
         requires_api_key=True,
         supports_custom_base=False,
         default_model="gpt-4.1",  # was: gpt-4o (retired from ChatGPT, gpt-4.1 es el sucesor API-first)
+        static_models=[
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-4o-search-preview",
+            "gpt-4o-mini-search-preview",
+            "gpt-4.1",
+            "gpt-4o-mini",
+        ],
+        web_search_models=[
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-4o-search-preview",
+            "gpt-4o-mini-search-preview",
+            "gpt-4.1",
+        ],
     ),
     ProviderInfo(
         name="nvidia_nim",
