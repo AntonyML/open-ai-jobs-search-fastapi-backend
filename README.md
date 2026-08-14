@@ -435,8 +435,8 @@ Todos bajo `/api/v1` (salvo el WebSocket).
 
 > **Modelo de planes** (seeded en `app/services/plans.py`, editable desde `/api/v1/admin/plans`):
 > - **free** — 2 créditos/semana (1 CV base + 1 CV adaptado). Pipeline bloqueado.
-> - **pro** — 100 créditos por período ($19.99/mes o $200/año). Solo CV Builder.
-> - **max** — 500 créditos por período + cuotas (20/día, 80/semana). Todas las funciones de búsqueda: búsqueda, ranking, postulaciones, entrevistas, expand y upskill ($59.99/mes o $600/año).
+> - **pro** — 100 créditos por período ($19.99/mes o $199/año). Solo CV Builder.
+> - **max** — 500 créditos por período + cuotas (20/día, 80/semana). Todas las funciones de búsqueda: búsqueda, ranking, postulaciones, entrevistas, expand y upskill ($59.99/mes o $599/año).
 
 ### Providers — Configuración LLM
 

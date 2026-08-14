@@ -482,3 +482,112 @@ async def test_adapt_cv_requires_active_base(db_session):
 
     # Active base still adapts fine.
     await cv_generator.adapt_cv(db_session, "test-user-id", second.id, "job-active-1")
+
+
+# ── Adapt by URL (all plans) ────────────────────────────────────────
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.fetch_job_page",
+    new=AsyncMock(
+        return_value={
+            "title": "Senior Python Engineer",
+            "text": "We are hiring a Senior Python Engineer with FastAPI and Kubernetes... " * 5,
+        }
+    ),
+)
+@patch(
+    "app.services.cv_generator.adapt_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_adapt_cv_from_url_persists_with_source(db_session):
+    """Adapting by URL stores a new personalized CV with job_url + text."""
+    base = await cv_generator.generate_base_cv(db_session, "test-user-id")
+
+    adapted = await cv_generator.adapt_cv_from_url(
+        db_session,
+        "test-user-id",
+        base.id,
+        "https://www.linkedin.com/jobs/view/4415693439",
+    )
+
+    assert adapted.cv_type == "personalized"
+    assert adapted.job_url == "https://www.linkedin.com/jobs/view/4415693439"
+    assert adapted.job_posting_id is None
+    assert "Senior Python Engineer" in adapted.job_description_text
+    assert adapted.analysis["match_score"] == 78
+    assert adapted.id != base.id
+
+    # Rule 6 — base CV untouched
+    await db_session.refresh(base)
+    assert base.cv_type == "base"
+    assert base.base_status == "active"
+
+    listed = await cv_generator.list_cvs(db_session, "test-user-id")
+    assert {c.id for c in listed} == {base.id, adapted.id}
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.fetch_job_page",
+    new=AsyncMock(side_effect=PreconditionError("That URL points to a private address.")),
+)
+@patch(
+    "app.services.cv_generator.adapt_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_adapt_cv_from_url_propagates_fetch_error(db_session):
+    """A blocked/invalid URL surfaces the fetch error without spending credits."""
+    base = await cv_generator.generate_base_cv(db_session, "test-user-id")
+
+    with pytest.raises(PreconditionError, match="private address"):
+        await cv_generator.adapt_cv_from_url(
+            db_session, "test-user-id", base.id, "https://internal.example/job"
+        )
+
+    # No personalized CV was persisted.
+    listed = await cv_generator.list_cvs(db_session, "test-user-id")
+    assert [c.id for c in listed] == [base.id]
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.adapt_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_adapt_cv_from_url_requires_active_base(db_session):
+    """Rule 4 — only the ACTIVE base CV can be adapted by URL."""
+    first = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await db_session.refresh(first)
+    assert first.base_status == "obsolete"
+
+    with pytest.raises(PreconditionError):
+        await cv_generator.adapt_cv_from_url(
+            db_session, "test-user-id", first.id, "https://www.example.com/job"
+        )

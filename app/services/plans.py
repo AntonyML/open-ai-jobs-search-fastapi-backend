@@ -9,7 +9,7 @@ Current model (confirmed with the owner):
 
 - **free**   — 2 credits/week (enough to test 1 base CV + 1 adapted CV),
                pipeline locked. Credits refill weekly, never accumulate.
-- **pro**    — credits per period ($19.99/mo or $200/yr). CV builder only.
+- **pro**    — credits per period ($19.99/mo or $199/yr). CV builder only.
 - **max**    — pipeline + everything ($59.99/mo). Still rate-limited by
                daily/weekly quotas — nothing is truly unlimited.
 """
@@ -57,7 +57,7 @@ DEFAULT_PLANS: list[dict[str, Any]] = [
         "name": "Pro",
         "description": "Créditos para seguir generando y adaptando tu CV.",
         "price_monthly_usd": 19.99,
-        "price_yearly_usd": 200.0,
+        "price_yearly_usd": 199.0,
         "credits_per_period": 100,
         "refill_cadence": "period",
         "refill_weekday": 0,
@@ -75,7 +75,7 @@ DEFAULT_PLANS: list[dict[str, Any]] = [
             "con cuotas diarias/semanales."
         ),
         "price_monthly_usd": 59.99,
-        "price_yearly_usd": 600.0,
+        "price_yearly_usd": 599.0,
         "credits_per_period": 500,
         "refill_cadence": "period",
         "refill_weekday": 0,

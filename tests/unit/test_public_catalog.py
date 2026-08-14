@@ -45,7 +45,7 @@ async def _seed_plans(db: AsyncSession) -> None:
         key="pro",
         name="Pro",
         price_monthly_usd=19.99,
-        price_yearly_usd=200.0,
+        price_yearly_usd=199.0,
         credits_per_period=100,
         refill_cadence="period",
         daily_quota=0,

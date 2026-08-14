@@ -29,7 +29,7 @@ async def trigger_interview_prep(
     """Generate interview preparation pack for an application."""
     tier = user.get("tier", "free")
     max_prepare = get_tier_limits(tier).get("max_prepare_count")
-    if max_prepare is not None and tier != "premium":
+    if max_prepare is not None and tier == "free":
         result = await db.execute(select(func.count()).where(InterviewPrep.user_id == user["sub"]))
         prep_count = result.scalar()
         if prep_count >= max_prepare:

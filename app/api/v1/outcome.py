@@ -35,7 +35,7 @@ async def create_outcome(
     """
     tier = user.get("tier", "free")
     max_track = get_tier_limits(tier).get("max_track_count")
-    if max_track is not None and tier != "premium":
+    if max_track is not None and tier == "free":
         result = await db.execute(select(func.count()).where(Outcome.user_id == user["sub"]))
         track_count = result.scalar()
         if track_count >= max_track:

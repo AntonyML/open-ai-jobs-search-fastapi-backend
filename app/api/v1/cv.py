@@ -22,6 +22,7 @@ from app.api.deps import get_current_user, get_db
 from app.db.models import GeneratedCV
 from app.schemas.cv import (
     CVAnalysis,
+    CVAdaptUrlCreate,
     CVBaseCreate,
     CVJobOut,
     CVPersonalizeCreate,
@@ -185,6 +186,26 @@ async def create_adapted_cv(
     await _enforce_credit_gate(db, user, "cv_adapted")
     record = await cv_generator.adapt_cv(
         db, user["sub"], payload.base_cv_id, payload.job_posting_id
+    )
+    return _to_response(record)
+
+
+@router.post("/adapt-url", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
+async def create_adapted_cv_from_url(
+    payload: CVAdaptUrlCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Adapt the user's base CV to a job posting fetched live from a URL.
+
+    Available on every plan (credit-gated): the URL is fetched server-side
+    and its extracted text feeds the same adapt pipeline as the internal
+    offers. The base CV is never modified; a new adapted CV is stored with
+    ``job_url`` set to the source link.
+    """
+    await _enforce_credit_gate(db, user, "cv_adapted")
+    record = await cv_generator.adapt_cv_from_url(
+        db, user["sub"], payload.base_cv_id, payload.url
     )
     return _to_response(record)
 

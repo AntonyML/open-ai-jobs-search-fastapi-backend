@@ -11,16 +11,6 @@ from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-# The new billing system tiers: max grants full pipeline access.  These
-# limits mirror the old premium limits so the usage widget stays accurate
-# for users whose subscription was activated by the admin.
-_MAX_LIMITS: dict[str, int | bool | str] = {
-    "max_rank_iterations": 100,
-    "max_apply_count": 1000,
-    "max_prepare_count": 1000,
-    "max_track_count": 1000,
-}
-
 
 @router.get("/usage")
 async def get_user_usage(
@@ -34,7 +24,7 @@ async def get_user_usage(
     """
     uid = user["sub"]
     tier = user.get("tier", "free")
-    limits = _MAX_LIMITS if tier == "max" else get_tier_limits(tier)
+    limits = get_tier_limits(tier)
 
     apps = select(func.count()).where(Application.user_id == uid)
     preps = select(func.count()).where(InterviewPrep.user_id == uid)

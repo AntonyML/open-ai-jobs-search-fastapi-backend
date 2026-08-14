@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
@@ -20,7 +21,7 @@ from app.db.models import CandidateProfile, JobPosting, RankEvaluation
 from app.exceptions import LLMError
 from app.llm.adapter import llm_completion
 from app.schemas.apply import ReviewFeedback
-from app.schemas.cv import CV, CVAnalysis, CoverLetter, CVMetadata, GenerateCVOutput
+from app.schemas.cv import CV, CoverLetter, CVAnalysis, CVMetadata, GenerateCVOutput
 from app.services.orchestrator.llm_response_sanitizer import (
     default_field_constraints,
     sanitize_llm_response,
@@ -683,7 +684,29 @@ async def personalize_cv_llm(
 # ── CV adapter LLM functions (FASE — Perfil → CV base → CV adaptado) ────
 
 
-def _build_adapt_job_summary(job: JobPosting) -> str:
+@dataclass
+class AdaptJobContext:
+    """Minimal job context for the adapt prompts when there is no stored
+    ``JobPosting`` row — e.g. a job fetched live from a public URL.
+
+    Mirrors the ``JobPosting`` attributes ``_build_adapt_job_summary`` reads,
+    so both the internal-offer flow and the by-URL flow share one prompt path.
+    """
+
+    title: str
+    description: str
+    company: str | None = None
+    location: str | None = None
+    employment_type: str | None = None
+    salary: str | None = None
+    language: str | None = None
+    requirements: list[str] | None = field(default_factory=list)
+
+
+JobContext = JobPosting | AdaptJobContext
+
+
+def _build_adapt_job_summary(job: JobContext) -> str:
     """Plain-text summary of a stored JobPosting for adaptation context."""
     parts = [
         f"Title: {job.title}",
@@ -708,7 +731,7 @@ def _build_adapt_job_summary(job: JobPosting) -> str:
 def build_adapt_analysis_prompt(
     candidate: CandidateProfile,
     base_cv_json: dict[str, Any],
-    job: JobPosting,
+    job: JobContext,
 ) -> list[dict[str, str]]:
     """Recruiter-lens analysis using the base CV as the candidate representation."""
     candidate_summary = _build_candidate_summary(candidate)
@@ -750,7 +773,7 @@ Output a valid CVAnalysis JSON object.
 def build_adapt_drafter_prompt(
     candidate: CandidateProfile,
     base_cv_json: dict[str, Any],
-    job: JobPosting,
+    job: JobContext,
     analysis: CVAnalysis,
 ) -> list[dict[str, str]]:
     """Drafter prompt — adapts the base CV to the job posting (never invents)."""
@@ -802,7 +825,7 @@ Output a valid GenerateCVOutput JSON object.
 async def adapt_cv_llm(
     candidate: CandidateProfile,
     base_cv_json: dict[str, Any],
-    job: JobPosting,
+    job: JobContext,
     provider_config: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run the two-step adapt pipeline: recruiter analysis → drafter.

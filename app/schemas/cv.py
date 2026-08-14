@@ -388,6 +388,23 @@ class CVPersonalizeJobCreate(BaseModel):
     job_posting_id: str = Field(..., description="ID of an existing job posting (offer).")
 
 
+class CVAdaptUrlCreate(BaseModel):
+    """Request for POST /cv/adapt-url — adapt the base CV to a job link.
+
+    Available on every plan: the backend fetches the public URL and feeds the
+    extracted job text to the same adapt pipeline. The URL is stored on the
+    resulting CV (``job_url``) for reference.
+    """
+
+    base_cv_id: str = Field(..., description="ID of the user's base CV.")
+    url: str = Field(
+        ...,
+        description="Public URL of the job posting (http/https).",
+        min_length=8,
+        max_length=2048,
+    )
+
+
 class CVJobOut(BaseModel):
     """Lightweight reference to the job posting an adapted CV was generated from."""
 

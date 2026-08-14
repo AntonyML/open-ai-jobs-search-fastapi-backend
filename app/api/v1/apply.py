@@ -38,7 +38,7 @@ async def trigger_apply(
     """
     tier = user.get("tier", "free")
     max_apply = get_tier_limits(tier).get("max_apply_count")
-    if max_apply is not None and tier != "premium":
+    if max_apply is not None and tier == "free":
         result = await db.execute(select(func.count()).where(Application.user_id == user["sub"]))
         app_count = result.scalar()
         if app_count >= max_apply:
