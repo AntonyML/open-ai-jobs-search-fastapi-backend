@@ -76,7 +76,9 @@ async def _resolve_provider_or_raise(db: AsyncSession, user_id: str) -> dict[str
 # ── Generation ───────────────────────────────────────────────────────
 
 
-async def generate_base_cv(db: AsyncSession, user_id: str) -> GeneratedCV:
+async def generate_base_cv(
+    db: AsyncSession, user_id: str, usage: dict | None = None
+) -> GeneratedCV:
     """Generate a generic base CV (no job context) and persist it.
 
     Enforces the max-2 base CV invariant: the current active base is demoted
@@ -88,7 +90,7 @@ async def generate_base_cv(db: AsyncSession, user_id: str) -> GeneratedCV:
     profile = await _load_profile_or_raise(db, user_id)
     provider_config = await _resolve_provider_or_raise(db, user_id)
 
-    output_dict = await generate_base_cv_llm(profile, provider_config)
+    output_dict = await generate_base_cv_llm(profile, provider_config, usage=usage)
 
     # Max-2 rule: demote the current active base, hard-delete the previous one.
     await _demote_previous_bases(db, user_id)
@@ -106,13 +108,14 @@ async def personalize_cv(
     db: AsyncSession,
     user_id: str,
     job_description_text: str,
+    usage: dict | None = None,
 ) -> GeneratedCV:
     """Tailor a CV to a free-text job description and persist it."""
     profile = await _load_profile_or_raise(db, user_id)
     provider_config = await _resolve_provider_or_raise(db, user_id)
 
     analysis_dict, output_dict = await personalize_cv_llm(
-        profile, job_description_text, provider_config,
+        profile, job_description_text, provider_config, usage=usage,
     )
     return await _persist_and_compile(
         db, user_id,
@@ -128,6 +131,7 @@ async def adapt_cv(
     user_id: str,
     base_cv_id: str,
     job_posting_id: str,
+    usage: dict | None = None,
 ) -> GeneratedCV:
     """Adapt the user's base CV to an existing job posting.
 
@@ -159,7 +163,7 @@ async def adapt_cv(
         raise NotFoundError("Job posting not found.")
 
     analysis_dict, output_dict = await adapt_cv_llm(
-        profile, base_cv.cv_json, job, provider_config,
+        profile, base_cv.cv_json, job, provider_config, usage=usage,
     )
     return await _persist_and_compile(
         db, user_id,
@@ -177,6 +181,7 @@ async def adapt_cv_from_url(
     user_id: str,
     base_cv_id: str,
     url: str,
+    usage: dict | None = None,
 ) -> GeneratedCV:
     """Adapt the user's base CV to a job posting referenced by URL.
 
@@ -210,7 +215,7 @@ async def adapt_cv_from_url(
     # call — the admin is notified so the config issue gets fixed.
     try:
         analysis_dict, output_dict = await adapt_cv_llm_with_url(
-            profile, base_cv.cv_json, url, provider_config,
+            profile, base_cv.cv_json, url, provider_config, usage=usage,
         )
     except WebSearchUnavailableError as exc:
         await notify_admin(

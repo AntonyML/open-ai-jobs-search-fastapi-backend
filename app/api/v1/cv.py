@@ -30,7 +30,8 @@ from app.schemas.cv import (
     CVRecoverCreate,
     CVResponse,
 )
-from app.services import credits, cv_generator, subscriptions
+from app.services import credits, cv_generator
+from app.services.access_gate import enforce_action_gate
 from app.services.cv_generator import (
     build_pdf_url,
     resolve_pdf_path,
@@ -71,59 +72,21 @@ def _to_response(record: GeneratedCV) -> CVResponse:
     )
 
 
-async def _enforce_credit_gate(
+async def _record_usage_after(
     db: AsyncSession,
-    user: dict[str, Any],
-    action: str,
+    correlation_id: str | None,
+    usage: dict[str, Any],
 ) -> None:
-    """Gate CV generation on the new credits/quota system.
-
-    - Admin: never blocked.
-    - ``max`` plan: unlimited generation, but subject to daily/weekly quotas.
-    - free / pro: consumes credits from the account balance (402 when empty).
-
-    Raises 429 when the max quota is exhausted and 402 when credits run out
-    (the frontend maps 402 to the purchase modal).
-    """
-    access = await subscriptions.get_user_access(db, user)
-    if access["is_admin"]:
+    """Attach real token/cost usage to the ledger row, when one was created."""
+    if not correlation_id:
         return
-
-    plan = access["plan"]
-    if plan is not None and "pipeline" in access["features"]:
-        # max plan — quota-gated, not credit-gated.
-        ok = await credits.check_quota(db, user["sub"], plan)
-        if not ok:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=(
-                    "You reached the usage quota for this period. "
-                    "Please try again later or adjust limits in the admin panel."
-                ),
-            )
-        await credits.consume_quota(db, user["sub"], plan)
-        return
-
-    # free / pro — credit-gated.
-    required = await credits.get_action_cost(db, action)
-    if required <= 0:
-        return
-    can, account, correlation_id = await credits.check_credits(db, user["sub"], action, required)
-    if not can:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=(
-                "Not enough AI credits. Add credits or upgrade your plan. "
-                f"Correlation ID: {correlation_id}"
-            ),
-        )
-    await credits.consume_credits(
+    await credits.record_llm_usage(
         db,
-        user["sub"],
-        action,
-        required,
-        correlation_id=correlation_id,
-        description=f"{action}: CV generation",
+        correlation_id,
+        model_used=usage.get("model_used"),
+        tokens_input=usage.get("tokens_input", 0),
+        tokens_output=usage.get("tokens_output", 0),
+        cost_usd_cents=usage.get("cost_usd_cents", 0),
     )
 
 
@@ -134,8 +97,10 @@ async def create_base_cv(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a generic base CV from the candidate profile."""
-    await _enforce_credit_gate(db, user, "cv_base")
-    record = await cv_generator.generate_base_cv(db, user["sub"])
+    usage: dict[str, Any] = {"tokens_input": 0, "tokens_output": 0, "cost_usd_cents": 0, "model_used": None}
+    cid = await enforce_action_gate(db, user, "cv_base", label="Base CV generation")
+    record = await cv_generator.generate_base_cv(db, user["sub"], usage=usage)
+    await _record_usage_after(db, cid, usage)
     return _to_response(record)
 
 
@@ -164,8 +129,12 @@ async def create_personalized_cv(
     db: AsyncSession = Depends(get_db),
 ):
     """Tailor a CV to a free-text job description (no scraping, no URL)."""
-    await _enforce_credit_gate(db, user, "cv_base")
-    record = await cv_generator.personalize_cv(db, user["sub"], payload.job_description_text)
+    usage: dict[str, Any] = {"tokens_input": 0, "tokens_output": 0, "cost_usd_cents": 0, "model_used": None}
+    cid = await enforce_action_gate(db, user, "cv_base", label="Personalized CV generation")
+    record = await cv_generator.personalize_cv(
+        db, user["sub"], payload.job_description_text, usage=usage,
+    )
+    await _record_usage_after(db, cid, usage)
     return _to_response(record)
 
 
@@ -188,9 +157,6 @@ async def create_adapted_cv(
         db, user["sub"], payload.base_cv_id, payload.job_posting_id
     )
     return _to_response(record)
-
-
-@router.post("/adapt-url", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
 async def create_adapted_cv_from_url(
     payload: CVAdaptUrlCreate,
     user: dict[str, Any] = Depends(get_current_user),

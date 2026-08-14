@@ -515,6 +515,7 @@ async def _llm_json(
     max_tokens: int = 4000,
     field_constraints: dict | None = None,
     web_search: bool = False,
+    usage: dict | None = None,
 ) -> dict[str, Any]:
     """Call LLM, sanitize response, validate against Pydantic schema.
 
@@ -523,6 +524,8 @@ async def _llm_json(
     When ``web_search=True`` the request goes through the Responses API with
     the OpenAI ``web_search`` tool, so a URL in the prompt is read by the
     provider's own infrastructure — never scraped from our servers.
+
+    ``usage`` (optional) is a sink dict accumulating real token/cost usage.
     """
     provider = provider_config.get("provider", "anthropic")
     model = provider_config.get("model", "claude-sonnet-4-20250514")
@@ -535,6 +538,7 @@ async def _llm_json(
             model=model,
             api_key=api_key,
             max_tokens=max_tokens,
+            usage=usage,
         )
     else:
         raw = await llm_completion(
@@ -544,6 +548,7 @@ async def _llm_json(
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            usage=usage,
         )
 
     constraints = field_constraints or default_field_constraints()
@@ -574,6 +579,7 @@ async def _llm_json(
             api_key=api_key,
             temperature=temperature,
             max_tokens=max(max_tokens, 8000),
+            usage=usage,
         )
         try:
             cleaned = sanitize_llm_response(raw, schema_type.__name__, constraints)
@@ -597,13 +603,14 @@ async def generate_cv(
     evaluation: RankEvaluation | None = None,
     provider_config: dict[str, Any] | None = None,
     temperature: float = 0.3,
+    usage: dict | None = None,
 ) -> GenerateCVOutput:
     """Generate a full CV (without cover letter) as ``GenerateCVOutput``."""
     provider_config = provider_config or {}
     messages = build_json_drafter_prompt(candidate, job, evaluation)
     raw_dict = await _llm_json(
         messages, GenerateCVOutput, provider_config,
-        temperature=temperature, max_tokens=8000,
+        temperature=temperature, max_tokens=8000, usage=usage,
     )
     return GenerateCVOutput(**raw_dict)
 
@@ -613,6 +620,7 @@ async def generate_cover_letter(
     job: JobPosting,
     evaluation: RankEvaluation | None = None,
     provider_config: dict[str, Any] | None = None,
+    usage: dict | None = None,
 ) -> CoverLetter | None:
     """Generate a cover letter as a ``CoverLetter`` object."""
     provider_config = provider_config or {}
@@ -620,7 +628,7 @@ async def generate_cover_letter(
     try:
         raw_dict = await _llm_json(
             messages, CoverLetter, provider_config,
-            temperature=0.4, max_tokens=2000,
+            temperature=0.4, max_tokens=2000, usage=usage,
         )
         return CoverLetter(**raw_dict)
     except LLMError as exc:
@@ -634,13 +642,14 @@ async def generate_review(
     job: JobPosting,
     evaluation: RankEvaluation | None = None,
     provider_config: dict[str, Any] | None = None,
+    usage: dict | None = None,
 ) -> ReviewFeedback:
     """Review the generated CV JSON (fresh context, no drafter reasoning)."""
     provider_config = provider_config or {}
     messages = build_json_review_prompt(cv_json, candidate, job, evaluation)
     raw_dict = await _llm_json(
         messages, ReviewFeedback, provider_config,
-        temperature=0.0, max_tokens=4000,
+        temperature=0.0, max_tokens=4000, usage=usage,
     )
     return ReviewFeedback(**raw_dict)
 
@@ -652,6 +661,7 @@ async def generate_revision(
     job: JobPosting,
     provider_config: dict[str, Any] | None = None,
     temperature: float = 0.2,
+    usage: dict | None = None,
 ) -> GenerateCVOutput:
     """Revise the CV JSON based on reviewer feedback."""
     provider_config = provider_config or {}
@@ -660,7 +670,7 @@ async def generate_revision(
     )
     raw_dict = await _llm_json(
         messages, GenerateCVOutput, provider_config,
-        temperature=temperature, max_tokens=8000,
+        temperature=temperature, max_tokens=8000, usage=usage,
     )
     return GenerateCVOutput(**raw_dict)
 
@@ -671,13 +681,14 @@ async def generate_revision(
 async def generate_base_cv_llm(
     candidate: CandidateProfile,
     provider_config: dict[str, Any] | None = None,
+    usage: dict | None = None,
 ) -> dict[str, Any]:
     """Generate a generic base CV (``GenerateCVOutput``) with no job context."""
     provider_config = provider_config or {}
     messages = build_base_cv_prompt(candidate)
     raw_dict = await _llm_json(
         messages, GenerateCVOutput, provider_config,
-        temperature=0.3, max_tokens=8000,
+        temperature=0.3, max_tokens=8000, usage=usage,
     )
     return raw_dict
 
@@ -686,6 +697,7 @@ async def personalize_cv_llm(
     candidate: CandidateProfile,
     job_description_text: str,
     provider_config: dict[str, Any] | None = None,
+    usage: dict | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run the two-step personalize pipeline for free-text job descriptions.
 
@@ -701,6 +713,7 @@ async def personalize_cv_llm(
         provider_config,
         temperature=0.2,
         max_tokens=2000,
+        usage=usage,
     )
     analysis = CVAnalysis(**analysis_dict)
 
@@ -710,6 +723,7 @@ async def personalize_cv_llm(
         provider_config,
         temperature=0.3,
         max_tokens=8000,
+        usage=usage,
     )
     _drop_cover_letter(output_dict)
     return analysis_dict, output_dict
@@ -845,6 +859,7 @@ async def adapt_cv_llm(
     base_cv_json: dict[str, Any],
     job: JobPosting,
     provider_config: dict[str, Any] | None = None,
+    usage: dict | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run the two-step adapt pipeline: recruiter analysis → drafter.
 
@@ -859,6 +874,7 @@ async def adapt_cv_llm(
         provider_config,
         temperature=0.2,
         max_tokens=2000,
+        usage=usage,
     )
     analysis = CVAnalysis(**analysis_dict)
 
@@ -868,6 +884,7 @@ async def adapt_cv_llm(
         provider_config,
         temperature=0.3,
         max_tokens=8000,
+        usage=usage,
     )
     _drop_cover_letter(output_dict)
     return analysis_dict, output_dict
@@ -994,6 +1011,7 @@ async def adapt_cv_llm_with_url(
     base_cv_json: dict[str, Any],
     url: str,
     provider_config: dict[str, Any] | None = None,
+    usage: dict | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Two-step adapt pipeline where the job text is read from a URL by the model.
 
@@ -1021,6 +1039,7 @@ async def adapt_cv_llm_with_url(
         temperature=0.2,
         max_tokens=2000,
         web_search=True,
+        usage=usage,
     )
     analysis = CVAnalysis(**analysis_dict)
 
@@ -1031,6 +1050,7 @@ async def adapt_cv_llm_with_url(
         temperature=0.3,
         max_tokens=8000,
         web_search=True,
+        usage=usage,
     )
     _drop_cover_letter(output_dict)
     return analysis_dict, output_dict
