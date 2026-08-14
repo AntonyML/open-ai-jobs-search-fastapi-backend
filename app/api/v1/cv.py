@@ -152,11 +152,16 @@ async def create_adapted_cv(
 
     The base CV is never modified; a new adapted CV document is stored.
     """
-    await _enforce_credit_gate(db, user, "cv_adapted")
+    usage: dict[str, Any] = {"tokens_input": 0, "tokens_output": 0, "cost_usd_cents": 0, "model_used": None}
+    cid = await enforce_action_gate(db, user, "cv_adapted", label="Adapted CV generation")
     record = await cv_generator.adapt_cv(
-        db, user["sub"], payload.base_cv_id, payload.job_posting_id
+        db, user["sub"], payload.base_cv_id, payload.job_posting_id, usage=usage,
     )
+    await _record_usage_after(db, cid, usage)
     return _to_response(record)
+
+
+@router.post("/adapt-url", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
 async def create_adapted_cv_from_url(
     payload: CVAdaptUrlCreate,
     user: dict[str, Any] = Depends(get_current_user),
@@ -169,10 +174,12 @@ async def create_adapted_cv_from_url(
     offers. The base CV is never modified; a new adapted CV is stored with
     ``job_url`` set to the source link.
     """
-    await _enforce_credit_gate(db, user, "cv_adapted")
+    usage: dict[str, Any] = {"tokens_input": 0, "tokens_output": 0, "cost_usd_cents": 0, "model_used": None}
+    cid = await enforce_action_gate(db, user, "cv_adapted", label="CV adaptation by URL")
     record = await cv_generator.adapt_cv_from_url(
-        db, user["sub"], payload.base_cv_id, payload.url
+        db, user["sub"], payload.base_cv_id, payload.url, usage=usage,
     )
+    await _record_usage_after(db, cid, usage)
     return _to_response(record)
 
 

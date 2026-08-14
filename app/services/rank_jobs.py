@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import CandidateProfile, ExecutionJob, ExecutionJobItem, IngestedJob, JobPosting
+from app.services import credits
 from app.services.orchestrator.execution_queue import ExecutionQueue
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.rank import ALGORITHM_VERSION, PROMPT_VERSION
@@ -33,6 +34,7 @@ async def start(
         user_id: str,
         payload: dict[str, Any],
         idempotency_key: str | None = None,
+        correlation_id: str | None = None,
 ) -> dict[str, Any]:
     """Start a ranking run and enqueue items for the worker.
 
@@ -50,6 +52,9 @@ async def start(
         user_id: The authenticated user's ID.
         payload: Rank request parameters (focus_area, re_rank, top_n).
         idempotency_key: Optional unique key for idempotent retries.
+        correlation_id: Credit ledger correlation id returned by the access gate.
+            The ledger row is relinked to the ExecutionJob id so the worker's
+            real token usage can accumulate on it after the fact.
 
     Returns:
         Dict with job_id, status, total_jobs, accepted_jobs.
@@ -240,6 +245,13 @@ async def start(
                 items.append(item)
 
             await db.commit()
+
+            # 5b. Relink the credit ledger row (consumed by the access gate before
+            #     the ExecutionJob existed) to this job id, so the worker's real
+            #     token usage accumulates on the same row via the job id.
+            if correlation_id:
+                await credits.relink_transaction(db, correlation_id, job_id)
+                await db.commit()
 
             # 6. pg_notify (same session, best-effort)
             try:

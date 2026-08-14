@@ -20,6 +20,7 @@ from app.schemas.rank import RankEvaluationOut as RankEvaluationOutSchema
 from app.schemas.rank import JobPostingSummary
 from app.services import rank
 from app.services import rank_jobs
+from app.services.access_gate import enforce_action_gate
 from app.db.session import async_session_factory
 from app.services.rank import count_jobs_to_rank
 
@@ -61,11 +62,19 @@ async def trigger_rank(
 
     pdata = payload.model_dump()
 
+    # Gate LLM usage (quota/credits) and get a correlation_id for usage accounting.
+    # The credit is consumed now; the ledger row is relinked to the ExecutionJob
+    # id inside rank_jobs.start so the worker's usage can accumulate on it.
+    correlation_id = await enforce_action_gate(
+        db, user, "rank", label=f"Rank run (recent={recent_count})"
+    )
+
     result = await rank_jobs.start(
         async_session_factory,
         user["sub"],
         pdata,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
     )
     return result
 

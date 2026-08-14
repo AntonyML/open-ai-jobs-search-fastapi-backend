@@ -13,6 +13,7 @@ from app.db.session import get_db as _get_db
 from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
 from app.schemas.rank import JobPostingSummary
 from app.services import apply
+from app.services.access_gate import enforce_action_gate
 from app.services.tiers import get_tier_limits
 
 router = APIRouter(prefix="/apply", tags=["apply"])
@@ -46,6 +47,11 @@ async def trigger_apply(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail="You have reached the maximum number of applications on your current plan. Upgrade to Premium for unlimited applications.",
             )
+
+    # Gate LLM usage (quota/credits) and get a correlation_id for usage accounting
+    correlation_id = await enforce_action_gate(
+        db, user, "apply", label=f"Apply for job {payload.job_posting_id}"
+    )
 
     # Resolve rank evaluation and validate job ownership
     job_fut = db.execute(
@@ -110,6 +116,7 @@ async def trigger_apply(
         apply.execute_apply_background(
             application_id=application.id,
             provider_config=provider_config,
+            correlation_id=correlation_id,
         )
     )
 

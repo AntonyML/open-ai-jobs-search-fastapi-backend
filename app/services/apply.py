@@ -34,7 +34,7 @@ from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluat
 from app.db.session import async_session_factory
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
-from app.services import ats_check
+from app.services import ats_check, credits
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
@@ -427,6 +427,7 @@ def _build_job_summary_for_apply(job: JobPosting) -> str:
 async def _fetch_company_info(
     job: JobPosting,
     provider_config: dict | None = None,
+    usage: dict | None = None,
 ) -> str | None:
     """Fetch basic company information for the reviewer.
 
@@ -460,6 +461,7 @@ async def _fetch_company_info(
             **provider_kwargs,
             temperature=0.0,
             max_tokens=300,
+            usage=usage,
         )
         return result.strip() if result else None
     except Exception as e:
@@ -489,6 +491,8 @@ async def execute_apply(
     rank_evaluation_id: str | None = None,
     provider_config: dict | None = None,
     application: Application | None = None,
+    usage: dict | None = None,
+    correlation_id: str | None = None,
 ) -> ApplyResult:
     """Execute the full apply workflow with Drafter-Reviewer pipeline.
 
@@ -505,6 +509,8 @@ async def execute_apply(
     (used by background task). Otherwise a new Application is created.
     """
     with bind_context(stage="apply", job_id=job_posting_id):
+        if usage is None:
+            usage = {}
 
         # 1. Load all dependencies sequentially (async session does not support
         #    concurrent execute() on the same session — the greenlet-based
@@ -578,8 +584,8 @@ async def execute_apply(
         from app.services.pdf_compiler_typst import compile_cv as _typst_compile
 
         # STAGE 1: DRAFT — JSON
-        cv_output = await _json_cv(candidate, job, evaluation, provider_config)
-        cv_cover = await _json_cl(candidate, job, evaluation, provider_config)
+        cv_output = await _json_cv(candidate, job, evaluation, provider_config, usage=usage)
+        cv_cover = await _json_cl(candidate, job, evaluation, provider_config, usage=usage)
         if cv_cover is not None:
             cv_output.cv.cover_letter = cv_cover
 
@@ -591,10 +597,10 @@ async def execute_apply(
         await db.commit()
 
         # STAGE 3: REVIEW (fresh context — reviewer sees JSON, not drafter reasoning)
-        company_research = await _fetch_company_info(job, provider_config)
+        company_research = await _fetch_company_info(job, provider_config, usage=usage)
         cv_dict = cv_output.cv.model_dump()
         review_feedback = await _json_review(
-            cv_dict, candidate, job, evaluation, provider_config,
+            cv_dict, candidate, job, evaluation, provider_config, usage=usage,
         )
 
         application.stage = "reviewed"
@@ -604,7 +610,7 @@ async def execute_apply(
 
         # STAGE 4: REVISE
         cv_output = await _json_revise(
-            cv_dict, review_feedback, candidate, job, provider_config,
+            cv_dict, review_feedback, candidate, job, provider_config, usage=usage,
         )
 
         application.stage = "revised"
@@ -665,6 +671,17 @@ async def execute_apply(
         await db.commit()
         await db.refresh(application)
 
+        if correlation_id and usage.get("tokens_input"):
+            await credits.record_llm_usage(
+                db,
+                correlation_id=correlation_id,
+                model_used=usage.get("model_used"),
+                tokens_input=usage.get("tokens_input", 0),
+                tokens_output=usage.get("tokens_output", 0),
+                cost_usd_cents=usage.get("cost_usd_cents", 0),
+            )
+            await db.commit()
+
         ats_summary = ""
         if ats_result is not None:
             ats_summary = (
@@ -688,6 +705,7 @@ async def execute_apply(
 async def execute_apply_background(
     application_id: str,
     provider_config: dict | None = None,
+    correlation_id: str | None = None,
 ):
     """Run the apply pipeline in the background, updating progress progressively.
 
@@ -713,6 +731,7 @@ async def execute_apply_background(
             job_posting_id=application.job_posting_id,
             provider_config=provider_config,
             application=application,
+            correlation_id=correlation_id,
         )
         logger.info("execute_apply_background: execute_apply completed successfully (stage=%s)", application.stage)
     except asyncio.CancelledError:
