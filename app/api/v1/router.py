@@ -23,6 +23,7 @@ from app.api.v1.cv import router as cv_router
 from app.api.v1.providers import router as providers_router
 from app.api.v1.billing import router as billing_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.public import router as public_router
 
 router = APIRouter()
 
@@ -74,6 +75,9 @@ router.include_router(providers_router)
 
 # ── Billing / credits ────────────────────────────────────────────────
 router.include_router(billing_router)
+
+# ── Public (no auth) ─────────────────────────────────────────────────
+router.include_router(public_router)
 
 # ── Notifications ─────────────────────────────────────────────────────
 router.include_router(notifications_router)

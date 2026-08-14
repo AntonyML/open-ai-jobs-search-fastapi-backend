@@ -30,7 +30,7 @@ from app.schemas.billing import (
 )
 from app.services import credits
 from app.services.email import send_purchase_request
-from app.services.plans import get_active_plans, get_credit_costs, get_plan, get_whatsapp_number
+from app.services.plans import build_catalog, get_plan
 from app.services.subscriptions import (
     ensure_admin_subscription,
     get_user_access,
@@ -118,12 +118,7 @@ async def get_catalog(
     db: AsyncSession = Depends(get_db),
 ) -> ProductCatalogOut:
     """Return the plans catalog + credit costs for the buy/upgrade UI."""
-    plans = await get_active_plans(db)
-    return ProductCatalogOut(
-        plans=[PlanOut.model_validate(p) for p in plans],
-        credit_costs=(await get_credit_costs(db)),
-        whatsapp_number=await get_whatsapp_number(),
-    )
+    return ProductCatalogOut(**await build_catalog(db))
 
 
 @router.get("/transactions", response_model=list[CreditTransactionOut])

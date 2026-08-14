@@ -193,3 +193,20 @@ async def get_whatsapp_number() -> str:
     import os
 
     return os.getenv("WHATSAPP_NUMBER", "").strip()
+
+
+async def build_catalog(db: AsyncSession) -> dict[str, Any]:
+    """Assemble the full product catalog payload.
+
+    Shared by the authenticated ``/billing/catalog`` endpoint and the public
+    ``/public/catalog`` endpoint so both return the exact same shape.
+    """
+    plans = await get_active_plans(db)
+    last_updated = max((p.updated_at for p in plans), default=None)
+    return {
+        "plans": plans,
+        "credit_costs": await get_credit_costs(db),
+        "whatsapp_number": await get_whatsapp_number(),
+        "currency": "USD",
+        "last_updated": last_updated,
+    }

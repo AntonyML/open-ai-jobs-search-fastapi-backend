@@ -44,6 +44,9 @@ class PlanOut(BaseModel):
     price_yearly_usd: float
     credits_per_period: int
     refill_cadence: str
+    refill_weekday: int = 0
+    daily_quota: int = 0
+    weekly_quota: int = 0
     features: list[str] = []
     is_active: bool = True
     sort_order: int = 10
@@ -162,6 +165,7 @@ class ProductCatalogOut(BaseModel):
     credit_costs: CreditCosts
     whatsapp_number: str = ""
     currency: str = "USD"
+    last_updated: datetime | None = None
 
 
 # ── Purchase requests (manual SINPE / WhatsApp) ──────────────────────
