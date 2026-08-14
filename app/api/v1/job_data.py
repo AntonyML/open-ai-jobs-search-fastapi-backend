@@ -1,12 +1,12 @@
-"""Pipeline reset router — endpoint for resetting all pipeline tracking data.
+"""Job data reset router — endpoint for resetting all job search tracking data.
 
-DELETE /api/v1/pipeline-reset
+DELETE /api/v1/job-data
 
 This is intentionally a separate router from the /reset endpoint because:
 - /reset clears profile/documents (destructive to configuration)
-- /pipeline-reset clears pipeline job data (preserves config/providers)
+- /job-data clears job search data (preserves config/providers)
 
-The pipeline-reset endpoint does NOT require a confirmation token because
+The job-data endpoint does NOT require a confirmation token because
 it only deletes transient job data, not configuration.
 """
 
@@ -16,22 +16,22 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.services import pipeline_reset
+from app.services import job_data
 
-router = APIRouter(prefix="/pipeline-reset", tags=["pipeline-reset"])
+router = APIRouter(prefix="/job-data", tags=["job-data"])
 
 
 @router.delete(
     "/",
     status_code=status.HTTP_200_OK,
 )
-async def reset_pipeline_data(
+async def reset_job_data(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete all pipeline tracking data for the authenticated user.
+    """Delete all job search tracking data for the authenticated user.
 
-    This resets your job search pipeline without affecting your:
+    This resets your job search data without affecting your:
     - Provider configuration & API keys
     - Candidate profile & setup data
     - User account & preferences
@@ -40,7 +40,7 @@ async def reset_pipeline_data(
     outcomes, execution queue history, scrape runs, competency expansions,
     and upskill analyses.
     """
-    return await pipeline_reset.execute_pipeline_reset(
+    return await job_data.execute_job_data(
         db=db,
         user_id=user["sub"],
     )

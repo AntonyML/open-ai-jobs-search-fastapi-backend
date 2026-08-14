@@ -92,7 +92,7 @@ def sample_application(sample_candidate, sample_job):
         draft_cover_letter_tex=cover_latex,
         cv_compiled=True,
         cover_letter_compiled=True,
-        pipeline_stage="compiled",
+        stage="compiled",
         cv_template="moderncv-banking",
         cover_letter_template="cover-cls",
         language="en",

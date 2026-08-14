@@ -8,10 +8,9 @@ and returns {job_id, status, total_jobs, accepted_jobs}.
 from __future__ import annotations
 
 
-from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import CandidateProfile, ExecutionJob, ExecutionJobItem, IngestedJob, JobPosting
@@ -55,10 +54,9 @@ async def start(
     Returns:
         Dict with job_id, status, total_jobs, accepted_jobs.
     """
-    with bind_context(pipeline_stage="rank"):
+    with bind_context(stage="rank"):
         queue = _get_queue()
         re_rank = payload.get("re_rank", False)
-        max_jobs = payload.get("max_jobs")
 
         # ── All DB operations in a single session (7→1 consolidation) ──
         async with db_factory() as db:
@@ -97,99 +95,62 @@ async def start(
             }
 
             job_ids = payload.get("job_ids")
-            if job_ids is not None:
-                ingested_result = await db.execute(
-                    select(IngestedJob).where(IngestedJob.id.in_(job_ids))
-                )
-                ingested_list = list(ingested_result.scalars().all())
-                if not ingested_list:
-                    return {
-                        "job_id": None,
-                        "status": "skipped",
-                        "total_jobs": 0,
-                        "accepted_jobs": 0,
-                        "message": "No ingested jobs found for given IDs.",
-                    }
-                jobs = []
-                for ij in ingested_list:
-                    existing = await db.get(JobPosting, ij.id)
-                    if existing is None:
-                        jp = JobPosting(
-                            id=ij.id,
-                            user_id=user_id,
-                            portal=ij.portal or "web",
-                            external_id=f"ij_{ij.id}",
-                            title=ij.title,
-                            company=ij.company,
-                            location=ij.location,
-                            url=ij.url,
-                            description=ij.description,
-                            salary=ij.salary,
-                            status="new",
-                        )
-                        db.add(jp)
-                        jobs.append(jp)
-                    else:
-                        jobs.append(existing)
-                await db.flush()
-                total_jobs = len(jobs)
-                if total_jobs == 0:
-                    return {
-                        "job_id": None,
-                        "status": "skipped",
-                        "total_jobs": 0,
-                        "accepted_jobs": 0,
-                        "message": "No unranked jobs found.",
-                    }
-                # Skip standard query — we only use the imported jobs
-            else:
-                # C3: Fallback reads from ingested_jobs (shared pool), NEVER from job_postings.
-                now = datetime.now(timezone.utc)
-                ingest_query = select(IngestedJob).where(
-                    or_(
-                        IngestedJob.expires_at.is_(None),
-                        IngestedJob.expires_at > now,
+            if not job_ids:
+                # Ranking now requires an explicit job selection from the
+                # search step. The old fallback that imported the entire
+                # shared ingested_jobs pool and enqueued one LLM call per
+                # job was removed — it burned credits on unfiltered bulk runs.
+                return {
+                    "job_id": None,
+                    "status": "skipped",
+                    "total_jobs": 0,
+                    "accepted_jobs": 0,
+                    "message": "Select jobs to rank first.",
+                }
+
+            ingested_result = await db.execute(
+                select(IngestedJob).where(IngestedJob.id.in_(job_ids))
+            )
+            ingested_list = list(ingested_result.scalars().all())
+            if not ingested_list:
+                return {
+                    "job_id": None,
+                    "status": "skipped",
+                    "total_jobs": 0,
+                    "accepted_jobs": 0,
+                    "message": "No ingested jobs found for given IDs.",
+                }
+            jobs = []
+            for ij in ingested_list:
+                existing = await db.get(JobPosting, ij.id)
+                if existing is None:
+                    jp = JobPosting(
+                        id=ij.id,
+                        user_id=user_id,
+                        portal=ij.portal or "web",
+                        external_id=f"ij_{ij.id}",
+                        title=ij.title,
+                        company=ij.company,
+                        location=ij.location,
+                        url=ij.url,
+                        description=ij.description,
+                        salary=ij.salary,
+                        status="new",
                     )
-                )
-                ingest_query = ingest_query.order_by(IngestedJob.ingested_at.desc())
-                if max_jobs is not None:
-                    ingest_query = ingest_query.limit(max_jobs)
-                ingest_result = await db.execute(ingest_query)
-                ingested_list = list(ingest_result.scalars().all())
-                total_jobs = len(ingested_list)
-
-                if total_jobs == 0:
-                    return {
-                        "job_id": None,
-                        "status": "skipped",
-                        "total_jobs": 0,
-                        "accepted_jobs": 0,
-                        "message": "No ingested jobs found.",
-                    }
-
-                # Convert to JobPosting (same adapter as the job_ids path)
-                jobs = []
-                for ij in ingested_list:
-                    existing = await db.get(JobPosting, ij.id)
-                    if existing is None:
-                        jp = JobPosting(
-                            id=ij.id,
-                            user_id=user_id,
-                            portal=ij.portal or "web",
-                            external_id=f"ij_{ij.id}",
-                            title=ij.title,
-                            company=ij.company,
-                            location=ij.location,
-                            url=ij.url,
-                            description=ij.description,
-                            salary=ij.salary,
-                            status="new",
-                        )
-                        db.add(jp)
-                        jobs.append(jp)
-                    else:
-                        jobs.append(existing)
-                await db.flush()
+                    db.add(jp)
+                    jobs.append(jp)
+                else:
+                    jobs.append(existing)
+            await db.flush()
+            total_jobs = len(jobs)
+            if total_jobs == 0:
+                return {
+                    "job_id": None,
+                    "status": "skipped",
+                    "total_jobs": 0,
+                    "accepted_jobs": 0,
+                    "message": "No unranked jobs found.",
+                }
 
             # 3. Verify no other active rank job exists
             existing_active = await db.execute(

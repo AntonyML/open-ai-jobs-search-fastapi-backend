@@ -633,7 +633,7 @@ async def execute_interview_prep(
     Returns:
         The created InterviewPrep record
     """
-    with bind_context(pipeline_stage="interview"):
+    with bind_context(stage="interview"):
         # 1. Load application + related data
         app_result = await db.execute(
             select(Application)

@@ -62,7 +62,7 @@ async def run_verification_checklist(
         VerificationResult with ALL checks, their outcomes, and a
         summary. Never raises — all failures are captured in the result.
     """
-    with bind_context(pipeline_stage="verify"):
+    with bind_context(stage="verify"):
         # Resolve from DB if not provided
         if cv_latex is None and application.draft_cv_tex:
             cv_latex = application.draft_cv_tex

@@ -330,7 +330,7 @@ async def trim_cv_experience(
     Returns:
         Tuple of (trimmed_experience, CVTrimResult).
     """
-    with bind_context(pipeline_stage="cv_cutter"):
+    with bind_context(stage="cv_cutter"):
         bullets_before = sum(len(e.get("bullets", [])) for e in experience)
         entries_before = len(experience)
 
@@ -470,7 +470,7 @@ async def trim_cv_to_page_limit(
         count instead of raising on wrong page count. If your existing
         compile function raises on mismatch, wrap it.
     """
-    with bind_context(pipeline_stage="cv_cutter"):
+    with bind_context(stage="cv_cutter"):
         bullets_before = sum(len(e.bullets) for e in experience)
         entries_before = len(experience)
         all_bullet_tuples = _bullets_from_experience(experience)

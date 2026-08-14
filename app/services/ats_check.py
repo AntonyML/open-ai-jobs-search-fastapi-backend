@@ -289,7 +289,7 @@ async def check_ats_parseability(
     candidate: CandidateProfile | None = None,
 ) -> ATSResult:
     """Run full ATS parseability check on a compiled PDF."""
-    with bind_context(pipeline_stage="ats_check"):
+    with bind_context(stage="ats_check"):
         logger.info("Starting ATS check | pdf=%s", pdf_path)
         # ── Step 1: Extract text ────────────────────────────────────────
         raw_text = await _extract_pdf_text(pdf_path)

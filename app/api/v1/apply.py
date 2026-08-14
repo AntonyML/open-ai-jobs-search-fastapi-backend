@@ -84,7 +84,7 @@ async def trigger_apply(
         select(Application).where(
             Application.user_id == user["sub"],
             Application.job_posting_id == payload.job_posting_id,
-            Application.pipeline_stage.notin_({"compiled", "verified"}),
+            Application.stage.notin_({"compiled", "verified"}),
         )
     )
     for stale in clean_old.scalars().all():
@@ -96,7 +96,7 @@ async def trigger_apply(
         user_id=user["sub"],
         job_posting_id=payload.job_posting_id,
         rank_evaluation_id=evaluation.id,
-        pipeline_stage="queued",
+        stage="queued",
         cv_template=payload.cv_template or "moderncv-banking",
         cover_letter_template=payload.cover_letter_template or "cover-cls",
         language=job.language or "en",
@@ -139,7 +139,7 @@ async def list_available_jobs(
     active_application_exists = exists().where(
         Application.user_id == user["sub"],
         Application.job_posting_id == JobPosting.id,
-        Application.pipeline_stage.in_(terminal_stages),
+        Application.stage.in_(terminal_stages),
     )
     result = await db.execute(
         select(JobPosting)
@@ -183,7 +183,7 @@ async def get_application_status(
     if app is None:
         raise HTTPException(status_code=404, detail=t("errors.not_found", locale))
 
-    # Map pipeline_stage to progress percentage and action text
+    # Map stage to progress percentage and action text
     stage_progress = {
         "queued": (0, t("apply.stage.queued", locale)),
         "initializing": (3, t("apply.stage.initializing", locale)),
@@ -195,12 +195,12 @@ async def get_application_status(
         "failed": (0, t("apply.stage.failed", locale)),
     }
     progress_pct, current_action = stage_progress.get(
-        app.pipeline_stage, (0, t("apply.stage.initializing", locale))
+        app.stage, (0, t("apply.stage.initializing", locale))
     )
 
     return ApplicationStatusOut(
         id=app.id,
-        pipeline_stage=app.pipeline_stage,
+        stage=app.stage,
         progress_pct=progress_pct,
         current_action=current_action,
         review_issues_count=len(app.review_issues) if app.review_issues else 0,

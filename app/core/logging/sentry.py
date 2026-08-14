@@ -23,8 +23,8 @@ def init_sentry(config: LoggingConfig) -> None:
         event.setdefault("tags", {})
         if ctx.request_id:
             event["tags"]["request_id"] = ctx.request_id
-        if ctx.pipeline_stage:
-            event["tags"]["pipeline_stage"] = ctx.pipeline_stage
+        if ctx.stage:
+            event["tags"]["stage"] = ctx.stage
         if ctx.provider:
             event["tags"]["llm_provider"] = ctx.provider
         if ctx.user_id:

@@ -251,74 +251,46 @@ async def test_job_ids_selects_exactly_those(db_session, db_factory, mock_queue)
 
 
 @pytest.mark.asyncio
-async def test_job_ids_none_reads_from_ingested_jobs(db_session, db_factory, mock_queue):
-    """C3: When job_ids is None, start() reads from ingested_jobs, never from job_postings."""
-    # Seed ingested_jobs (this is the live table)
+async def test_job_ids_none_requires_selection(db_session, db_factory, mock_queue):
+    """C3 removed: Without job_ids, start() refuses the run instead of ranking everything."""
+    # Seed the shared ingested_jobs pool — must NOT be auto-ranked now
     ingested = await seed_ingested_jobs(db_session, 2)
-    # Create a JobPosting directly (simulates old dead data)
-    jp = JobPosting(
-        id="jp-dead-data-001",
-        user_id="test-user-id",
-        portal="linkedin",
-        external_id="ext-001",
-        title="Dead Job (from old pipeline)",
-        company="Corp",
-        status="new",
-    )
-    db_session.add(jp)
-    await db_session.commit()
 
     result = await start(db_factory, "test-user-id", {})
-    assert result["status"] == "queued"
-    # Should find the 2 ingested_jobs, NOT the dead JobPosting
-    assert result["total_jobs"] == 2, f"Expected 2 ingested jobs, got {result['total_jobs']}"
+    assert result["status"] == "skipped", f"Expected skipped, got {result}"
+    assert "Select jobs" in result.get("message", "")
 
-    # Verify items reference ingested_job IDs, not the dead JobPosting
-    exec_job_id = result["job_id"]
-    items = (
-        await db_session.execute(
-            select(ExecutionJobItem).where(ExecutionJobItem.execution_job_id == exec_job_id)
-        )
-    ).scalars().all()
-    item_ids = {i.job_posting_id for i in items}
-    assert "jp-dead-data-001" not in item_ids, "Should NOT have ranked the dead JobPosting"
-    for ij in ingested:
-        assert ij.id in item_ids, f"IngestedJob {ij.id} should be in items"
+    # No ExecutionJob/ExecutionJobItem should have been created for the bulk run
+    jobs = (await db_session.execute(select(ExecutionJob))).scalars().all()
+    assert len(jobs) == 0, f"No ExecutionJob expected, got {len(jobs)}"
+    items = (await db_session.execute(select(ExecutionJobItem))).scalars().all()
+    assert len(items) == 0, f"No ExecutionJobItem expected, got {len(items)}"
 
 
 @pytest.mark.asyncio
-async def test_fallback_never_touches_job_postings(db_session, db_factory, mock_queue):
-    """C3: When job_ids is None, the ranking never queries job_postings.
+async def test_job_ids_none_does_not_autoimport_ingested(db_session, db_factory, mock_queue):
+    """C3 removed: No job_ids → no bulk import of the shared ingested pool."""
+    # Seed ingested_jobs only (no JobPosting data)
+    await seed_ingested_jobs(db_session, 3)
 
-    Only ingested_jobs IDs appear in ExecutionJobItem records.
-    """
-    # Seed ingested_jobs only (no dead JobPosting data)
-    ingested = await seed_ingested_jobs(db_session, 3)
-    # The dead table has no data — that's the normal state now
     result = await start(db_factory, "test-user-id", {})
-    assert result["status"] == "queued"
-    assert result["total_jobs"] == 3
+    assert result["status"] == "skipped"
 
-    exec_job_id = result["job_id"]
-    items = (
+    # Nothing should have been imported into JobPosting for the user
+    jps = (
         await db_session.execute(
-            select(ExecutionJobItem).where(ExecutionJobItem.execution_job_id == exec_job_id)
+            select(JobPosting).where(JobPosting.user_id == "test-user-id")
         )
     ).scalars().all()
-
-    for item in items:
-        # Verify the item references an ingested_job, not a job_posting
-        ij = await db_session.get(IngestedJob, item.job_posting_id)
-        assert ij is not None, f"Item {item.id} references non-ingested ID {item.job_posting_id}"
-        assert ij.title is not None
+    assert len(jps) == 0, f"No JobPosting import expected, got {len(jps)}"
 
 
 @pytest.mark.asyncio
 async def test_job_ids_empty_list_returns_message(db_session, db_factory, mock_queue):
-    """C2: Empty job_ids list returns 'No ingested jobs found' — not a crash."""
+    """C2: Empty job_ids list returns a skipped message — not a crash, not a bulk run."""
     result = await start(db_factory, "test-user-id", {"job_ids": []})
     assert result["status"] == "skipped"
-    assert "No ingested jobs found" in result.get("message", "")
+    assert "Select jobs" in result.get("message", "")
 
 
 # ═══════════════════════════════════════════════════════════════════════

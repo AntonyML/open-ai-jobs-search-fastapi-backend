@@ -93,7 +93,7 @@ async def execute_expand(
 
     Scans all configured sources, enriches via LLM, and proposes additions.
     """
-    with bind_context(pipeline_stage="expand"):
+    with bind_context(stage="expand"):
         if candidate is None:
             result = await db.execute(
                 select(CandidateProfile).where(CandidateProfile.user_id == user_id)

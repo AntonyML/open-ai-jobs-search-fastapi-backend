@@ -296,7 +296,7 @@ async def execute_upskill(
     Returns:
         The created Upskill record with full analysis
     """
-    with bind_context(pipeline_stage="upskill"):
+    with bind_context(stage="upskill"):
         # 1. Get candidate profile
         candidate_result = await db.execute(
             select(CandidateProfile).where(CandidateProfile.user_id == user_id)

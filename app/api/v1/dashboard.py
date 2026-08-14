@@ -2,8 +2,8 @@
 
 Provides endpoints for:
 - /api/v1/dashboard/stats — KPIs for the dashboard overview
-- /api/v1/dashboard/pipeline — pipeline progress per step
 - /api/v1/analytics/funnel — conversion funnel data
+- /api/v1/analytics/trends — daily activity time series
 
 Each endpoint uses a single aggregated SQL query with scalar subselects
 to avoid N+1 round-trips to the database.
@@ -12,20 +12,20 @@ to avoid N+1 round-trips to the database.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 
 from aiocache import Cache, cached
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.db.models import (
     Application,
-    CandidateProfile,
     InterviewPrep,
     JobPosting,
     Outcome,
-    ProviderCredential,
+    RankEvaluation,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,50 +81,6 @@ async def get_dashboard_stats(
     }
 
 
-@router.get("/pipeline")
-@cached(ttl=30, cache=Cache.MEMORY, key_builder=lambda f, *a, **kw: f"dash_pipeline_{kw['user']['sub']}")
-async def get_pipeline_progress(
-    user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Pipeline progress — single query with 7 scalar subselects."""
-    uid = user["sub"]
-
-    providers = select(func.count(ProviderCredential.id)).where(ProviderCredential.user_id == uid)
-    setup = select(func.count(CandidateProfile.id)).where(CandidateProfile.user_id == uid)
-    scrape = select(func.count(JobPosting.id)).where(JobPosting.user_id == uid)
-    rank = select(func.count(JobPosting.id)).where(
-        JobPosting.user_id == uid, JobPosting.rank_score.isnot(None)
-    )
-    apply = select(func.count(Application.id)).where(Application.user_id == uid)
-    interview = select(func.count(InterviewPrep.id)).where(InterviewPrep.user_id == uid)
-    outcome = select(func.count(Outcome.id)).where(Outcome.user_id == uid)
-
-    stmt = select(
-        func.coalesce(providers.scalar_subquery(), 0).label("providers"),
-        func.coalesce(setup.scalar_subquery(), 0).label("setup"),
-        func.coalesce(scrape.scalar_subquery(), 0).label("scrape"),
-        func.coalesce(rank.scalar_subquery(), 0).label("rank"),
-        func.coalesce(apply.scalar_subquery(), 0).label("apply"),
-        func.coalesce(interview.scalar_subquery(), 0).label("interview"),
-        func.coalesce(outcome.scalar_subquery(), 0).label("outcome"),
-    )
-    row = (await db.execute(stmt)).one()
-
-    steps = [
-        {"key": "providers", "label": "Providers", "done": row.providers > 0},
-        {"key": "setup", "label": "Setup", "done": row.setup > 0},
-        {"key": "scrape", "label": "Scrape", "done": row.scrape > 0},
-        {"key": "rank", "label": "Rank", "done": row.rank > 0},
-        {"key": "apply", "label": "Apply", "done": row.apply > 0},
-        {"key": "interview", "label": "Interview", "done": row.interview > 0},
-        {"key": "outcome", "label": "Outcome", "done": row.outcome > 0},
-    ]
-    completed = sum(1 for s in steps if s["done"])
-
-    return {"steps": steps, "completed": completed, "total": len(steps)}
-
-
 # ── Analytics router (nested under /analytics) ─────────────────────
 
 analytics_router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -172,3 +128,54 @@ async def get_analytics_funnel(
         "interviews": row.interviews,
         "hired": row.hired,
     }
+
+
+@analytics_router.get("/trends")
+@cached(ttl=60, cache=Cache.MEMORY, key_builder=lambda f, *a, **kw: f"analytics_trends_{kw['user']['sub']}_{kw['days']}")
+async def get_analytics_trends(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(14, ge=7, le=90),
+):
+    """Daily activity time series for the last N days.
+
+    Returns zero-filled buckets for every calendar day in the window so the
+    frontend can render sparklines and bar charts without client-side
+    gap-filling.
+    """
+    uid = user["sub"]
+    today = datetime.utcnow().date()
+    start = today - timedelta(days=days - 1)
+
+    async def daily_counts(model, extra=None) -> dict[str, int]:
+        stmt = select(
+            func.date(model.created_at).label("day"),
+            func.count().label("n"),
+        ).where(
+            model.user_id == uid,
+            model.created_at >= start,
+        )
+        if extra is not None:
+            stmt = stmt.where(extra)
+        rows = (await db.execute(stmt.group_by("day"))).all()
+        return {str(r.day): r.n for r in rows}
+
+    scraped = await daily_counts(JobPosting)
+    applications = await daily_counts(Application)
+    interviews = await daily_counts(InterviewPrep)
+    ranked = await daily_counts(RankEvaluation)
+    hired = await daily_counts(Outcome, Outcome.status == "hired")
+
+    trends = []
+    for offset in range(days):
+        key = (start + timedelta(days=offset)).isoformat()
+        trends.append({
+            "date": key,
+            "scraped": scraped.get(key, 0),
+            "applications": applications.get(key, 0),
+            "interviews": interviews.get(key, 0),
+            "ranked": ranked.get(key, 0),
+            "hired": hired.get(key, 0),
+        })
+
+    return {"days": days, "trends": trends}

@@ -22,7 +22,7 @@ async def send_resend_email(
     from_name: str = "Open Ai Jobs Search",
 ) -> dict:
     """Send an email via the Resend API."""
-    with bind_context(pipeline_stage="email"):
+    with bind_context(stage="email"):
         logger.info("Sending email | to=%s subject=%s", to, subject)
         if not settings.resend_api_key:
             logger.warning("RESEND_API_KEY is not configured — email not sent")

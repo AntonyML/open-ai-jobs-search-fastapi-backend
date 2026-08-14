@@ -762,7 +762,7 @@ class Application(Base, TimestampMixin):
     cover_letter_pages: Mapped[int | None] = mapped_column(default=None)
 
     # ── Pipeline stage tracking ────────────────────────────────
-    pipeline_stage: Mapped[str] = mapped_column(
+    stage: Mapped[str] = mapped_column(
         String(20), default="draft",
         comment="draft → reviewed → revised → compiled → verified",
     )

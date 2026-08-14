@@ -39,8 +39,8 @@ class ConsoleFormatter(logging.Formatter):
         ctx_parts = []
         if ctx.request_id:
             ctx_parts.append(f"req={ctx.request_id}")
-        if ctx.pipeline_stage:
-            ctx_parts.append(f"stage={ctx.pipeline_stage}")
+        if ctx.stage:
+            ctx_parts.append(f"stage={ctx.stage}")
         if ctx.job_id:
             ctx_parts.append(f"job={ctx.job_id[:8]}")
         ctx_str = f" [{', '.join(ctx_parts)}]" if ctx_parts else ""

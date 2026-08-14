@@ -556,7 +556,7 @@ async def test_ats_check_integrated_in_apply(db_session):
     assert app.ats_score == 1.0, "ATS score should be stored"
     assert app.ats_missing_keywords == [], "No missing keywords"
     assert app.ats_checked_at is not None, "Check timestamp should be stored"
-    assert app.pipeline_stage == "verified", "Pipeline stage should be 'verified' when ATS passes"
+    assert app.stage == "verified", "Pipeline stage should be 'verified' when ATS passes"
 
 
 @pytest.mark.asyncio
@@ -700,7 +700,7 @@ async def test_ats_check_integrated_ats_fails_but_pipeline_continues(db_session)
     assert app.ats_pass is False, "ATS should show failure"
     assert app.ats_score == 0.2
     assert len(app.ats_missing_keywords) > 0
-    assert app.pipeline_stage == "compiled", "Should NOT be verified when ATS fails"
+    assert app.stage == "compiled", "Should NOT be verified when ATS fails"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

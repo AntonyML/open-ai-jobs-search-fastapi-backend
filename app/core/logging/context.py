@@ -7,7 +7,7 @@ Usage:
     #   request_id, user_id, method, path are set per-request
 
     # In services (manual):
-    async with bind_context(pipeline_stage="rank", job_id="abc-123"):
+    async with bind_context(stage="rank", job_id="abc-123"):
         logger.info("Evaluating fit")
 """
 
@@ -26,7 +26,7 @@ class LogContext:
     user_id: str = ""
     method: str = ""
     path: str = ""
-    pipeline_stage: str = ""
+    stage: str = ""
     job_id: str = ""
     provider: str = ""
     model: str = ""
@@ -37,7 +37,7 @@ class LogContext:
         d = {
             "request_id": self.request_id,
             "user_id": self.user_id,
-            "pipeline_stage": self.pipeline_stage,
+            "stage": self.stage,
             "job_id": self.job_id,
             "provider": self.provider,
             "model": self.model,
@@ -69,7 +69,7 @@ def bind_context(**kwargs: Any) -> Generator[None, None, None]:
     """Context manager to enrich logs temporarily.
 
     Usage:
-        async with bind_context(pipeline_stage="apply", job_id=j.id):
+        async with bind_context(stage="apply", job_id=j.id):
             await drafter.generate(...)
     """
     current = _log_context.get()
@@ -78,13 +78,13 @@ def bind_context(**kwargs: Any) -> Generator[None, None, None]:
         user_id=current.user_id,
         method=current.method,
         path=current.path,
-        pipeline_stage=kwargs.get("pipeline_stage", current.pipeline_stage),
+        stage=kwargs.get("stage", current.stage),
         job_id=kwargs.get("job_id", current.job_id),
         provider=kwargs.get("provider", current.provider),
         model=kwargs.get("model", current.model),
         worker_id=kwargs.get("worker_id", current.worker_id),
         extra={**current.extra, **{k: v for k, v in kwargs.items()
-                                   if k not in ("pipeline_stage", "job_id",
+                                   if k not in ("stage", "job_id",
                                                 "provider", "model", "worker_id")}},
     )
     token = _log_context.set(new_ctx)

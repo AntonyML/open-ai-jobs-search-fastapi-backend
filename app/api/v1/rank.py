@@ -22,7 +22,6 @@ from app.services import rank
 from app.services import rank_jobs
 from app.db.session import async_session_factory
 from app.services.rank import count_jobs_to_rank
-from app.services.tiers import get_user_tier_limits
 
 router = APIRouter(prefix="/rank", tags=["rank"])
 
@@ -60,12 +59,7 @@ async def trigger_rank(
             detail=f"Rate limit exceeded. Max {settings.rate_limit_attempts} rank runs per {settings.rate_limit_window_seconds // 60} minutes.",
         )
 
-    # Validate tier limits from DB
-    tier_limits = await get_user_tier_limits(db, user["sub"])
-    max_jobs = tier_limits.get("max_rank_iterations")
     pdata = payload.model_dump()
-    if max_jobs is not None:
-        pdata["max_jobs"] = max_jobs
 
     result = await rank_jobs.start(
         async_session_factory,

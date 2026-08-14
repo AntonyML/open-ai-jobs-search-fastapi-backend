@@ -498,13 +498,13 @@ async def execute_apply(
     3. REVISE: Apply feedback and regenerate
     4. COMPILE: Typst compilation and page count verification
 
-    The pipeline_stage is persisted in the Application record so the
+    The stage is persisted in the Application record so the
     frontend can show real-time progress.
 
     If ``application`` is provided, the pipeline updates it in-place
     (used by background task). Otherwise a new Application is created.
     """
-    with bind_context(pipeline_stage="apply", job_id=job_posting_id):
+    with bind_context(stage="apply", job_id=job_posting_id):
 
         # 1. Load all dependencies sequentially (async session does not support
         #    concurrent execute() on the same session — the greenlet-based
@@ -554,7 +554,7 @@ async def execute_apply(
                 job_posting_id=job_posting_id,
                 rank_evaluation_id=evaluation.id,
                 language=job.language or "en",
-                pipeline_stage="draft",
+                stage="draft",
             )
             db.add(application)
             await db.commit()
@@ -562,7 +562,7 @@ async def execute_apply(
         else:
             application.rank_evaluation_id = evaluation.id
             application.language = job.language or "en"
-            application.pipeline_stage = "draft"
+            application.stage = "draft"
             await db.commit()
 
         # ═══════════════════════════════════════════════════════════════
@@ -584,7 +584,7 @@ async def execute_apply(
             cv_output.cv.cover_letter = cv_cover
 
         # STAGE 2: PERSIST DRAFT
-        application.pipeline_stage = "draft"
+        application.stage = "draft"
         application.draft_cv_tex = json.dumps(
             cv_output.cv.model_dump(), indent=2, ensure_ascii=False
         )
@@ -597,7 +597,7 @@ async def execute_apply(
             cv_dict, candidate, job, evaluation, provider_config,
         )
 
-        application.pipeline_stage = "reviewed"
+        application.stage = "reviewed"
         application.review_feedback = review_feedback.model_dump()
         application.review_issues = [i.model_dump() for i in review_feedback.issues]
         await db.commit()
@@ -607,7 +607,7 @@ async def execute_apply(
             cv_dict, review_feedback, candidate, job, provider_config,
         )
 
-        application.pipeline_stage = "revised"
+        application.stage = "revised"
         await db.commit()
 
         # STAGE 5-6: RENDER + COMPILE via Typst
@@ -655,7 +655,7 @@ async def execute_apply(
         application.cover_letter_pdf_path = str(cover_pdf_path) if cover_pdf_path else None
         application.cover_letter_compiled = cover_compiled
         application.cover_letter_pages = cover_pages
-        application.pipeline_stage = "verified" if (ats_result and ats_result.pass_ats) else "compiled"
+        application.stage = "verified" if (ats_result and ats_result.pass_ats) else "compiled"
         application.ats_score = ats_result.keyword_coverage if ats_result else None
         application.ats_missing_keywords = ats_result.missing_keywords if ats_result else None
         application.ats_pass = ats_result.pass_ats if ats_result else None
@@ -693,7 +693,7 @@ async def execute_apply_background(
 
     Creates its own DB session so it can outlive the HTTP request.
     On success the Application record contains the full generated output;
-    on failure pipeline_stage is set to ``failed``.
+    on failure stage is set to ``failed``.
     """
     session = async_session_factory()
     try:
@@ -703,7 +703,7 @@ async def execute_apply_background(
             logger.error("execute_apply_background: Application %s not found", application_id)
             return
 
-        application.pipeline_stage = "initializing"
+        application.stage = "initializing"
         await session.commit()
         logger.info("execute_apply_background: stage=initializing committed, calling execute_apply")
 
@@ -714,7 +714,7 @@ async def execute_apply_background(
             provider_config=provider_config,
             application=application,
         )
-        logger.info("execute_apply_background: execute_apply completed successfully (stage=%s)", application.pipeline_stage)
+        logger.info("execute_apply_background: execute_apply completed successfully (stage=%s)", application.stage)
     except asyncio.CancelledError:
         logger.warning("Pipeline cancelled for application %s", application_id)
         await _fail_application(session, application_id)
@@ -730,7 +730,7 @@ async def execute_apply_background(
 
 
 async def _fail_application(session: AsyncSession, application_id: str) -> None:
-    """Set application pipeline_stage to 'failed'. Errors are swallowed."""
+    """Set application stage to 'failed'. Errors are swallowed."""
     try:
         try:
             await session.rollback()
@@ -738,7 +738,7 @@ async def _fail_application(session: AsyncSession, application_id: str) -> None:
             pass
         app = await session.get(Application, application_id)
         if app is not None:
-            app.pipeline_stage = "failed"
+            app.stage = "failed"
             await session.commit()
     except Exception:
         pass

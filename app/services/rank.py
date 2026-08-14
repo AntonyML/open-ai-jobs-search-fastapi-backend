@@ -231,7 +231,7 @@ async def execute_rank(
     3. SAVE — 1 sesión batch: upsert evaluations + job statuses
     ────────────────────────────────────────────────────────────
     """
-    with bind_context(pipeline_stage="rank"):
+    with bind_context(stage="rank"):
         # ── Phase 1: LOAD (single short session) ─────────────────
         async with db_factory() as db:
             candidate = await _get_candidate_profile(db, user_id)

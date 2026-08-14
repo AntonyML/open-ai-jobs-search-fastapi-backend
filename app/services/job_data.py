@@ -1,7 +1,7 @@
-"""Pipeline reset service — deletes ALL tracked pipeline data for a user.
+"""Job data reset service — deletes ALL tracked job search data for a user.
 
-When a user clicks "Reiniciar pipeline", this service cleans up EVERYTHING
-that was generated during the pipeline run:
+When a user clicks "Reiniciar búsqueda de empleo", this service cleans up EVERYTHING
+that was generated during the job search run:
 - JobPostings (cascades: RankEvaluation, Application, InterviewPrep, Outcome)
 - ScrapeRuns, ExecutionJobs
 - CompetencyExpansions, Upskill analyses
@@ -34,14 +34,14 @@ from app.db.models import (
 from app.exceptions import NotFoundError
 
 
-async def execute_pipeline_reset(
+async def execute_job_data(
     db: AsyncSession,
     user_id: str,
 ) -> dict[str, Any]:
-    """Delete ALL pipeline tracking data for the given user.
+    """Delete ALL job search tracking data for the given user.
 
     This is a COMPLETE reset — not just job postings. It removes all
-    tracked data generated during the pipeline run while preserving
+    tracked data generated during the job search run while preserving
     user configuration (providers, profile, behavioral data).
 
     Args:
@@ -139,7 +139,7 @@ async def execute_pipeline_reset(
         "deleted": deleted,
         "total_deleted": total,
         "message": (
-            f"Pipeline reset complete. "
+            f"Job data reset complete. "
             f"{', '.join(detail_parts)}. "
             "Your providers, profile, and settings are unchanged."
         ),

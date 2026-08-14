@@ -11,7 +11,7 @@ from app.api.v1.outcome import router as outcome_router
 from app.api.v1.expand import router as expand_router
 from app.api.v1.upskill import router as upskill_router
 from app.api.v1.reset import router as reset_router
-from app.api.v1.pipeline_reset import router as pipeline_reset_router
+from app.api.v1.job_data import router as job_data_router
 from app.api.v1.orchestrator import router as orchestrator_router
 from app.api.v1.salary import router as salary_router
 from app.api.v1.verification import router as verification_router
@@ -49,7 +49,7 @@ router.include_router(expand_router)
 router.include_router(upskill_router)
 router.include_router(salary_router)  # POST/GET/DELETE /profile/salary-data
 router.include_router(verification_router)  # POST /apply/{id}/verify
-router.include_router(pipeline_reset_router)
+router.include_router(job_data_router)
 router.include_router(reset_router)
 
 # ── Admin ────────────────────────────────────────────────────────────

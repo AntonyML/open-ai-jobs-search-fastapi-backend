@@ -58,7 +58,7 @@ async def generate_calibration_report(
     user_id: str,
 ) -> CalibrationReport:
     """Generate a full calibration report for the user."""
-    with bind_context(pipeline_stage="calibration"):
+    with bind_context(stage="calibration"):
         logger.info("Generating calibration report | user=%s", user_id)
         # 1. Load all outcomes with their related application + job posting + rank evaluation
         outcomes = await _load_outcomes_with_relations(db, user_id)

@@ -1,6 +1,6 @@
 # Open Ai Jobs Search — FastAPI Backend
 
-Backend multi-proveedor de IA para la búsqueda de empleo. Orquesta un pipeline completo: desde la búsqueda de empleos (alimentada por el **microservicio de ingesta**) hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas, tracking de resultados y calibración de fit. Incluye un **sistema de planes y créditos** (free / pro / max) y un **CV Builder** (base + adaptado por oferta).
+Backend multi-proveedor de IA para la búsqueda de empleo. Orquesta un flujo completo de funciones: desde la búsqueda de empleos (alimentada por el **microservicio de ingesta**) hasta la generación de CV/cover letter optimizados para ATS, preparación de entrevistas, tracking de resultados y calibración de fit. Incluye un **sistema de planes y créditos** (free / pro / max) y un **CV Builder** (base + adaptado por oferta).
 
 > **Inspirado en:** [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search)
 
@@ -25,7 +25,7 @@ está compuesto por 4 repositorios que comparten la base de datos (Supabase).
 - [Repositorios del ecosistema](#repositorios-del-ecosistema)
 - [Arquitectura](#arquitectura)
 - [Microservicio de ingesta](#microservicio-de-ingesta)
-- [Pipeline completo](#pipeline-completo)
+- [Flujo de búsqueda](#flujo-de-búsqueda)
 - [Estructura](#estructura)
 - [Prerrequisitos](#prerrequisitos)
 - [Setup](#setup)
@@ -126,7 +126,7 @@ Ver el README del microservicio para su setup (Telethon, api_id/api_hash, migrac
 
 ---
 
-## Pipeline completo
+## Flujo de búsqueda
 
 ```mermaid
 flowchart LR
@@ -230,7 +230,7 @@ FastAPI-backend/
 │   │   ├── ats_check.py / pdf_verifier.py / cv_cutter.py
 │   │   ├── verification.py        # Verification checklist (10+ checks)
 │   │   ├── interview.py / outcome.py / upskill.py / expand.py
-│   │   ├── fit_calibration.py / pipeline_reset.py / reset.py
+│   │   ├── fit_calibration.py / job_data.py / reset.py
 │   │   ├── provider_credentials.py / provider_models.py / tiers.py / email.py
 │   │   ├── plans.py / subscriptions.py / credits.py / cv_generator.py  # Planes, créditos, CV Builder
 │   │   ├── orchestrator/          # LLMOrchestrator, ExecutionQueue, ProviderManager, etc.
@@ -240,7 +240,7 @@ FastAPI-backend/
 │   │   │                          # require_max_or_admin (gate del plan max)
 │   │   └── v1/                    # auth, providers, orchestrator, setup, rank, apply, interview,
 │   │                              # outcome, expand, upskill, salary, verification, cv, billing,
-│   │                              # notifications, pipeline_reset, reset, admin, dashboard, analytics,
+│   │                              # notifications, job_data, reset, admin, dashboard, analytics,
 │   │                              # users, jobs
 │   ├── utils/                     # pdf_verifier.py
 │   └── external/
@@ -337,7 +337,7 @@ WHERE email = 'tu-email@ejemplo.com';
 SELECT id, email, role, tier, is_active FROM users WHERE email = 'tu-email@ejemplo.com';
 ```
 
-> ⚠️ Los `tier` válidos son las claves del catálogo de planes: `free`, `pro` o `max` (ver `app/services/plans.py`). `max` desbloquea el pipeline completo. Después de cambiar el rol, el usuario debe **cerrar sesión y volver a iniciarla** para que el JWT se genere con el nuevo rol (`admin`). Una vez logueado como admin, accede a `/admin` en el frontend.
+> ⚠️ Los `tier` válidos son las claves del catálogo de planes: `free`, `pro` o `max` (ver `app/services/plans.py`). `max` desbloquea todas las funciones de búsqueda. Después de cambiar el rol, el usuario debe **cerrar sesión y volver a iniciarla** para que el JWT se genere con el nuevo rol (`admin`). Una vez logueado como admin, accede a `/admin` en el frontend.
 
 ### Insertar un admin desde cero
 
@@ -436,7 +436,7 @@ Todos bajo `/api/v1` (salvo el WebSocket).
 > **Modelo de planes** (seeded en `app/services/plans.py`, editable desde `/api/v1/admin/plans`):
 > - **free** — 2 créditos/semana (1 CV base + 1 CV adaptado). Pipeline bloqueado.
 > - **pro** — 100 créditos por período ($19.99/mes o $200/año). Solo CV Builder.
-> - **max** — 500 créditos por período + cuotas (20/día, 80/semana). Pipeline completo: búsqueda, ranking, postulaciones, entrevistas, expand y upskill ($59.99/mes o $600/año).
+> - **max** — 500 créditos por período + cuotas (20/día, 80/semana). Todas las funciones de búsqueda: búsqueda, ranking, postulaciones, entrevistas, expand y upskill ($59.99/mes o $600/año).
 
 ### Providers — Configuración LLM
 
@@ -495,7 +495,7 @@ Todos bajo `/api/v1` (salvo el WebSocket).
 | POST | `/api/v1/apply/` | Generar aplicación (pipeline drafter-reviewer, async) |
 | GET | `/api/v1/apply/available-jobs` | Jobs rankeados disponibles para aplicar |
 | GET | `/api/v1/apply/{application_id}` | Obtener aplicación por ID |
-| GET | `/api/v1/apply/{application_id}/status` | Estado del pipeline (queued → … → verified/failed) |
+| GET | `/api/v1/apply/{application_id}/status` | Estado del proceso (queued → … → verified/failed) |
 | GET | `/api/v1/apply/` | Listar aplicaciones |
 | POST | `/api/v1/apply/{application_id}/verify` | Ejecutar verification checklist |
 
@@ -547,15 +547,15 @@ Todos bajo `/api/v1` (salvo el WebSocket).
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/api/v1/dashboard/stats` | KPIs del pipeline (jobs, ranked, applications, hired) |
-| GET | `/api/v1/dashboard/pipeline` | Progreso del pipeline por paso |
+| GET | `/api/v1/dashboard/stats` | KPIs de la búsqueda (jobs, ranked, applications, hired) |
+
 | GET | `/api/v1/analytics/funnel` | Datos de funnel de conversión |
 
 ### Pipeline Reset
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| DELETE | `/api/v1/pipeline-reset` | Resetear pipeline (jobs, evaluaciones, aplicaciones, preps, outcomes, historial de cola, expansiones, upskill) |
+| DELETE | `/api/v1/job-data` | Borrar datos de la búsqueda (jobs, evaluaciones, aplicaciones, preps, outcomes, historial de cola, expansiones, upskill) |
 
 ### Orchestrator — Monitoreo y control
 

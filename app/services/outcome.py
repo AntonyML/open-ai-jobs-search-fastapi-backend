@@ -113,7 +113,7 @@ async def execute_outcome(
     Returns:
         The created/updated Outcome record
     """
-    with bind_context(pipeline_stage="outcome"):
+    with bind_context(stage="outcome"):
         # 1. Validate status
         _validate_status(payload.status)
 

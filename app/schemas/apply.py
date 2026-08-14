@@ -110,7 +110,7 @@ class ApplicationStatusOut(BaseModel):
     """Lightweight status response for polling."""
 
     id: str
-    pipeline_stage: str
+    stage: str
     progress_pct: int
     current_action: str
     review_issues_count: int = 0
