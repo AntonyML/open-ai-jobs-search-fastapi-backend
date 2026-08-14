@@ -429,9 +429,11 @@ Analyze how well the candidate matches the job description below.
 
 === INSTRUCTIONS ===
 1. match_score: estimate a 0–100 score for overall fit
-2. missing_keywords: keywords in the job the candidate should emphasize — ONLY those genuinely supported by the profile
-3. red_flags: potential concerns a recruiter could raise (max 5)
-4. adapted_experience: concrete reframing suggestions the drafter should apply
+2. missing_keywords: EXACTLY 5 — top keywords to emphasize, only genuinely supported ones
+3. red_flags: EXACTLY 3 — top concerns a recruiter would raise
+4. adapted_experience: 3–5 reframing ideas for EXISTING bullets (X-Y-Z, keyword placement)
+
+Never suggest adding new achievements, metrics, or sections.
 
 Output a valid CVAnalysis JSON object.
 """
@@ -470,14 +472,17 @@ Tailor the candidate's CV to the job description below.
 {analysis.model_dump_json(indent=2)}
 
 === INSTRUCTIONS ===
-1. Tailor the experience bullets using the X-Y-Z formula
-2. Incorporate the missing keywords ONLY where genuinely supported by the profile
-3. Address the red flags by honest reframing
-4. Apply the adapted_experience suggestions where defensible
-5. Generate a compelling, role-specific profile statement
-6. Choose skill group labels appropriate to the profession
+1. PRESERVE the candidate's real experience — rewrite the EXISTING bullets with the X-Y-Z formula
+   ("Accomplished X by doing Y, resulting in Z")
+2. Weave the missing keywords into the EXISTING bullets ONLY where genuinely true
+3. Address the red flags by honest reframing — never hide or invent
+4. Apply the adapted_experience reframing suggestions where defensible
+5. Keep the profile statement close to the original — adjust only to mention the target role
+6. Do NOT add sections, roles, projects, skills, or metrics not in the candidate's profile
 7. Set the cv.language field to match the job description language
-8. If you can generate a strong cover letter, include it; otherwise omit it
+8. Do NOT include a cover letter — output only the CV
+
+CRITICAL: Do NOT expand the CV. Keep it to one page — only the wording of existing bullets changes.
 
 Output a valid GenerateCVOutput JSON object.
 """
@@ -485,6 +490,18 @@ Output a valid GenerateCVOutput JSON object.
         {"role": "system", "content": system},
         {"role": "user", "content": user.strip()},
     ]
+
+
+def _drop_cover_letter(output_dict: dict[str, Any]) -> None:
+    """Remove the cover letter from a generated CV output, if the LLM added one.
+
+    The adapt/personalize flows produce a CV only — a cover letter is never
+    rendered or persisted from these paths. The LLM occasionally includes one
+    despite the prompt; this is the hard guarantee.
+    """
+    cv = output_dict.get("cv")
+    if isinstance(cv, dict) and cv.get("cover_letter"):
+        cv["cover_letter"] = None
 
 
 # ── LLM generation functions (with sanitizer) ────────────────────────
@@ -694,6 +711,7 @@ async def personalize_cv_llm(
         temperature=0.3,
         max_tokens=8000,
     )
+    _drop_cover_letter(output_dict)
     return analysis_dict, output_dict
 
 
@@ -752,9 +770,11 @@ Analyze how well the candidate matches the job posting below.
 
 === INSTRUCTIONS ===
 1. match_score: estimate a 0–100 score for overall fit
-2. missing_keywords: keywords in the job the candidate should emphasize — ONLY those genuinely supported by the profile
-3. red_flags: potential concerns a recruiter could raise (max 5)
-4. adapted_experience: concrete reframing suggestions the drafter should apply
+2. missing_keywords: EXACTLY 5 — top keywords to emphasize, only genuinely supported ones
+3. red_flags: EXACTLY 3 — top concerns a recruiter would raise
+4. adapted_experience: 3–5 reframing ideas for EXISTING bullets (X-Y-Z, keyword placement)
+
+Never suggest adding new achievements, metrics, or sections.
 
 Output a valid CVAnalysis JSON object.
 """
@@ -799,14 +819,18 @@ Adapt the candidate's base CV to the job posting below.
 {analysis.model_dump_json(indent=2)}
 
 === INSTRUCTIONS ===
-1. Keep the candidate's real experience from the base CV — reframe bullets using the X-Y-Z formula
-2. Incorporate the missing keywords ONLY where genuinely supported by the profile
-3. Address the red flags by honest reframing
-4. Apply the adapted_experience suggestions where defensible
-5. Generate a compelling, role-specific profile statement
-6. Choose skill group labels appropriate to the profession
+1. PRESERVE the base CV's structure and length — same sections, same entries, same bullet count
+2. Rewrite the EXISTING experience bullets with the X-Y-Z formula
+   ("Accomplished X by doing Y, resulting in Z")
+3. Weave the missing keywords into the EXISTING bullets ONLY where genuinely true
+4. Address the red flags by honest reframing — never hide or invent
+5. Apply the adapted_experience reframing suggestions where defensible
+6. Keep the profile statement close to the base CV — adjust only to mention the target role
 7. Set the cv.language field to match the job posting language
-8. If you can generate a strong cover letter, include it; otherwise omit it
+8. Do NOT include a cover letter — output only the CV
+
+CRITICAL: Do NOT expand the base CV. No new sections, roles, projects, skills, or metrics.
+The adapted CV must fit on ONE page, like the base CV. Only bullet wording changes.
 
 Output a valid GenerateCVOutput JSON object.
 """
@@ -845,6 +869,7 @@ async def adapt_cv_llm(
         temperature=0.3,
         max_tokens=8000,
     )
+    _drop_cover_letter(output_dict)
     return analysis_dict, output_dict
 
 
@@ -891,9 +916,11 @@ based on whatever you can learn about the role from the URL.
 
 === INSTRUCTIONS ===
 1. match_score: estimate a 0–100 score for overall fit
-2. missing_keywords: job keywords the candidate should emphasize — ONLY genuine ones
-3. red_flags: potential concerns a recruiter could raise (max 5)
-4. adapted_experience: concrete reframing suggestions the drafter should apply
+2. missing_keywords: EXACTLY 5 — top keywords to emphasize, only genuinely supported ones
+3. red_flags: EXACTLY 3 — top concerns a recruiter would raise
+4. adapted_experience: 3–5 reframing ideas for EXISTING bullets (X-Y-Z, keyword placement)
+
+Never suggest adding new achievements, metrics, or sections.
 
 Output a valid CVAnalysis JSON object.
 """
@@ -941,14 +968,18 @@ Use your web search capability to open that URL and read the full job posting
 {analysis.model_dump_json(indent=2)}
 
 === INSTRUCTIONS ===
-1. Keep the candidate's real experience from the base CV — reframe bullets using the X-Y-Z formula
-2. Incorporate the missing keywords ONLY where genuinely supported by the profile
-3. Address the red flags by honest reframing
-4. Apply the adapted_experience suggestions where defensible
-5. Generate a compelling, role-specific profile statement
-6. Choose skill group labels appropriate to the profession
+1. PRESERVE the base CV's structure and length — same sections, same entries, same bullet count
+2. Rewrite the EXISTING experience bullets with the X-Y-Z formula
+   ("Accomplished X by doing Y, resulting in Z")
+3. Weave the missing keywords into the EXISTING bullets ONLY where genuinely true
+4. Address the red flags by honest reframing — never hide or invent
+5. Apply the adapted_experience reframing suggestions where defensible
+6. Keep the profile statement close to the base CV — adjust only to mention the target role
 7. Set the cv.language field to match the job posting language
-8. If you can generate a strong cover letter, include it; otherwise omit it
+8. Do NOT include a cover letter — output only the CV
+
+CRITICAL: Do NOT expand the base CV. No new sections, roles, projects, skills, or metrics.
+The adapted CV must fit on ONE page, like the base CV. Only bullet wording changes.
 
 Output a valid GenerateCVOutput JSON object.
 """
@@ -1001,4 +1032,5 @@ async def adapt_cv_llm_with_url(
         max_tokens=8000,
         web_search=True,
     )
+    _drop_cover_letter(output_dict)
     return analysis_dict, output_dict

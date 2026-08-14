@@ -30,7 +30,11 @@ CREDIT_COSTS_CONFIG_KEY = "credit_costs"
 DEFAULT_CREDIT_COSTS: dict[str, int] = {
     "cv_base": 1,
     "cv_adapted": 1,
-    "pipeline": 1,
+    "rank": 1,
+    "expand": 1,
+    "upskill": 1,
+    "apply": 1,
+    "interview": 1,
 }
 
 
@@ -162,7 +166,7 @@ async def get_credit_costs(db: AsyncSession) -> dict[str, int]:
     row = result.scalar_one_or_none()
     stored = (row.value if row is not None else None) or {}
     costs = {}
-    for key in ("cv_base", "cv_adapted", "pipeline"):
+    for key in DEFAULT_CREDIT_COSTS:
         value = stored.get(key)
         costs[key] = value if isinstance(value, int) and value >= 0 else DEFAULT_CREDIT_COSTS[key]
     return costs

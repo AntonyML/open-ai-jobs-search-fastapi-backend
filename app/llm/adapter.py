@@ -41,6 +41,40 @@ def _build_kwargs(
     return kwargs
 
 
+def _record_usage(response: Any, usage: dict | None) -> None:
+    """Best-effort extract tokens + cost from a LiteLLM response into the sink dict.
+
+    Never raises: usage accounting must not break the LLM call path. The sink
+    is mutated in place and expects the keys ``tokens_input``, ``tokens_output``,
+    ``cost_usd_cents`` (accumulated) and ``model_used`` (last-write-wins).
+    """
+    if usage is None:
+        return
+    try:
+        u = getattr(response, "usage", None)
+        if u is not None:
+            input_tokens = getattr(u, "prompt_tokens", None)
+            if input_tokens is None:
+                input_tokens = getattr(u, "input_tokens", 0)
+            output_tokens = getattr(u, "completion_tokens", None)
+            if output_tokens is None:
+                output_tokens = getattr(u, "output_tokens", 0)
+            if input_tokens:
+                usage["tokens_input"] = usage.get("tokens_input", 0) + int(input_tokens)
+            if output_tokens:
+                usage["tokens_output"] = usage.get("tokens_output", 0) + int(output_tokens)
+
+        model = getattr(response, "model", None)
+        if model:
+            usage["model_used"] = model
+
+        cost = litellm.completion_cost(response=response)
+        if cost:
+            usage["cost_usd_cents"] = usage.get("cost_usd_cents", 0) + int(round(cost * 100))
+    except Exception:
+        pass
+
+
 def get_provider_kwargs(provider_config: dict | None) -> dict[str, Any]:
     """Extract provider kwargs from a provider config dict.
 
@@ -77,6 +111,7 @@ async def llm_completion(
     temperature: float = 0.7,
     max_tokens: int = 4096,
     response_format: dict[str, Any] | None = None,
+    usage: dict | None = None,
 ) -> str:
     """Send a chat completion request through LiteLLM.
 
@@ -90,6 +125,8 @@ async def llm_completion(
         temperature: Sampling temperature.
         max_tokens: Max tokens in the response.
         response_format: Optional JSON schema for structured output.
+        usage: Optional sink dict to accumulate real token/cost usage (see
+            ``_record_usage``). Mutated in place; never raises.
 
     Returns:
         The text content of the first choice.
@@ -133,6 +170,7 @@ async def llm_completion(
         content = message.content or getattr(message, "reasoning_content", None)
         if content is None:
             raise LLMError("LLM returned empty response")
+        _record_usage(response, usage)
         return content
     except litellm.exceptions.AuthenticationError as exc:
         raise ProviderAuthError(str(exc)) from exc
@@ -175,6 +213,7 @@ async def llm_completion_with_web_search(
     api_key: str | None = None,
     api_base: str | None = None,
     max_tokens: int = 4096,
+    usage: dict | None = None,
 ) -> str:
     """Chat completion with native web access (web_search / web_fetch).
 
@@ -194,6 +233,7 @@ async def llm_completion_with_web_search(
             api_key=api_key,
             api_base=api_base,
             max_tokens=max_tokens,
+            usage=usage,
         )
 
     model_ref = f"{provider}/{model}"
@@ -234,6 +274,7 @@ async def llm_completion_with_web_search(
     text = "\n".join(parts).strip()
     if not text:
         raise LLMError("LLM returned empty response")
+    _record_usage(response, usage)
     return text
 
 
@@ -244,6 +285,7 @@ async def _anthropic_web_fetch_completion(
     api_key: str | None = None,
     api_base: str | None = None,
     max_tokens: int,
+    usage: dict | None = None,
 ) -> str:
     """Claude chat completion with the native ``web_fetch`` server tool.
 
@@ -283,6 +325,7 @@ async def _anthropic_web_fetch_completion(
         ).strip()
     if not content:
         raise LLMError("LLM returned empty response")
+    _record_usage(response, usage)
     return content
 
 
@@ -296,6 +339,7 @@ async def llm_completion_structured(
     api_base: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    usage: dict | None = None,
 ) -> Any:
     """Like llm_completion, but parses the response into a Pydantic model.
 
@@ -323,6 +367,7 @@ async def llm_completion_structured(
                 "strict": True,
             },
         },
+        usage=usage,
     )
 
     try:

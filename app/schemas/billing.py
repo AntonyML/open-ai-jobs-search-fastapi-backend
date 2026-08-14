@@ -28,6 +28,11 @@ class CreditAction(str, Enum):
     CV_BASE = "cv_base"
     CV_ADAPTED = "cv_adapted"
     PIPELINE = "pipeline"
+    RANK = "rank"
+    EXPAND = "expand"
+    UPSKILL = "upskill"
+    APPLY = "apply"
+    INTERVIEW = "interview"
     EXPIRY = "expiry"
 
 
@@ -155,7 +160,11 @@ class CreditCosts(BaseModel):
 
     cv_base: int = 1
     cv_adapted: int = 1
-    pipeline: int = 1
+    rank: int = 1
+    expand: int = 1
+    upskill: int = 1
+    apply: int = 1
+    interview: int = 1
 
 
 class ProductCatalogOut(BaseModel):

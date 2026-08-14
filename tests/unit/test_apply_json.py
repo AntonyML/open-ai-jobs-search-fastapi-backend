@@ -574,3 +574,121 @@ class TestTypstCompileEnlatado:
         compile_cv(ENLATADO_OUTPUT_DICT, output=output)
         assert output.exists()
         assert output.stat().st_size > 1000
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 6. Adapt-flow prompt quality (recruiter analysis + drafter)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestAdaptFlowPrompts:
+    """The adapt/personalize flow must ask for exactly 5 keywords / 3 red
+    flags (matching the TikTok flow) and must NOT produce a cover letter."""
+
+    def test_recruiter_analysis_prompt_asks_exact_counts(self, candidate):
+        from app.services.apply_json import build_recruiter_analysis_prompt
+
+        messages = build_recruiter_analysis_prompt(
+            candidate, "Senior ML Engineer role with NLP and Kubernetes."
+        )
+        user = messages[1]["content"]
+        assert "EXACTLY 5" in user
+        assert "EXACTLY 3" in user
+
+    def test_adapt_analysis_prompt_asks_exact_counts(self, candidate, job):
+        from app.services.apply_json import build_adapt_analysis_prompt
+
+        messages = build_adapt_analysis_prompt(
+            candidate, {"cv": {"first_name": "Test"}}, job
+        )
+        user = messages[1]["content"]
+        assert "EXACTLY 5" in user
+        assert "EXACTLY 3" in user
+
+    def test_adapt_url_analysis_prompt_asks_exact_counts(self, candidate):
+        from app.services.apply_json import build_adapt_url_analysis_prompt
+
+        messages = build_adapt_url_analysis_prompt(
+            candidate, {"cv": {"first_name": "Test"}}, "https://example.com/job"
+        )
+        user = messages[1]["content"]
+        assert "EXACTLY 5" in user
+        assert "EXACTLY 3" in user
+
+    def test_personalize_drafter_no_cover_letter_and_no_expansion(self, candidate):
+        from app.schemas.cv import CVAnalysis
+        from app.services.apply_json import build_personalize_drafter_prompt
+
+        analysis = CVAnalysis(match_score=70, missing_keywords=["K8s"], red_flags=[])
+        messages = build_personalize_drafter_prompt(
+            candidate, "Senior ML Engineer role.", analysis
+        )
+        user = messages[1]["content"]
+        assert "Do NOT include a cover letter" in user
+        assert "Do NOT expand" in user
+
+    def test_adapt_drafter_no_cover_letter_and_preserves_structure(self, candidate, job):
+        from app.schemas.cv import CVAnalysis
+        from app.services.apply_json import build_adapt_drafter_prompt
+
+        analysis = CVAnalysis(match_score=70, missing_keywords=["K8s"], red_flags=[])
+        messages = build_adapt_drafter_prompt(
+            candidate, {"cv": {"first_name": "Test"}}, job, analysis
+        )
+        user = messages[1]["content"]
+        assert "Do NOT include a cover letter" in user
+        assert "PRESERVE the base CV" in user
+        assert "ONE page" in user
+
+    def test_adapt_url_drafter_no_cover_letter(self, candidate):
+        from app.schemas.cv import CVAnalysis
+        from app.services.apply_json import build_adapt_url_drafter_prompt
+
+        analysis = CVAnalysis(match_score=70, missing_keywords=["K8s"], red_flags=[])
+        messages = build_adapt_url_drafter_prompt(
+            candidate, {"cv": {"first_name": "Test"}}, "https://example.com/job", analysis
+        )
+        user = messages[1]["content"]
+        assert "Do NOT include a cover letter" in user
+        assert "ONE page" in user
+
+    async def test_personalize_cv_llm_drops_cover_letter(self, candidate, monkeypatch):
+        """Even if the LLM sneaks in a cover letter, it is stripped before return."""
+        from app.services import apply_json
+
+        analysis = {"match_score": 70, "missing_keywords": [], "red_flags": [],
+                    "adapted_experience": []}
+        output = {"cv": {"first_name": "Test", "cover_letter": {
+            "opening_paragraph": "Hi", "body_paragraphs": ["x"], "closing_paragraph": "bye",
+        }}}
+
+        async def fake_llm_json(messages, schema_type, provider_config, **kwargs):
+            if schema_type.__name__ == "CVAnalysis":
+                return analysis
+            return output
+
+        monkeypatch.setattr(apply_json, "_llm_json", fake_llm_json)
+        _, out = await apply_json.personalize_cv_llm(
+            candidate, "Senior ML Engineer role."
+        )
+        assert out["cv"].get("cover_letter") is None
+
+    async def test_adapt_cv_llm_drops_cover_letter(self, candidate, job, monkeypatch):
+        from app.services import apply_json
+
+        analysis = {"match_score": 70, "missing_keywords": [], "red_flags": [],
+                    "adapted_experience": []}
+        output = {"cv": {"first_name": "Test", "cover_letter": {
+            "opening_paragraph": "Hi", "body_paragraphs": ["x"], "closing_paragraph": "bye",
+        }}}
+
+        async def fake_llm_json(messages, schema_type, provider_config, **kwargs):
+            if schema_type.__name__ == "CVAnalysis":
+                return analysis
+            return output
+
+        monkeypatch.setattr(apply_json, "_llm_json", fake_llm_json)
+        _, out = await apply_json.adapt_cv_llm(
+            candidate, {"cv": {"first_name": "Test"}}, job
+        )
+        assert out["cv"].get("cover_letter") is None

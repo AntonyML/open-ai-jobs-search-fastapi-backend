@@ -360,6 +360,66 @@ async def consume_quota(db: AsyncSession, user_id: str, plan: Plan, count: int =
     await db.flush()
 
 
+async def record_llm_usage(
+    db: AsyncSession,
+    correlation_id: str,
+    *,
+    model_used: str | None = None,
+    tokens_input: int = 0,
+    tokens_output: int = 0,
+    cost_usd_cents: int = 0,
+) -> CreditTransaction | None:
+    """Accumulate real LLM usage onto the ledger row for ``correlation_id``.
+
+    Ledger rows are immutable in their delta but the token/cost columns are
+    enriched after the fact: the credit is consumed before the LLM call runs
+    and the actual usage is known only afterwards. Multiple sub-calls within
+    one request share the same correlation_id and accumulate on one row.
+
+    Best-effort: silently no-ops when no row matches (e.g. admin bypass).
+    """
+    if not correlation_id:
+        return None
+    result = await db.execute(
+        select(CreditTransaction).where(CreditTransaction.correlation_id == correlation_id)
+    )
+    txn = result.scalars().first()
+    if txn is None:
+        return None
+    if model_used:
+        txn.model_used = model_used
+    if tokens_input:
+        txn.tokens_input = (txn.tokens_input or 0) + int(tokens_input)
+    if tokens_output:
+        txn.tokens_output = (txn.tokens_output or 0) + int(tokens_output)
+    if cost_usd_cents:
+        txn.cost_usd_cents = (txn.cost_usd_cents or 0) + int(cost_usd_cents)
+    await db.flush()
+    return txn
+
+
+async def relink_transaction(
+    db: AsyncSession, correlation_id: str, new_correlation_id: str
+) -> bool:
+    """Point a ledger row at a correlation id only known after consumption.
+
+    Used by the rank flow: the credit is consumed before the ExecutionJob
+    exists, then the row is relinked to the job id so the worker's usage can
+    be matched back later.
+    """
+    if not correlation_id or not new_correlation_id:
+        return False
+    result = await db.execute(
+        select(CreditTransaction).where(CreditTransaction.correlation_id == correlation_id)
+    )
+    txn = result.scalars().first()
+    if txn is None:
+        return False
+    txn.correlation_id = new_correlation_id
+    await db.flush()
+    return True
+
+
 async def get_recent_transactions(
     db: AsyncSession, user_id: str, limit: int = 30
 ) -> list[CreditTransaction]:
