@@ -26,6 +26,7 @@ from app.schemas.cv import (
     CVJobOut,
     CVPersonalizeCreate,
     CVPersonalizeJobCreate,
+    CVRecoverCreate,
     CVResponse,
 )
 from app.services import credits, cv_generator, subscriptions
@@ -57,6 +58,7 @@ def _to_response(record: GeneratedCV) -> CVResponse:
     return CVResponse(
         cv_id=record.id,
         cv_type=record.cv_type,  # type: ignore[arg-type]
+        base_status=record.base_status,  # type: ignore[arg-type]
         job_url=record.job_url,
         job_posting_id=record.job_posting_id,
         job=job,
@@ -133,6 +135,24 @@ async def create_base_cv(
     """Generate a generic base CV from the candidate profile."""
     await _enforce_credit_gate(db, user, "cv_base")
     record = await cv_generator.generate_base_cv(db, user["sub"])
+    return _to_response(record)
+
+
+@router.post("/base/recover", response_model=CVResponse)
+async def recover_base_cv(
+    payload: CVRecoverCreate,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a previous (obsolete) base CV as the active one.
+
+    Free operation (no LLM call): the restored CV becomes ``active`` and the
+    current active base CV is demoted to ``obsolete``. The max-2 invariant
+    is preserved — never a third document.
+    """
+    record = await cv_generator.recover_previous_base(
+        db, user["sub"], payload.cv_id
+    )
     return _to_response(record)
 
 

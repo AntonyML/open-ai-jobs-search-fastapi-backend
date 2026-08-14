@@ -16,6 +16,7 @@ passed straight to the LLM (recruiter-lens analysis → drafter).
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -73,11 +74,22 @@ async def _resolve_provider_or_raise(db: AsyncSession, user_id: str) -> dict[str
 
 
 async def generate_base_cv(db: AsyncSession, user_id: str) -> GeneratedCV:
-    """Generate a generic base CV (no job context) and persist it."""
+    """Generate a generic base CV (no job context) and persist it.
+
+    Enforces the max-2 base CV invariant: the current active base is demoted
+    to ``obsolete`` and any previous obsolete base is physically removed, so
+    there is never more than one active base CV and never a third document.
+    The LLM is called BEFORE the demotion so a failed generation never leaves
+    the user without an active base CV.
+    """
     profile = await _load_profile_or_raise(db, user_id)
     provider_config = await _resolve_provider_or_raise(db, user_id)
 
     output_dict = await generate_base_cv_llm(profile, provider_config)
+
+    # Max-2 rule: demote the current active base, hard-delete the previous one.
+    await _demote_previous_bases(db, user_id)
+
     return await _persist_and_compile(
         db, user_id,
         cv_type="base",
@@ -134,7 +146,7 @@ async def adapt_cv(
         )
     )
     base_cv = result.scalar_one_or_none()
-    if base_cv is None or base_cv.cv_type != "base":
+    if base_cv is None or base_cv.cv_type != "base" or base_cv.base_status != "active":
         raise PreconditionError(
             "Generate a base CV first before adapting it to a job offer."
         )
@@ -191,6 +203,7 @@ async def _persist_and_compile(
         id=cv_id,
         user_id=user_id,
         cv_type=cv_type,
+        base_status="active" if cv_type == "base" else None,
         job_posting_id=job_posting_id,
         job_url=job_url,
         job_description_text=job_description_text,
@@ -235,9 +248,139 @@ async def get_cv(db: AsyncSession, user_id: str, cv_id: str) -> GeneratedCV:
     return record
 
 
+# ── Base CV lifecycle (max-2 invariant) ────────────────────────────
+
+
+async def _user_base_cvs(db: AsyncSession, user_id: str) -> list[GeneratedCV]:
+    """All of the user's non-deleted base CVs, oldest first."""
+    result = await db.execute(
+        select(GeneratedCV)
+        .where(
+            GeneratedCV.user_id == user_id,
+            GeneratedCV.cv_type == "base",
+            GeneratedCV.is_deleted.is_(False),
+        )
+        .order_by(GeneratedCV.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _user_active_base_cv(db: AsyncSession, user_id: str) -> GeneratedCV | None:
+    """The user's current (active) base CV, if any."""
+    result = await db.execute(
+        select(GeneratedCV)
+        .where(
+            GeneratedCV.user_id == user_id,
+            GeneratedCV.cv_type == "base",
+            GeneratedCV.is_deleted.is_(False),
+            GeneratedCV.base_status == "active",
+        )
+        .order_by(GeneratedCV.created_at.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _user_obsolete_base_cv(db: AsyncSession, user_id: str) -> GeneratedCV | None:
+    """The user's previous (obsolete) base CV, if any."""
+    result = await db.execute(
+        select(GeneratedCV)
+        .where(
+            GeneratedCV.user_id == user_id,
+            GeneratedCV.cv_type == "base",
+            GeneratedCV.is_deleted.is_(False),
+            GeneratedCV.base_status == "obsolete",
+        )
+        .order_by(GeneratedCV.created_at.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _hard_delete_base(db: AsyncSession, record: GeneratedCV) -> None:
+    """Physically remove a base CV: PDF from disk (best-effort) + DB row.
+
+    This is the only path that actually frees space under ``generated_cvs/``.
+    """
+    pdf = resolve_pdf_path(record)
+    if pdf is not None and pdf.exists():
+        with contextlib.suppress(OSError):
+            pdf.unlink()  # disk cleanup is best-effort; the DB row is authoritative
+    await db.delete(record)
+
+
+async def _demote_previous_bases(db: AsyncSession, user_id: str) -> None:
+    """Enforce the max-2 rule before persisting a new base CV.
+
+    Every obsolete base is hard-deleted (a replaced CV is never kept past the
+    next regeneration) and every active base is demoted to ``obsolete``. As
+    long as the invariant held, this keeps exactly one active + one obsolete.
+    """
+    bases = await _user_base_cvs(db, user_id)
+    if not bases:
+        return
+    for base in bases:
+        if base.base_status == "obsolete":
+            await _hard_delete_base(db, base)
+        else:
+            base.base_status = "obsolete"
+    await db.commit()
+
+
+async def recover_previous_base(
+    db: AsyncSession,
+    user_id: str,
+    previous_cv_id: str,
+) -> GeneratedCV:
+    """Swap the previous (obsolete) base CV back to active.
+
+    Validates ownership and that the target is a non-deleted, obsolete base
+    CV. The current active base is demoted to ``obsolete``, so the swap never
+    creates a third document and there is always exactly one active base.
+    """
+    result = await db.execute(
+        select(GeneratedCV).where(
+            GeneratedCV.id == previous_cv_id,
+            GeneratedCV.user_id == user_id,
+            GeneratedCV.is_deleted.is_(False),
+        )
+    )
+    previous = result.scalar_one_or_none()
+    if previous is None or previous.cv_type != "base" or previous.base_status != "obsolete":
+        raise PreconditionError("The previous base CV is not available to restore.")
+
+    active = await _user_active_base_cv(db, user_id)
+    if active is not None and active.id != previous.id:
+        active.base_status = "obsolete"
+    previous.base_status = "active"
+    await db.commit()
+    await db.refresh(previous)
+    return previous
+
+
 async def soft_delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> None:
-    """Soft-delete a CV so it disappears from the list but the PDF stays."""
+    """Delete a CV.
+
+    - Personalized CVs: soft-delete (hidden from the list, PDF stays for
+      existing downloads).
+    - Obsolete base CV: hard-delete (row + PDF) — the active base is kept.
+    - Active base CV: the previous version (if any) is promoted to active so
+      the user never loses an active base, then the CV is hard-deleted.
+    """
     record = await get_cv(db, user_id, cv_id)
+
+    if record.cv_type == "base":
+        if record.base_status == "obsolete":
+            await _hard_delete_base(db, record)
+        else:
+            # Deleting the active base: promote the previous version first.
+            previous = await _user_obsolete_base_cv(db, user_id)
+            if previous is not None:
+                previous.base_status = "active"
+            await _hard_delete_base(db, record)
+        await db.commit()
+        return
+
     record.is_deleted = True
     await db.commit()
 

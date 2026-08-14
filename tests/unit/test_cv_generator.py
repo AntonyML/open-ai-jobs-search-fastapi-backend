@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.models import Base, CandidateProfile, JobPosting, User
+from app.db.models import Base, CandidateProfile, GeneratedCV, JobPosting, User
 from app.exceptions import (
     NotFoundError,
     PreconditionError,
@@ -297,3 +297,188 @@ async def test_adapt_cv_job_not_owned_raises(db_session):
         await cv_generator.adapt_cv(
             db_session, "test-user-id", base.id, "job-other-1"
         )
+
+
+# ── Max-2 base CV lifecycle (active / obsolete) ────────────────────────
+
+
+async def _bases(db) -> list[GeneratedCV]:
+    return await cv_generator._user_base_cvs(db, "test-user-id")
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_generate_base_cv_keeps_at_most_two(db_session):
+    """Regenerating never leaves more than 1 active + 1 obsolete base CV."""
+    first = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    assert first.base_status == "active"
+
+    second = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await db_session.refresh(first)
+    assert first.base_status == "obsolete"
+    assert second.base_status == "active"
+
+    third = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await db_session.refresh(second)
+    assert second.base_status == "obsolete"
+    assert third.base_status == "active"
+
+    bases = await _bases(db_session)
+    assert len(bases) == 2  # the oldest (first) was hard-deleted
+    assert {b.id for b in bases} == {second.id, third.id}
+    assert sum(1 for b in bases if b.base_status == "active") == 1
+    assert sum(1 for b in bases if b.base_status == "obsolete") == 1
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_recover_previous_base_swaps_roles(db_session):
+    """Recover swaps: previous → active, current active → obsolete."""
+    first = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    second = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await db_session.refresh(first)
+
+    restored = await cv_generator.recover_previous_base(db_session, "test-user-id", first.id)
+
+    assert restored.id == first.id
+    assert restored.base_status == "active"
+    await db_session.refresh(second)
+    assert second.base_status == "obsolete"
+
+    # The invariant still holds and no third document exists.
+    bases = await _bases(db_session)
+    assert len(bases) == 2
+    assert sum(1 for b in bases if b.base_status == "active") == 1
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_recover_previous_base_rejects_active_or_foreign(db_session):
+    """Only an owned, obsolete base CV can be restored."""
+    first = await cv_generator.generate_base_cv(db_session, "test-user-id")
+
+    # Active base is not recoverable.
+    with pytest.raises(PreconditionError):
+        await cv_generator.recover_previous_base(db_session, "test-user-id", first.id)
+
+    # A CV belonging to another user is not recoverable.
+    with pytest.raises(PreconditionError):
+        await cv_generator.recover_previous_base(db_session, "test-user-id", "someone-elses-cv")
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_soft_delete_obsolete_base_hard_deletes_pdf(db_session):
+    """Deleting the obsolete base removes the row AND the PDF from disk."""
+    first = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    second = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await db_session.refresh(first)
+    assert first.base_status == "obsolete"
+
+    # Simulate a real compiled PDF on disk for the obsolete base.
+    pdf = cv_generator.resolve_pdf_path(first)
+    assert pdf is not None
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4 test")
+
+    await cv_generator.soft_delete_cv(db_session, "test-user-id", first.id)
+
+    assert not pdf.exists(), "PDF of the obsolete base should be removed from disk"
+    bases = await _bases(db_session)
+    assert [b.id for b in bases] == [second.id]
+    await db_session.refresh(second)
+    assert second.base_status == "active"
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_soft_delete_active_base_promotes_previous(db_session):
+    """Deleting the active base promotes the previous one to active."""
+    first = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    second = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await db_session.refresh(first)
+    assert first.base_status == "obsolete"
+
+    await cv_generator.soft_delete_cv(db_session, "test-user-id", second.id)
+
+    await db_session.refresh(first)
+    assert first.base_status == "active"
+    bases = await _bases(db_session)
+    assert [b.id for b in bases] == [first.id]
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
+    "app.services.cv_generator.adapt_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.generate_base_cv_llm",
+    new=AsyncMock(return_value=SAMPLE_OUTPUT),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_adapt_cv_requires_active_base(db_session):
+    """Rule 4 — only the ACTIVE base CV can be adapted, not an obsolete one."""
+    first = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    second = await cv_generator.generate_base_cv(db_session, "test-user-id")
+    await db_session.refresh(first)
+    assert first.base_status == "obsolete"
+
+    job = JobPosting(
+        id="job-active-1",
+        user_id="test-user-id",
+        portal="linkedin",
+        external_id="ext-active",
+        title="Senior Python Engineer",
+        company="Acme",
+        location="Remote",
+        description="Python, FastAPI, Kubernetes...",
+        status="ranked",
+    )
+    db_session.add(job)
+    await db_session.commit()
+
+    # Obsolete base → precondition error.
+    with pytest.raises(PreconditionError):
+        await cv_generator.adapt_cv(db_session, "test-user-id", first.id, "job-active-1")
+
+    # Active base still adapts fine.
+    await cv_generator.adapt_cv(db_session, "test-user-id", second.id, "job-active-1")

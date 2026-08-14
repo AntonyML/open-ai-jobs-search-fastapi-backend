@@ -366,6 +366,16 @@ class CVPersonalizeCreate(BaseModel):
     )
 
 
+class CVRecoverCreate(BaseModel):
+    """Request for POST /cv/base/recover — restore a previous (obsolete) base CV.
+
+    The swap never creates a third document: the restored CV becomes active
+    and the current active base CV is demoted to obsolete.
+    """
+
+    cv_id: str = Field(..., description="ID of the obsolete base CV to restore.")
+
+
 class CVPersonalizeJobCreate(BaseModel):
     """Request for POST /cv/personalize-job — adapt the base CV to an existing job posting.
 
@@ -393,6 +403,11 @@ class CVResponse(BaseModel):
     cv_id: str = Field(..., description="ID of the generated CV record.")
     cv_type: Literal["base", "personalized"] = Field(
         ..., description="'base' for generic, 'personalized' for job-tailored."
+    )
+    base_status: Literal["active", "obsolete"] | None = Field(
+        None,
+        description="'active' for the current base CV, 'obsolete' for a replaced base CV "
+        "still listed in Mis CV; None for personalized CVs.",
     )
     job_url: str | None = Field(None, description="Source URL, when a job posting was used.")
     job_posting_id: str | None = Field(

@@ -1454,6 +1454,10 @@ class GeneratedCV(Base, TimestampMixin):
     cv_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default="base", index=True
     )
+    # Lifecycle of base CVs (NULL for personalized CVs):
+    #   "active"   → the current base CV (the one adapts / downloads use)
+    #   "obsolete" → a replaced base CV kept in "Mis CV" for recovery
+    base_status: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
     job_url: Mapped[str | None] = mapped_column(String(500))
     job_posting_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("job_postings.id", ondelete="SET NULL"), index=True
