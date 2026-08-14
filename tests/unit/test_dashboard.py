@@ -5,10 +5,11 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.v1.dashboard import get_analytics_trends
+from app.api.v1.dashboard import get_analytics_trends, get_dashboard_stats
 from app.db.models import (
     Application,
     Base,
+    GeneratedCV,
     InterviewPrep,
     JobPosting,
     Outcome,
@@ -21,6 +22,7 @@ USER_ID = "user-1"
 # The endpoint is decorated with aiocache's in-memory cache; unit tests call
 # the undecorated function so a cached result never leaks across tests.
 trends_handler = get_analytics_trends.__wrapped__
+stats_handler = get_dashboard_stats.__wrapped__
 
 
 @pytest.fixture
@@ -92,6 +94,57 @@ async def _seed_activity(db: AsyncSession, **counts: int) -> None:
         ))
 
     await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_stats_reports_cv_document_metrics(db_session):
+    """Document KPIs are reported: active base CV, adapted CVs and totals."""
+    # Active base CV + one obsolete base + two adapted CVs
+    db_session.add_all([
+        GeneratedCV(
+            id="base-active", user_id=USER_ID, cv_type="base", base_status="active",
+            cv_json={}, is_deleted=False,
+        ),
+        GeneratedCV(
+            id="base-old", user_id=USER_ID, cv_type="base", base_status="obsolete",
+            cv_json={}, is_deleted=False,
+        ),
+        GeneratedCV(
+            id="adapted-1", user_id=USER_ID, cv_type="personalized",
+            cv_json={}, is_deleted=False,
+        ),
+        GeneratedCV(
+            id="adapted-2", user_id=USER_ID, cv_type="personalized",
+            cv_json={}, is_deleted=False,
+        ),
+        GeneratedCV(
+            id="deleted-cv", user_id=USER_ID, cv_type="personalized",
+            cv_json={}, is_deleted=True,
+        ),
+    ])
+    await db_session.commit()
+
+    res = await stats_handler(user={"sub": USER_ID}, db=db_session)
+
+    assert res["base_cv_ready"] is True
+    assert res["adapted_cv_count"] == 2
+    assert res["total_cvs"] == 4  # deleted rows are excluded
+
+
+@pytest.mark.asyncio
+async def test_stats_reports_no_base_cv_when_missing(db_session):
+    """A user without an active base CV gets base_cv_ready=False."""
+    db_session.add(GeneratedCV(
+        id="adapted-only", user_id=USER_ID, cv_type="personalized",
+        cv_json={}, is_deleted=False,
+    ))
+    await db_session.commit()
+
+    res = await stats_handler(user={"sub": USER_ID}, db=db_session)
+
+    assert res["base_cv_ready"] is False
+    assert res["adapted_cv_count"] == 1
+    assert res["total_cvs"] == 1
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.db.models import (
     Application,
+    GeneratedCV,
     InterviewPrep,
     JobPosting,
     Outcome,
@@ -58,6 +59,22 @@ async def get_dashboard_stats(
     rejected = select(func.count(Outcome.id)).where(
         Outcome.user_id == uid, Outcome.status == "rejected"
     )
+    # Document KPIs (the CV builder flow is the core value of the app)
+    base_cv_ready = select(func.count(GeneratedCV.id)).where(
+        GeneratedCV.user_id == uid,
+        GeneratedCV.cv_type == "base",
+        GeneratedCV.base_status == "active",
+        GeneratedCV.is_deleted.is_(False),
+    )
+    adapted_cvs = select(func.count(GeneratedCV.id)).where(
+        GeneratedCV.user_id == uid,
+        GeneratedCV.cv_type == "personalized",
+        GeneratedCV.is_deleted.is_(False),
+    )
+    total_cvs = select(func.count(GeneratedCV.id)).where(
+        GeneratedCV.user_id == uid,
+        GeneratedCV.is_deleted.is_(False),
+    )
 
     stmt = select(
         func.coalesce(jobs_scraped.scalar_subquery(), 0).label("jobs_scraped"),
@@ -67,6 +84,9 @@ async def get_dashboard_stats(
         func.coalesce(avg_rank_score.scalar_subquery(), 0).label("avg_rank_score"),
         func.coalesce(hired.scalar_subquery(), 0).label("hired"),
         func.coalesce(rejected.scalar_subquery(), 0).label("rejected"),
+        func.coalesce(base_cv_ready.scalar_subquery(), 0).label("base_cv_ready"),
+        func.coalesce(adapted_cvs.scalar_subquery(), 0).label("adapted_cv_count"),
+        func.coalesce(total_cvs.scalar_subquery(), 0).label("total_cvs"),
     )
     row = (await db.execute(stmt)).one()
 
@@ -78,6 +98,9 @@ async def get_dashboard_stats(
         "avg_rank_score": round(row.avg_rank_score, 1) if row.avg_rank_score is not None else None,
         "hired": row.hired,
         "rejected": row.rejected,
+        "base_cv_ready": bool(row.base_cv_ready),
+        "adapted_cv_count": row.adapted_cv_count,
+        "total_cvs": row.total_cvs,
     }
 
 
