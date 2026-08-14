@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 import litellm
-from litellm import completion
+from litellm import responses, supports_web_search
 
 from app.core.settings import get_settings
 from app.exceptions import LLMError, ProviderAuthError
@@ -144,6 +144,78 @@ async def llm_completion(
         raise LLMError(f"LLM timed out: {exc}") from exc
     except Exception as exc:
         raise LLMError(f"LLM call failed: {exc}") from exc
+
+
+def has_web_search_support(model: str) -> bool:
+    """Whether the given provider/model supports the OpenAI ``web_search`` tool.
+
+    Only models with native web access (e.g. ``gpt-5``, ``gpt-4o-search-preview``)
+    can open a URL at inference time. The provider's own infrastructure fetches
+    the page — our backend never scrapes.
+    """
+    try:
+        return bool(supports_web_search(model))
+    except Exception:
+        return False
+
+
+async def llm_completion_with_web_search(
+    messages: list[dict[str, str]],
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    max_tokens: int = 4096,
+) -> str:
+    """Chat completion with the OpenAI ``web_search`` tool (Responses API).
+
+    Use when the prompt references a public URL (e.g. "adapt my CV to the job
+    at <link>"): the provider fetches and reads the page under its own
+    agreements, so we never scrape from our servers. Only works for models
+    with web access (see ``has_web_search_support``).
+
+    Raises ``ProviderAuthError`` / ``LLMError`` like ``llm_completion``.
+    """
+    model_ref = f"{provider}/{model}"
+
+    try:
+        response = await responses(
+            input=[
+                {"role": m.get("role", "user"), "content": m.get("content", "")}
+                for m in messages
+            ],
+            model=model_ref,
+            api_key=api_key,
+            api_base=api_base,
+            tools=[{"type": "web_search"}],
+            max_output_tokens=max_tokens,
+            timeout=settings.llm_timeout,
+        )
+    except litellm.exceptions.AuthenticationError as exc:
+        raise ProviderAuthError(str(exc)) from exc
+    except litellm.exceptions.BadRequestError as exc:
+        raise LLMError(f"LLM request error: {exc}") from exc
+    except litellm.exceptions.RateLimitError as exc:
+        raise LLMError(f"LLM rate-limited: {exc}") from exc
+    except litellm.exceptions.Timeout as exc:
+        raise LLMError(f"LLM timed out: {exc}") from exc
+    except Exception as exc:
+        raise LLMError(f"LLM call failed: {exc}") from exc
+
+    parts: list[str] = []
+    for item in getattr(response, "output", []) or []:
+        content = getattr(item, "content", None)
+        if not content:
+            continue
+        for part in content:
+            text = getattr(part, "text", None)
+            if text:
+                parts.append(text)
+    text = "\n".join(parts).strip()
+    if not text:
+        raise LLMError("LLM returned empty response")
+    return text
 
 
 async def llm_completion_structured(

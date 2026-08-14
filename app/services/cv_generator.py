@@ -35,12 +35,11 @@ from app.exceptions import (
     ProviderAuthError,
 )
 from app.services.apply_json import (
-    AdaptJobContext,
     adapt_cv_llm,
+    adapt_cv_llm_with_url,
     generate_base_cv_llm,
     personalize_cv_llm,
 )
-from app.services.job_url_reader import fetch_job_page
 from app.services.pdf_compiler_typst import compile_cv
 from app.services.provider_config import get_active_provider_config
 from app.services.setup import get_profile
@@ -177,12 +176,12 @@ async def adapt_cv_from_url(
     base_cv_id: str,
     url: str,
 ) -> GeneratedCV:
-    """Adapt the user's base CV to a job posting fetched live from a URL.
+    """Adapt the user's base CV to a job posting referenced by URL.
 
     Available on every plan (credit-gated): the user pastes a public job link
-    (LinkedIn, Indeed, company career page, ...) and ``fetch_job_page`` reads
-    the page — no scraping infrastructure.  The extracted text feeds the same
-    recruiter-analysis → drafter pipeline as the internal-offer flow.
+    and the URL is passed to the model in the prompt — the provider's
+    ``web_search`` tool reads the page under its own agreements. Our backend
+    never scrapes.
 
     Rules enforced are the same as ``adapt_cv``: the base CV must exist and
     be ``active`` (Rule 4), and the base record is never modified — a new
@@ -204,22 +203,17 @@ async def adapt_cv_from_url(
             "Generate a base CV first before adapting it to a job offer."
         )
 
-    # Fetch first so a blocked / invalid URL never spends AI credits.
-    page = await fetch_job_page(url)
-    job_ctx = AdaptJobContext(
-        title=page["title"],
-        description=page["text"],
-    )
-
-    analysis_dict, output_dict = await adapt_cv_llm(
-        profile, base_cv.cv_json, job_ctx, provider_config,
+    # The model reads the URL (provider web_search). If the configured model
+    # can't open links, this raises PreconditionError before any LLM call.
+    analysis_dict, output_dict = await adapt_cv_llm_with_url(
+        profile, base_cv.cv_json, url, provider_config,
     )
     return await _persist_and_compile(
         db, user_id,
         cv_type="personalized",
         output_dict=output_dict,
         analysis_dict=analysis_dict,
-        job_description_text=page["text"],
+        job_description_text=None,
         job_url=url,
     )
 

@@ -11,15 +11,18 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import ValidationError
 
 from app.core.logging import bind_context, get_logger
 from app.db.models import CandidateProfile, JobPosting, RankEvaluation
-from app.exceptions import LLMError
-from app.llm.adapter import llm_completion
+from app.exceptions import LLMError, PreconditionError
+from app.llm.adapter import (
+    has_web_search_support,
+    llm_completion,
+    llm_completion_with_web_search,
+)
 from app.schemas.apply import ReviewFeedback
 from app.schemas.cv import CV, CoverLetter, CVAnalysis, CVMetadata, GenerateCVOutput
 from app.services.orchestrator.llm_response_sanitizer import (
@@ -494,24 +497,37 @@ async def _llm_json(
     temperature: float = 0.3,
     max_tokens: int = 4000,
     field_constraints: dict | None = None,
+    web_search: bool = False,
 ) -> dict[str, Any]:
     """Call LLM, sanitize response, validate against Pydantic schema.
 
     Uses ``llm_completion()`` (no response_format) + ``sanitize_llm_response()``
     so the JSON repair pipeline handles malformed LLM output before Pydantic.
+    When ``web_search=True`` the request goes through the Responses API with
+    the OpenAI ``web_search`` tool, so a URL in the prompt is read by the
+    provider's own infrastructure — never scraped from our servers.
     """
     provider = provider_config.get("provider", "anthropic")
     model = provider_config.get("model", "claude-sonnet-4-20250514")
     api_key = provider_config.get("api_key")
 
-    raw = await llm_completion(
-        messages=messages,
-        provider=provider,
-        model=model,
-        api_key=api_key,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    if web_search:
+        raw = await llm_completion_with_web_search(
+            messages=messages,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+        )
+    else:
+        raw = await llm_completion(
+            messages=messages,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     constraints = field_constraints or default_field_constraints()
     try:
@@ -684,29 +700,7 @@ async def personalize_cv_llm(
 # ── CV adapter LLM functions (FASE — Perfil → CV base → CV adaptado) ────
 
 
-@dataclass
-class AdaptJobContext:
-    """Minimal job context for the adapt prompts when there is no stored
-    ``JobPosting`` row — e.g. a job fetched live from a public URL.
-
-    Mirrors the ``JobPosting`` attributes ``_build_adapt_job_summary`` reads,
-    so both the internal-offer flow and the by-URL flow share one prompt path.
-    """
-
-    title: str
-    description: str
-    company: str | None = None
-    location: str | None = None
-    employment_type: str | None = None
-    salary: str | None = None
-    language: str | None = None
-    requirements: list[str] | None = field(default_factory=list)
-
-
-JobContext = JobPosting | AdaptJobContext
-
-
-def _build_adapt_job_summary(job: JobContext) -> str:
+def _build_adapt_job_summary(job: JobPosting) -> str:
     """Plain-text summary of a stored JobPosting for adaptation context."""
     parts = [
         f"Title: {job.title}",
@@ -731,7 +725,7 @@ def _build_adapt_job_summary(job: JobContext) -> str:
 def build_adapt_analysis_prompt(
     candidate: CandidateProfile,
     base_cv_json: dict[str, Any],
-    job: JobContext,
+    job: JobPosting,
 ) -> list[dict[str, str]]:
     """Recruiter-lens analysis using the base CV as the candidate representation."""
     candidate_summary = _build_candidate_summary(candidate)
@@ -773,7 +767,7 @@ Output a valid CVAnalysis JSON object.
 def build_adapt_drafter_prompt(
     candidate: CandidateProfile,
     base_cv_json: dict[str, Any],
-    job: JobContext,
+    job: JobPosting,
     analysis: CVAnalysis,
 ) -> list[dict[str, str]]:
     """Drafter prompt — adapts the base CV to the job posting (never invents)."""
@@ -825,7 +819,7 @@ Output a valid GenerateCVOutput JSON object.
 async def adapt_cv_llm(
     candidate: CandidateProfile,
     base_cv_json: dict[str, Any],
-    job: JobContext,
+    job: JobPosting,
     provider_config: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run the two-step adapt pipeline: recruiter analysis → drafter.
@@ -850,5 +844,161 @@ async def adapt_cv_llm(
         provider_config,
         temperature=0.3,
         max_tokens=8000,
+    )
+    return analysis_dict, output_dict
+
+
+# ── Adapt by URL (all plans — the model reads the link, we never scrape) ────
+
+
+def build_adapt_url_analysis_prompt(
+    candidate: CandidateProfile,
+    base_cv_json: dict[str, Any],
+    url: str,
+) -> list[dict[str, str]]:
+    """Recruiter-lens analysis against a job posting referenced by URL.
+
+    The job content is NOT fetched by us: the prompt points the model at the
+    URL and its ``web_search`` tool reads it (the provider's infrastructure,
+    under its own agreements).
+    """
+    candidate_summary = _build_candidate_summary(candidate)
+    base_cv_text = json.dumps(base_cv_json, indent=2, ensure_ascii=False)
+
+    system = (
+        "You are a technical recruiter analyzing a candidate's base CV against a "
+        "job posting. Your output must follow this schema:\n"
+        + json.dumps(CVAnalysis.model_json_schema(), indent=2)
+    )
+
+    user = f"""
+Analyze how well the candidate matches the job posting below.
+
+=== CANDIDATE BASE CV ===
+{base_cv_text[:6000]}
+
+=== CANDIDATE PROFILE ===
+{candidate_summary}
+
+=== JOB POSTING ===
+The job posting is published at the following URL:
+{url}
+
+Use your web search capability to open that URL and read the full job posting
+(title, company, description, requirements). Analyze the candidate's fit
+against the real content you find there. If the page is unreachable, analyze
+based on whatever you can learn about the role from the URL.
+
+=== INSTRUCTIONS ===
+1. match_score: estimate a 0–100 score for overall fit
+2. missing_keywords: job keywords the candidate should emphasize — ONLY genuine ones
+3. red_flags: potential concerns a recruiter could raise (max 5)
+4. adapted_experience: concrete reframing suggestions the drafter should apply
+
+Output a valid CVAnalysis JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
+def build_adapt_url_drafter_prompt(
+    candidate: CandidateProfile,
+    base_cv_json: dict[str, Any],
+    url: str,
+    analysis: CVAnalysis,
+) -> list[dict[str, str]]:
+    """Drafter prompt — adapts the base CV to the job at the given URL."""
+    base_cv_text = json.dumps(base_cv_json, indent=2, ensure_ascii=False)
+    candidate_summary = _build_candidate_summary(candidate)
+
+    system = (
+        "You are an expert CV writer. Adapt a candidate's BASE CV to a specific "
+        "job posting, outputting a new tailored CV document in JSON format.\n\n"
+        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + "Your output MUST have the following structure:\n"
+        + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
+    )
+
+    user = f"""
+Adapt the candidate's base CV to the job posting below.
+
+=== BASE CV (STARTING POINT — never invent beyond it) ===
+{base_cv_text[:6000]}
+
+=== CANDIDATE PROFILE (ground truth) ===
+{candidate_summary}
+
+=== JOB POSTING ===
+The job posting is published at the following URL:
+{url}
+
+Use your web search capability to open that URL and read the full job posting
+(title, company, description, requirements) before adapting.
+
+=== RECRUITER ANALYSIS ===
+{analysis.model_dump_json(indent=2)}
+
+=== INSTRUCTIONS ===
+1. Keep the candidate's real experience from the base CV — reframe bullets using the X-Y-Z formula
+2. Incorporate the missing keywords ONLY where genuinely supported by the profile
+3. Address the red flags by honest reframing
+4. Apply the adapted_experience suggestions where defensible
+5. Generate a compelling, role-specific profile statement
+6. Choose skill group labels appropriate to the profession
+7. Set the cv.language field to match the job posting language
+8. If you can generate a strong cover letter, include it; otherwise omit it
+
+Output a valid GenerateCVOutput JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
+async def adapt_cv_llm_with_url(
+    candidate: CandidateProfile,
+    base_cv_json: dict[str, Any],
+    url: str,
+    provider_config: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Two-step adapt pipeline where the job text is read from a URL by the model.
+
+    The URL goes into the prompt and the provider's ``web_search`` tool fetches
+    the page under its own agreements — our backend never scrapes. Requires a
+    web-search capable model (e.g. ``gpt-5``); otherwise raises
+    ``PreconditionError`` before any LLM call.
+
+    Returns ``(analysis_dict, output_dict)``.
+    """
+    provider_config = provider_config or {}
+    model_ref = (
+        f"{provider_config.get('provider', '')}/{provider_config.get('model', '')}".strip("/")
+    )
+    if not has_web_search_support(model_ref):
+        raise PreconditionError(
+            "The configured AI model can't open links. Use a model with web "
+            "search (e.g. gpt-5) or paste the job description instead."
+        )
+
+    analysis_dict = await _llm_json(
+        build_adapt_url_analysis_prompt(candidate, base_cv_json, url),
+        CVAnalysis,
+        provider_config,
+        temperature=0.2,
+        max_tokens=2000,
+        web_search=True,
+    )
+    analysis = CVAnalysis(**analysis_dict)
+
+    output_dict = await _llm_json(
+        build_adapt_url_drafter_prompt(candidate, base_cv_json, url, analysis),
+        GenerateCVOutput,
+        provider_config,
+        temperature=0.3,
+        max_tokens=8000,
+        web_search=True,
     )
     return analysis_dict, output_dict

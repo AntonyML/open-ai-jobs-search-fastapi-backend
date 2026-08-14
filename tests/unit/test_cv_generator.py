@@ -484,21 +484,12 @@ async def test_adapt_cv_requires_active_base(db_session):
     await cv_generator.adapt_cv(db_session, "test-user-id", second.id, "job-active-1")
 
 
-# ── Adapt by URL (all plans) ────────────────────────────────────────
+# ── Adapt by URL (all plans — the model reads the link, no scraping) ──
 
 
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())
 @patch(
-    "app.services.cv_generator.fetch_job_page",
-    new=AsyncMock(
-        return_value={
-            "title": "Senior Python Engineer",
-            "text": "We are hiring a Senior Python Engineer with FastAPI and Kubernetes... " * 5,
-        }
-    ),
-)
-@patch(
-    "app.services.cv_generator.adapt_cv_llm",
+    "app.services.cv_generator.adapt_cv_llm_with_url",
     new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
 )
 @patch(
@@ -510,7 +501,7 @@ async def test_adapt_cv_requires_active_base(db_session):
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
 async def test_adapt_cv_from_url_persists_with_source(db_session):
-    """Adapting by URL stores a new personalized CV with job_url + text."""
+    """Adapting by URL stores a new personalized CV with job_url (no fetched text)."""
     base = await cv_generator.generate_base_cv(db_session, "test-user-id")
 
     adapted = await cv_generator.adapt_cv_from_url(
@@ -523,7 +514,7 @@ async def test_adapt_cv_from_url_persists_with_source(db_session):
     assert adapted.cv_type == "personalized"
     assert adapted.job_url == "https://www.linkedin.com/jobs/view/4415693439"
     assert adapted.job_posting_id is None
-    assert "Senior Python Engineer" in adapted.job_description_text
+    assert adapted.job_description_text is None  # we never fetch the page
     assert adapted.analysis["match_score"] == 78
     assert adapted.id != base.id
 
@@ -538,12 +529,12 @@ async def test_adapt_cv_from_url_persists_with_source(db_session):
 
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())
 @patch(
-    "app.services.cv_generator.fetch_job_page",
-    new=AsyncMock(side_effect=PreconditionError("That URL points to a private address.")),
-)
-@patch(
-    "app.services.cv_generator.adapt_cv_llm",
-    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+    "app.services.cv_generator.adapt_cv_llm_with_url",
+    new=AsyncMock(
+        side_effect=PreconditionError(
+            "The configured AI model can't open links. Use a model with web search."
+        )
+    ),
 )
 @patch(
     "app.services.cv_generator.generate_base_cv_llm",
@@ -553,13 +544,13 @@ async def test_adapt_cv_from_url_persists_with_source(db_session):
     "app.services.cv_generator.get_active_provider_config",
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
-async def test_adapt_cv_from_url_propagates_fetch_error(db_session):
-    """A blocked/invalid URL surfaces the fetch error without spending credits."""
+async def test_adapt_cv_from_url_propagates_no_web_search_error(db_session):
+    """A model without web access surfaces the error without persisting anything."""
     base = await cv_generator.generate_base_cv(db_session, "test-user-id")
 
-    with pytest.raises(PreconditionError, match="private address"):
+    with pytest.raises(PreconditionError, match="web search"):
         await cv_generator.adapt_cv_from_url(
-            db_session, "test-user-id", base.id, "https://internal.example/job"
+            db_session, "test-user-id", base.id, "https://www.example.com/job"
         )
 
     # No personalized CV was persisted.
@@ -569,7 +560,7 @@ async def test_adapt_cv_from_url_propagates_fetch_error(db_session):
 
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())
 @patch(
-    "app.services.cv_generator.adapt_cv_llm",
+    "app.services.cv_generator.adapt_cv_llm_with_url",
     new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
 )
 @patch(
