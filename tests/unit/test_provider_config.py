@@ -49,7 +49,8 @@ async def test_web_search_enabled_true_for_openai_gpt5(db_session):
     assert out["web_search_enabled"] is True
 
 
-async def test_web_search_enabled_false_for_anthropic(db_session):
+async def test_web_search_enabled_true_for_anthropic(db_session):
+    """Claude exposes the native web_fetch server tool, so URL reading works."""
     await set_global_provider_config(
         db_session, provider="anthropic", model="claude-sonnet-4-5", updated_by="admin-1"
     )
@@ -57,13 +58,14 @@ async def test_web_search_enabled_false_for_anthropic(db_session):
 
     out = await get_global_provider_config_out(db_session)
     assert out["provider"] == "anthropic"
-    assert out["web_search_enabled"] is False
+    assert out["web_search_enabled"] is True
 
 
 async def test_web_search_enabled_false_when_unconfigured(db_session):
-    """No admin row → .env fallback → anthropic default (no web search)."""
+    """No admin row → .env fallback → anthropic default (which supports web_fetch)."""
     out = await get_global_provider_config_out(db_session)
-    assert out["web_search_enabled"] is False
+    assert out["provider"] == "anthropic"
+    assert out["web_search_enabled"] is True
 
 
 async def test_web_search_enabled_computed_from_saved_model(db_session):
