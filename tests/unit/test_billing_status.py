@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.api.v1.billing import get_billing_status
 from app.db.models import Base, User
 from app.services import credits
-from app.services.plans import seed_default_plans
+from tests.unit.plan_helpers import seed_test_plans
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ async def db_session():
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
-        await seed_default_plans(session)
+        await seed_test_plans(session)
         await session.commit()
         yield session
 

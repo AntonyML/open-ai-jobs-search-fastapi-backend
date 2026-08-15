@@ -29,7 +29,7 @@ from app.services.billing_policy import (
     compute_usage_in_period,
     get_billing_policy,
 )
-from app.services.plans import seed_default_plans
+from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import (
     activate_subscription,
     cancel_subscription,
@@ -47,7 +47,7 @@ async def db_session():
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
-        await seed_default_plans(session)
+        await seed_test_plans(session)
         await session.commit()
         yield session
 

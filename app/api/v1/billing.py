@@ -48,7 +48,7 @@ from app.services.email import (
     send_topup_request,
 )
 from app.services.notifications import notify_admin
-from app.services.plans import build_catalog, get_plan, get_whatsapp_number
+from app.services.plans import NoPlansConfiguredError, build_catalog, get_plan, get_whatsapp_number
 from app.services.subscriptions import (
     cancel_subscription,
     ensure_admin_subscription,
@@ -125,7 +125,10 @@ async def get_catalog(
     db: AsyncSession = Depends(get_db),
 ) -> ProductCatalogOut:
     """Return the plans catalog + credit costs for the buy/upgrade UI."""
-    return ProductCatalogOut(**await build_catalog(db))
+    try:
+        return ProductCatalogOut(**await build_catalog(db))
+    except NoPlansConfiguredError as exc:
+        raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail={"code": "no_plans_configured", "message": str(exc)}) from exc
 
 
 @router.get("/transactions", response_model=list[CreditTransactionOut])

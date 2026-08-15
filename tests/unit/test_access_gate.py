@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.db.models import Base, CreditTransaction, User
 from app.services import credits
 from app.services.access_gate import enforce_action_gate
-from app.services.plans import get_credit_costs, get_plan, seed_default_plans
+from app.services.plans import get_credit_costs, get_plan
+from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import activate_subscription
 
 
@@ -31,7 +32,7 @@ async def db_session():
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
-        await seed_default_plans(session)
+        await seed_test_plans(session)
         await session.commit()
         yield session
 
@@ -199,7 +200,7 @@ async def test_gate_429_detail_is_structured(db_session, max_user):
     assert detail["code"] == "quota_exceeded"
     assert detail["quota_week_used"] == plan.daily_quota  # day quota also counts weekly
     assert detail["quota_week_limit"] == plan.weekly_quota
-    assert detail["balance"] == 500  # period allowance granted by the refill
+        assert detail["balance"] == 350  # period allowance granted by the refill
     assert isinstance(detail["next_reset_at"], str)
     assert {p["credits"] for p in detail["topup_packs"]} == {50, 120}
     assert "correlation_id" not in detail
@@ -242,7 +243,7 @@ async def test_gate_max_charges_quota_and_credit(db_session, max_user):
 
     bal = await credits.get_balance(db_session, max_user.id)
     assert bal["quota_day_used"] == 1
-    assert bal["balance"] == 500 - 1
+    assert bal["balance"] == 350 - 1
 
 
 async def test_gate_admin_bypass(db_session, free_user):
@@ -301,7 +302,7 @@ async def test_gate_feature_passes_when_plan_has_feature(db_session, max_user):
 
     cid = await enforce_action_gate(db_session, _client_ctx(max_user.id), "apply")
     assert cid is not None  # charged (max has credits + pipeline)
-    assert (await credits.get_balance(db_session, max_user.id))["balance"] == 500 - 1
+    assert (await credits.get_balance(db_session, max_user.id))["balance"] == 350 - 1
 
 
 async def test_gate_verify_not_gated(db_session, free_user):

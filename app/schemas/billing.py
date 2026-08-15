@@ -93,13 +93,13 @@ class PlanUpsert(BaseModel):
     key: str = Field(..., min_length=1, max_length=50)
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
-    price_monthly_usd: float = 0.0
-    price_yearly_usd: float = 0.0
-    credits_per_period: int = 0
+    price_monthly_usd: float = Field(0.0, ge=0)
+    price_yearly_usd: float = Field(0.0, ge=0)
+    credits_per_period: int = Field(0, ge=0)
     refill_cadence: str = "period"
     refill_weekday: int = 0
-    daily_quota: int = 0
-    weekly_quota: int = 0
+    daily_quota: int = Field(0, ge=0)
+    weekly_quota: int = Field(0, ge=0)
     features: list[str] = []
     is_active: bool = True
     sort_order: int = 10

@@ -6,6 +6,8 @@ that was generated during the job search run:
 - ScrapeRuns, ExecutionJobs
 - CompetencyExpansions, Upskill analyses
 - UserSalaryData (uploaded salary benchmarks)
+- On-disk artifacts under ``{generated_storage_path}/{user_id}/`` (tailored CV +
+  cover letter PDFs from the apply pipeline), purged via ``artifact_store``
 - Resets: ExecutionQueueState
 - job_search_tracker.csv (file on disk)
 
@@ -32,6 +34,7 @@ from app.db.models import (
     UserSalaryData,
 )
 from app.exceptions import NotFoundError
+from app.services import artifact_store
 
 
 async def execute_job_data(
@@ -117,10 +120,20 @@ async def execute_job_data(
     except Exception:
         pass  # Non-critical — file might not be configured
 
-    # 10. Commit all changes
+    # 10. Purge on-disk apply artifacts for this user (tailored CV + cover
+    #     letter PDFs under ``{generated_storage_path}/{user_id}/``). The rows
+    #     were removed by the JobPosting cascade above; without this step the
+    #     files would be orphaned.
+    try:
+        if artifact_store.remove_user_dir("apply", user_id):
+            deleted["apply_artifacts_purged"] = 1
+    except Exception:
+        pass  # Non-critical — storage may not be configured
+
+    # 11. Commit all changes
     await db.commit()
 
-    # 11. Build summary
+    # 12. Build summary
     total = sum(deleted.values())
     detail_parts = []
     for kind, count in deleted.items():

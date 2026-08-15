@@ -21,7 +21,8 @@ from app.api.v1.billing import request_upgrade
 from app.db.models import AppNotification, Base, User
 from app.schemas.billing import AdminSubscriptionCreate, UpgradeRequest
 from app.services.billing_policy import compute_prorated_due
-from app.services.plans import get_plan, seed_default_plans
+from app.services.plans import get_plan
+from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import activate_subscription
 
 
@@ -33,7 +34,7 @@ async def db_session():
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
-        await seed_default_plans(session)
+        await seed_test_plans(session)
         await session.commit()
         yield session
 

@@ -39,6 +39,7 @@ from typing import Any
 from sqlalchemy import text
 
 from app.core.settings import get_settings
+from app.services import artifact_store
 
 # ── Filesystem ──────────────────────────────────────────────────────
 
@@ -96,8 +97,9 @@ async def _collect_application_paths() -> set[Path]:
     paths: set[Path] = set()
     for row in result.all():
         for value in row:
-            if value:
-                paths.add(_resolve(value).absolute())
+            resolved = artifact_store.resolve_existing("apply", value)
+            if resolved is not None:
+                paths.add(resolved.absolute())
     return paths
 
 
@@ -257,8 +259,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--generated-root",
-        default=str(_resolve("generated")),
-        help="Root of the apply pipeline PDFs (default: ./generated).",
+        default=str(_resolve(settings.generated_storage_path)),
+        help="Root of the apply pipeline PDFs (default: settings.generated_storage_path).",
     )
     parser.add_argument(
         "--output",
@@ -302,7 +304,8 @@ async def run(args: argparse.Namespace) -> int:
                     continue
                 if is_deleted:
                     continue
-                if not _resolve(pdf_path).exists():
+                resolved = artifact_store.resolve_existing("cv", pdf_path)
+                if resolved is None or not resolved.exists():
                     active_missing.append({"id": cv_id, "pdf_path": pdf_path})
 
     empty_dirs = _empty_dirs(cv_root) + _empty_dirs(apply_root)

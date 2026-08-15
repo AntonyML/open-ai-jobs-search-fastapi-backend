@@ -24,7 +24,8 @@ from app.api.v1.admin import approve_topup
 from app.api.v1.billing import request_topup
 from app.db.models import AppNotification, Base, CreditTransaction, User
 from app.schemas.billing import AdminTopupApprove, TopupRequest
-from app.services.plans import build_catalog, seed_default_plans
+from app.services.plans import build_catalog
+from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import activate_subscription
 from app.services.topups import (
     DEFAULT_TOPUP_PACKS,
@@ -42,7 +43,7 @@ async def db_session():
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
-        await seed_default_plans(session)
+        await seed_test_plans(session)
         await session.commit()
         yield session
 
