@@ -63,6 +63,9 @@ job_search_tracker.csv
 *.db
 *.sqlite3
 
+# Local DB backups (may contain user data)
+backups/
+
 # Node
 node_modules/
 
