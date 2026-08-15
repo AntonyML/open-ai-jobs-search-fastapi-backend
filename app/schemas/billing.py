@@ -260,11 +260,18 @@ class AdminTopupApprove(BaseModel):
 
     ``correlation_id`` links the ledger entry back to the ``topup_request``
     notification the user created (optional — the admin can also approve
-    ad-hoc from the credits page).
+    ad-hoc).
+
+    plan.md §2.8: ``price_paid`` is **required** — the admin confirms the
+    amount actually received (prefilled with the pack price, editable)
+    before credits are granted.
     """
 
     user_id: str
     pack_credits: int = Field(..., gt=0)
+    price_paid: float = Field(
+        ..., gt=0, description="Amount the user actually paid (USD)"
+    )
     correlation_id: str | None = None
 
 
@@ -327,5 +334,5 @@ class AdminSubscriptionCreate(BaseModel):
     billing_cycle: str = "monthly"  # monthly | yearly
     auto_renew: bool = False
     # What the user actually paid (e.g. the prorated amount of an upgrade).
-    price_paid: float = 0.0
+    price_paid: float = Field(0.0, ge=0)
     note: str | None = None

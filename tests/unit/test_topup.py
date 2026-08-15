@@ -272,13 +272,17 @@ async def test_approve_topup_applies_and_closes_notification(db_session, pro_use
 
     resp = await approve_topup(
         AdminTopupApprove(
-            user_id=pro_user.id, pack_credits=50, correlation_id=out.correlation_id
+            user_id=pro_user.id,
+            pack_credits=50,
+            price_paid=9.99,
+            correlation_id=out.correlation_id,
         ),
         admin=_admin_ctx(),
         db=db_session,
     )
     assert resp["credits"] == 50
     assert resp["balance"] == 150
+    assert resp["price_paid"] == 9.99
 
     notifs = await _notifications(db_session, "topup_request")
     assert len(notifs) == 1 and notifs[0].is_read is True
@@ -303,7 +307,7 @@ async def test_approve_topup_rejects_lapsed_plan(db_session, free_user, admin_us
 
     with pytest.raises(HTTPException) as exc:
         await approve_topup(
-            AdminTopupApprove(user_id=free_user.id, pack_credits=50),
+            AdminTopupApprove(user_id=free_user.id, pack_credits=50, price_paid=9.99),
             admin=_admin_ctx(),
             db=db_session,
         )
@@ -316,7 +320,7 @@ async def test_approve_topup_unknown_pack_422(db_session, pro_user, admin_user):
 
     with pytest.raises(HTTPException) as exc:
         await approve_topup(
-            AdminTopupApprove(user_id=pro_user.id, pack_credits=777),
+            AdminTopupApprove(user_id=pro_user.id, pack_credits=777, price_paid=9.99),
             admin=_admin_ctx(),
             db=db_session,
         )
@@ -326,11 +330,39 @@ async def test_approve_topup_unknown_pack_422(db_session, pro_user, admin_user):
 async def test_approve_topup_unknown_user_404(db_session, admin_user):
     with pytest.raises(HTTPException) as exc:
         await approve_topup(
-            AdminTopupApprove(user_id="ghost", pack_credits=50),
+            AdminTopupApprove(user_id="ghost", pack_credits=50, price_paid=9.99),
             admin=_admin_ctx(),
             db=db_session,
         )
     assert exc.value.status_code == 404
+
+
+async def test_approve_topup_requires_price_paid(db_session, pro_user, admin_user):
+    """plan.md §2.8: the admin must confirm the amount received — missing or
+    non-positive price_paid is rejected at the schema level."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="price_paid"):
+        AdminTopupApprove(user_id=pro_user.id, pack_credits=50)
+    with pytest.raises(ValidationError, match="price_paid"):
+        AdminTopupApprove(user_id=pro_user.id, pack_credits=50, price_paid=0)
+    with pytest.raises(ValidationError, match="price_paid"):
+        AdminTopupApprove(user_id=pro_user.id, pack_credits=50, price_paid=-5)
+
+
+async def test_approve_topup_accepts_edited_amount(db_session, pro_user, admin_user):
+    """The admin may confirm an amount different from the list price (e.g. a
+    promo) as long as it is positive."""
+    await activate_subscription(db_session, pro_user, "pro", source="admin")
+    await db_session.commit()
+
+    resp = await approve_topup(
+        AdminTopupApprove(user_id=pro_user.id, pack_credits=50, price_paid=7.5),
+        admin=_admin_ctx(),
+        db=db_session,
+    )
+    assert resp["credits"] == 50
+    assert resp["price_paid"] == 7.5
 
 
 # ── Catalog ──────────────────────────────────────────────────────────

@@ -620,6 +620,9 @@ async def approve_topup(
         "user_id": payload.user_id,
         "credits": int(pack["credits"]),
         "price_usd": float(pack["price_usd"]),
+        # plan.md §2.8 — the amount the admin confirmed receiving (editable
+        # from the pack price at approval time).
+        "price_paid": payload.price_paid,
         "balance": account.balance,
         "correlation_id": payload.correlation_id,
     }
