@@ -1474,8 +1474,10 @@ class GeneratedCV(Base, TimestampMixin):
     """A CV produced by the CV generator pipeline.
 
     ``cv_type`` distinguishes a generic base CV from a job-tailored one.
-    ``is_deleted`` implements soft deletion so downloaded PDFs and the download
-    route keep working after the user hides a CV from the list.
+    ``is_deleted`` implements soft deletion: the row is hidden from the list
+    and the PDF is removed from disk immediately (it is a derived artifact,
+    re-compilable from ``cv_json``).  ``deleted_at`` records when the CV was
+    deleted so the storage sweeper can purge the row after retention.
     """
 
     __tablename__ = "generated_cvs"
@@ -1502,6 +1504,9 @@ class GeneratedCV(Base, TimestampMixin):
     analysis: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=func.false()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

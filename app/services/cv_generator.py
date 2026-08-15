@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.db.models import CandidateProfile, GeneratedCV, JobPosting
 from app.exceptions import (
@@ -35,6 +36,8 @@ from app.exceptions import (
     ProviderAuthError,
     WebSearchUnavailableError,
 )
+
+logger = get_logger(__name__)
 from app.services.apply_json import (
     adapt_cv_llm,
     adapt_cv_llm_with_url,
@@ -387,6 +390,20 @@ async def _hard_delete_base(db: AsyncSession, record: GeneratedCV) -> None:
     await db.delete(record)
 
 
+def _remove_pdf_file(cv: GeneratedCV) -> None:
+    """Best-effort removal of the PDF file from disk.
+
+    The PDF is a derived artifact (``cv_json`` is the source of truth), so
+    removal is safe.  ``missing_ok=True`` makes this idempotent.
+    """
+    try:
+        pdf = resolve_pdf_path(cv)
+        if pdf is not None:
+            pdf.unlink(missing_ok=True)
+    except Exception:
+        logger.warning("Failed to remove PDF for CV %s", cv.id, exc_info=True)
+
+
 async def _demote_previous_bases(db: AsyncSession, user_id: str) -> None:
     """Enforce the max-2 rule before persisting a new base CV.
 
@@ -439,8 +456,11 @@ async def recover_previous_base(
 async def soft_delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> None:
     """Delete a CV.
 
-    - Personalized CVs: soft-delete (hidden from the list, PDF stays for
-      existing downloads).
+    Soft-delete: mark the row as deleted; the PDF is removed from disk
+    immediately (it's a derived artifact, re-compilable from ``cv_json``).
+    The row is retained for audit/retention; the sweeper purges it later.
+
+    - Personalized CVs: soft-delete (hidden from the list).
     - Obsolete base CV: hard-delete (row + PDF) — the active base is kept.
     - Active base CV: the previous version (if any) is promoted to active so
       the user never loses an active base, then the CV is hard-deleted.
@@ -459,7 +479,9 @@ async def soft_delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> None:
         await db.commit()
         return
 
+    _remove_pdf_file(record)
     record.is_deleted = True
+    record.deleted_at = datetime.now(timezone.utc)
     await db.commit()
 
 

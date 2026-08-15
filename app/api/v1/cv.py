@@ -231,6 +231,6 @@ async def delete_cv(
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft-delete a CV (keeps the PDF on disk for existing downloads)."""
+    """Soft-delete a CV: remove its PDF from disk and hide the row."""
     await cv_generator.soft_delete_cv(db, user["sub"], cv_id)
     return None
