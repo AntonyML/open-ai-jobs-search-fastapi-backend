@@ -146,22 +146,22 @@ async def test_renewal_refills_credits_and_expires_leftover(db_session, user):
     period allowance — leftover credits expire)."""
     import datetime as dt
 
-        # 1. First activation → 80 credits.
+    # 1. First activation → 80 credits.
     await activate_subscription(db_session, user, "pro", billing_cycle="monthly")
     await db_session.commit()
     bal = await credits.get_balance(db_session, user.id)
-        assert bal["balance"] == 80
+    assert bal["balance"] == 80
 
     # 2. Spend some credits.
     account = await credits.consume_credits(db_session, user.id, "cv_base", 40)
-    assert account.balance == 60
+    assert account.balance == 40
 
     # 3. Simulate renewal (period turns): the refill anchor is cleared and
     #    the balance resets to the new period allowance (not 60+100).
     account.last_refill_at = None
     await db_session.flush()
     bal = await credits.get_balance(db_session, user.id)
-    assert bal["balance"] == 100
+    assert bal["balance"] == 80
 
 
 async def test_auto_renew_process_grants_new_period_credits(db_session, user):
@@ -174,11 +174,11 @@ async def test_auto_renew_process_grants_new_period_credits(db_session, user):
     )
     await db_session.commit()
     bal = await credits.get_balance(db_session, user.id)
-        assert bal["balance"] == 350
+    assert bal["balance"] == 350
 
     # Use some credits and force the period to end.
     account = await credits.consume_credits(db_session, user.id, "cv_base", 200)
-    assert account.balance == 300
+    assert account.balance == 150
     sub.period_end = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
     await db_session.flush()
 
@@ -187,9 +187,9 @@ async def test_auto_renew_process_grants_new_period_credits(db_session, user):
     assert changed == 1
     assert sub.status == "active"
 
-    # New period → new allowance (500), not 300 carried over.
+    # New period → new allowance (350), not 150 carried over.
     bal = await credits.get_balance(db_session, user.id)
-    assert bal["balance"] == 500
+    assert bal["balance"] == 350
 
 
 # ── Gating ───────────────────────────────────────────────────────────

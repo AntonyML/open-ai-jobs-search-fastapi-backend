@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ── Enums ────────────────────────────────────────────────────────────
 
@@ -103,6 +103,16 @@ class PlanUpsert(BaseModel):
     features: list[str] = []
     is_active: bool = True
     sort_order: int = 10
+
+    @model_validator(mode="after")
+    def validate_business_rules(self) -> "PlanUpsert":
+        if self.refill_cadence not in {"period", "weekly"}:
+            raise ValueError("refill_cadence must be 'period' or 'weekly'")
+        if self.credits_per_period > 0 and self.price_monthly_usd == 0 and self.price_yearly_usd == 0:
+            raise ValueError("paid plans must have a positive price")
+        if self.daily_quota > 0 and self.weekly_quota > 0 and self.weekly_quota < self.daily_quota:
+            raise ValueError("weekly_quota cannot be less than daily_quota")
+        return self
 
 
 # ── Subscriptions ────────────────────────────────────────────────────

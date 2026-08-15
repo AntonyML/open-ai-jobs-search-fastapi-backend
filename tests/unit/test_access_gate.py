@@ -200,7 +200,7 @@ async def test_gate_429_detail_is_structured(db_session, max_user):
     assert detail["code"] == "quota_exceeded"
     assert detail["quota_week_used"] == plan.daily_quota  # day quota also counts weekly
     assert detail["quota_week_limit"] == plan.weekly_quota
-        assert detail["balance"] == 350  # period allowance granted by the refill
+    assert detail["balance"] == 350  # period allowance granted by the refill
     assert isinstance(detail["next_reset_at"], str)
     assert {p["credits"] for p in detail["topup_packs"]} == {50, 120}
     assert "correlation_id" not in detail

@@ -44,9 +44,9 @@ async def _seed_plans(db: AsyncSession) -> None:
     db.add(Plan(
         key="pro",
         name="Pro",
-        price_monthly_usd=19.99,
-        price_yearly_usd=199.0,
-        credits_per_period=100,
+        price_monthly_usd=24.99,
+        price_yearly_usd=249.0,
+        credits_per_period=80,
         refill_cadence="period",
         daily_quota=0,
         weekly_quota=0,
@@ -65,8 +65,8 @@ async def test_public_catalog_returns_plans_with_quotas(db_session):
 
     assert len(catalog.plans) == 2
     pro = next(p for p in catalog.plans if p.key == "pro")
-    assert pro.price_monthly_usd == 19.99
-    assert pro.credits_per_period == 100
+    assert pro.price_monthly_usd == 24.99
+    assert pro.credits_per_period == 80
     assert pro.refill_weekday == 0
     assert pro.daily_quota == 0
     assert pro.weekly_quota == 0
@@ -82,3 +82,13 @@ async def test_public_catalog_last_updated_is_max(db_session):
     assert catalog.last_updated.year == 2026
     assert catalog.last_updated.month == 8
     assert catalog.last_updated.day == 10
+
+
+@pytest.mark.asyncio
+async def test_public_catalog_returns_503_when_no_active_plans(db_session):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_public_catalog(db=db_session)
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["code"] == "no_plans_configured"
