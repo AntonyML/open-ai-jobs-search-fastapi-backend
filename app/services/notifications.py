@@ -94,7 +94,7 @@ async def purge_expired_notifications(
 
     When ``max_age_days`` is None (the default), the admin-configurable
     value from ``app_config`` is used.  Called lazily from the notifications
-    router and once at startup (same pattern as ``seed_default_plans``) so
+    router and once at startup so
     no background scheduler is needed — the table self-cleans on every read.
     Returns the number of rows removed.
     """
