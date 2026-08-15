@@ -2,8 +2,14 @@
 
 Plans are stored in the DB (``plans`` table) so the admin can add, edit or
 disable tiers without touching code.  This module owns the default seed
-catalog (free / pro / max) and the admin-editable credit-cost configuration
-(``credit_costs`` singleton row).
+catalog (free / pro / max).
+
+Credit-cost calibration moved to the typed ``credit_cost_config`` table
+via ``app.services.credit_costs`` (plan.md §8.2) — the legacy
+``app_config['credit_costs']`` JSON blob no longer exists after the
+migration.  ``get_credit_costs`` is kept here as a thin delegate so callers
+(catalog, access gate) don't change; all writes go through the strict
+``credit_costs.set_effective_costs`` (admin API only).
 
 Current model (confirmed with the owner):
 
@@ -21,21 +27,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AppConfig, Plan
+from app.db.models import Plan
+from app.services.credit_costs import CREDIT_ACTION_CATALOG, get_effective_costs
 
-# Config key for the credit-costs singleton (upsert on this key).
-CREDIT_COSTS_CONFIG_KEY = "credit_costs"
-
-# Default credit cost per action (credits). Admin-editable.
+# Kept for backwards compatibility with imports; the canonical catalog now
+# lives in app.services.credit_costs (plan.md §8.2).
 DEFAULT_CREDIT_COSTS: dict[str, int] = {
-    "cv_base": 1,
-    "cv_adapted": 1,
-    "rank": 1,
-    "expand": 1,
-    "upskill": 1,
-    "apply": 1,
-    "interview": 1,
-    "verify": 1,
+    s.key: s.default_cost for s in CREDIT_ACTION_CATALOG
 }
 
 
@@ -156,37 +154,8 @@ async def delete_plan(db: AsyncSession, key: str) -> bool:
 
 
 async def get_credit_costs(db: AsyncSession) -> dict[str, int]:
-    """Return the effective credit cost per action.
-
-    The value lives in ``app_config`` under ``CREDIT_COSTS_CONFIG_KEY`` so the
-    admin can calibrate prices from the UI without a code change.
-    """
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == CREDIT_COSTS_CONFIG_KEY)
-    )
-    row = result.scalar_one_or_none()
-    stored = (row.value if row is not None else None) or {}
-    costs = {}
-    for key in DEFAULT_CREDIT_COSTS:
-        value = stored.get(key)
-        costs[key] = value if isinstance(value, int) and value >= 0 else DEFAULT_CREDIT_COSTS[key]
-    return costs
-
-
-async def set_credit_costs(db: AsyncSession, costs: dict[str, int]) -> dict[str, int]:
-    """Persist the credit-cost configuration (admin panel)."""
-    cleaned = {k: max(0, int(v)) for k, v in costs.items() if k in DEFAULT_CREDIT_COSTS}
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == CREDIT_COSTS_CONFIG_KEY)
-    )
-    row = result.scalar_one_or_none()
-    if row is None:
-        row = AppConfig(key=CREDIT_COSTS_CONFIG_KEY, value=cleaned)
-        db.add(row)
-    else:
-        row.value = {**(row.value or {}), **cleaned}
-    await db.flush()
-    return await get_credit_costs(db)
+    """Effective credit cost per action (typed table, plan.md §8.2)."""
+    return await get_effective_costs(db)
 
 
 async def get_whatsapp_number() -> str:

@@ -17,6 +17,8 @@ from app.schemas.billing import (
     AdminRefundApprove,
     AdminSubscriptionCreate,
     AdminTopupApprove,
+    CreditCostsOut,
+    CreditCostsUpdate,
     CreditTransactionOut,
     PlanAdminOut,
     PlanUpsert,
@@ -40,11 +42,14 @@ from app.services.notifications import (
     mark_upgrade_requests_read,
     set_notification_ttl_days,
 )
+from app.services.credit_costs import (
+    CreditCostConflictError,
+    get_catalog,
+    set_effective_costs,
+)
 from app.services.plans import (
     delete_plan,
     get_all_plans,
-    get_credit_costs,
-    set_credit_costs,
     upsert_plan,
 )
 from app.services.provider_config import (
@@ -413,25 +418,49 @@ async def remove_plan(
     return {"message": "Plan deleted"}
 
 
-@router.get("/credit-costs")
+@router.get("/credit-costs", response_model=CreditCostsOut)
 async def get_admin_credit_costs(
     admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the current credit cost per action. Admin only."""
-    return await get_credit_costs(db)
+    """Return the catalog + effective costs (plan.md §8.2). Admin only.
+
+    The frontend renders from this response — no hardcoded action lists.
+    """
+    return await get_catalog(db)
 
 
-@router.put("/credit-costs")
+@router.put("/credit-costs", response_model=CreditCostsOut)
 async def put_admin_credit_costs(
-    payload: dict,
+    payload: CreditCostsUpdate,
     admin: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update the credit cost per action (calibration). Admin only."""
-    costs = await set_credit_costs(db, payload)
+    """Update credit costs (strict calibration, plan.md §8.2). Admin only.
+
+    - Unknown/negative/non-int keys → 422 with detail (never silently dropped).
+    - Stale ``expected_versions`` (concurrent edit) → 409.
+    - ``updated_by`` records the authenticated admin.
+    """
+    try:
+        await set_effective_costs(
+            db,
+            payload.costs,
+            updated_by=admin["sub"],
+            expected_versions=payload.expected_versions,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "invalid_credit_costs", "message": str(exc)},
+        ) from exc
+    except CreditCostConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "credit_costs_conflict", "message": str(exc)},
+        ) from exc
     await db.commit()
-    return costs
+    return await get_catalog(db)
 
 
 # ── Notification retention TTL (admin) ────────────────────────────────

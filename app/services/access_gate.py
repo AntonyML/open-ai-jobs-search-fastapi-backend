@@ -27,6 +27,7 @@ from fastapi import HTTPException, status
 
 from app.db.models import Plan, User
 from app.services import credits
+from app.services.credit_costs import CATALOG_BY_KEY
 from app.services.subscriptions import get_user_access
 from app.services.topups import get_topup_packs
 
@@ -76,6 +77,25 @@ async def enforce_action_gate(
     access = await get_user_access(db, user)
     if access["is_admin"]:
         return None
+
+    # Feature gate (plan.md §8.2 F4): a catalog action whose plan feature is
+    # missing → 403 before any quota/credit is touched.  ``feature_gate=None``
+    # (e.g. ``verify``) is available to every plan.
+    spec = CATALOG_BY_KEY.get(action)
+    if spec is not None and spec.feature_gate is not None:
+        if spec.feature_gate not in access["features"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "feature_required",
+                    "message": (
+                        f"Your current plan does not include this action. "
+                        f"Upgrade to unlock it."
+                    ),
+                    "feature": spec.feature_gate,
+                    "plan_key": access["plan_key"],
+                },
+            )
 
     plan: Plan | None = access["plan"]
     if plan is not None and (plan.daily_quota > 0 or plan.weekly_quota > 0):

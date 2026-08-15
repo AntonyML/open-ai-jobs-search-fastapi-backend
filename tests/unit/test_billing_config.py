@@ -167,3 +167,85 @@ async def test_admin_billing_policy_rejects_bad_payload(db_session):
             db=db_session,
         )
     assert exc.value.status_code == 422
+
+
+# ── Credit-cost admin API (plan.md §8.2, Fase 2) ────────────────────
+
+
+async def test_admin_credit_costs_get_returns_rich_catalog(db_session):
+    from app.api.v1.admin import get_admin_credit_costs
+    from app.services.credit_costs import CREDIT_ACTION_CATALOG, CREDIT_COST_GROUPS
+
+    result = await get_admin_credit_costs(admin=_admin_ctx(), db=db_session)
+    assert result["groups"] == list(CREDIT_COST_GROUPS)
+    assert len(result["actions"]) == len(CREDIT_ACTION_CATALOG)
+    keys = {a["key"] for a in result["actions"]}
+    assert keys == {s.key for s in CREDIT_ACTION_CATALOG}
+    assert all("cost" in a and "version" in a and "feature_gate" in a for a in result["actions"])
+
+
+async def test_admin_credit_costs_put_strict_422_on_unknown_key(db_session):
+    from fastapi import HTTPException
+
+    from app.api.v1.admin import put_admin_credit_costs
+    from app.schemas.billing import CreditCostsUpdate
+
+    with pytest.raises(HTTPException) as exc:
+        await put_admin_credit_costs(
+            payload=CreditCostsUpdate(costs={"cv_base": 1, "pipeline": 1}),
+            admin=_admin_ctx(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "invalid_credit_costs"
+    assert "pipeline" in exc.value.detail["message"]  # never a silent drop
+    # nothing persisted
+    from app.services.credit_costs import get_catalog
+
+    entry = next(
+        a for a in (await get_catalog(db_session))["actions"] if a["key"] == "cv_base"
+    )
+    assert entry["cost"] == 1 and entry["version"] == 1
+
+
+async def test_admin_credit_costs_put_409_on_stale_version(db_session):
+    from fastapi import HTTPException
+
+    from app.api.v1.admin import put_admin_credit_costs
+    from app.schemas.billing import CreditCostsUpdate
+
+    await put_admin_credit_costs(
+        payload=CreditCostsUpdate(costs={"cv_base": 3}), admin=_admin_ctx(), db=db_session
+    )
+    with pytest.raises(HTTPException) as exc:
+        await put_admin_credit_costs(
+            payload=CreditCostsUpdate(
+                costs={"cv_base": 5}, expected_versions={"cv_base": 99}
+            ),
+            admin=_admin_ctx(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "credit_costs_conflict"
+
+
+async def test_admin_credit_costs_put_success_records_updated_by(db_session):
+    from sqlalchemy import select
+
+    from app.api.v1.admin import put_admin_credit_costs
+    from app.db.models import CreditCostConfig
+    from app.schemas.billing import CreditCostsUpdate
+
+    result = await put_admin_credit_costs(
+        payload=CreditCostsUpdate(costs={"cv_base": 3, "verify": 0}),
+        admin=_admin_ctx(),
+        db=db_session,
+    )
+    by_key = {a["key"]: a for a in result["actions"]}
+    assert by_key["cv_base"]["cost"] == 3
+    assert by_key["verify"]["cost"] == 0  # 0 = free
+
+    rows = (await db_session.execute(select(CreditCostConfig))).scalars().all()
+    row = next(r for r in rows if r.action == "cv_base")
+    assert row.updated_by == "admin-1"
+    assert row.version == 1

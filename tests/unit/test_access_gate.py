@@ -73,8 +73,8 @@ def _client_ctx(user_id: str) -> dict:
 # ── Gate: HTTP 402 without credits (apply + rank) ───────────────────
 
 
-async def test_gate_apply_402_without_credits(db_session, free_user):
-    """Free user with zero credits → gate('apply') raises HTTP 402."""
+async def test_gate_cv_base_402_without_credits(db_session, free_user):
+    """Free user with zero credits → gate('cv_base') raises HTTP 402."""
     await activate_subscription(db_session, free_user, "free", source="signup_bonus")
     await db_session.commit()
 
@@ -86,14 +86,14 @@ async def test_gate_apply_402_without_credits(db_session, free_user):
 
     with pytest.raises(HTTPException) as exc:
         await enforce_action_gate(
-            db_session, _client_ctx(free_user.id), "apply",
-            label="Apply for job job-1",
+            db_session, _client_ctx(free_user.id), "cv_base",
+            label="Base CV generation",
         )
     assert exc.value.status_code == 402
 
 
-async def test_gate_rank_402_without_credits(db_session, free_user):
-    """Free user with zero credits → gate('rank') raises HTTP 402."""
+async def test_gate_cv_adapted_402_without_credits(db_session, free_user):
+    """Free user with zero credits → gate('cv_adapted') raises HTTP 402."""
     await activate_subscription(db_session, free_user, "free", source="signup_bonus")
     await db_session.commit()
 
@@ -101,14 +101,15 @@ async def test_gate_rank_402_without_credits(db_session, free_user):
     assert (await credits.get_balance(db_session, free_user.id))["balance"] == 0
 
     with pytest.raises(HTTPException) as exc:
-        await enforce_action_gate(db_session, _client_ctx(free_user.id), "rank")
+        await enforce_action_gate(db_session, _client_ctx(free_user.id), "cv_adapted")
     assert exc.value.status_code == 402
 
 
-async def test_gate_apply_402_without_subscription(db_session, free_user):
-    """No subscription/plan and no credits → gate('apply') raises HTTP 402."""
+async def test_gate_verify_402_without_subscription(db_session, free_user):
+    """No subscription/plan and no credits → gate('verify') (ungated action)
+    reaches the credit check and raises HTTP 402."""
     with pytest.raises(HTTPException) as exc:
-        await enforce_action_gate(db_session, _client_ctx(free_user.id), "apply")
+        await enforce_action_gate(db_session, _client_ctx(free_user.id), "verify")
     assert exc.value.status_code == 402
 
 
@@ -158,7 +159,7 @@ async def test_gate_402_detail_is_structured(db_session, free_user):
     await credits.consume_credits(db_session, free_user.id, "cv_base", 2)
 
     with pytest.raises(HTTPException) as exc:
-        await enforce_action_gate(db_session, _client_ctx(free_user.id), "apply")
+        await enforce_action_gate(db_session, _client_ctx(free_user.id), "cv_base")
     detail = exc.value.detail
     assert detail["code"] == "insufficient_credits"
     assert detail["balance"] == 0
@@ -177,7 +178,7 @@ async def test_gate_402_next_reset_at_is_period_end_for_paid(db_session, pro_use
     await credits.consume_credits(db_session, pro_user.id, "cv_base", bal["balance"])
 
     with pytest.raises(HTTPException) as exc:
-        await enforce_action_gate(db_session, _client_ctx(pro_user.id), "apply")
+        await enforce_action_gate(db_session, _client_ctx(pro_user.id), "cv_adapted")
     detail = exc.value.detail
     assert detail["code"] == "insufficient_credits"
     assert detail["next_reset_at"] == sub.period_end.isoformat()
@@ -207,25 +208,25 @@ async def test_gate_429_detail_is_structured(db_session, max_user):
 # ── Gate: success path ──────────────────────────────────────────────
 
 
-async def test_gate_apply_success_consumes_credit_and_returns_correlation_id(db_session, free_user):
-    """Free user with credits → gate('apply') charges the action cost and
+async def test_gate_cv_base_success_consumes_credit_and_returns_correlation_id(db_session, free_user):
+    """Free user with credits → gate('cv_base') charges the action cost and
     returns a correlation_id for usage accounting."""
     await activate_subscription(db_session, free_user, "free", source="signup_bonus")
     await db_session.commit()
     assert (await credits.get_balance(db_session, free_user.id))["balance"] == 2
 
     cid = await enforce_action_gate(
-        db_session, _client_ctx(free_user.id), "apply", label="Apply for job job-1"
+        db_session, _client_ctx(free_user.id), "cv_base", label="Base CV generation"
     )
     assert cid is not None
 
     bal = await credits.get_balance(db_session, free_user.id)
-    assert bal["balance"] == 1  # apply costs 1 credit
+    assert bal["balance"] == 1  # cv_base costs 1 credit
 
     txn = (await db_session.execute(
         select(CreditTransaction).where(CreditTransaction.correlation_id == cid)
     )).scalar_one()
-    assert txn.action == "apply"
+    assert txn.action == "cv_base"
     assert txn.credits_delta == -1
 
 
@@ -262,6 +263,58 @@ async def test_gate_admin_bypass(db_session, free_user):
     assert rows == []
 
 
+# ── Feature gate (plan.md §8.2 F4) ─────────────────────────────────
+
+
+async def test_gate_feature_403_when_plan_lacks_feature(db_session, free_user):
+    """Free plan (no 'pipeline') calling 'apply' → 403 feature_required,
+    raised BEFORE any quota/credit is consumed."""
+    await activate_subscription(db_session, free_user, "free", source="signup_bonus")
+    await db_session.commit()
+    bal_before = (await credits.get_balance(db_session, free_user.id))["balance"]
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(free_user.id), "apply")
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "feature_required"
+    assert exc.value.detail["feature"] == "pipeline"
+    # nothing consumed
+    assert (await credits.get_balance(db_session, free_user.id))["balance"] == bal_before
+
+
+async def test_gate_feature_403_interview_on_pro(db_session, pro_user):
+    """Pro plan (CV only, no pipeline) calling 'interview' → 403."""
+    await activate_subscription(db_session, pro_user, "pro", source="admin")
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(pro_user.id), "interview")
+    assert exc.value.status_code == 403
+    assert exc.value.detail["feature"] == "pipeline"
+
+
+async def test_gate_feature_passes_when_plan_has_feature(db_session, max_user):
+    """Max plan (pipeline) calling 'apply' passes the feature gate and reaches
+    the credit check (402 here because the quota refill hasn't run credits)."""
+    await activate_subscription(db_session, max_user, "max", source="admin")
+    await db_session.commit()
+
+    cid = await enforce_action_gate(db_session, _client_ctx(max_user.id), "apply")
+    assert cid is not None  # charged (max has credits + pipeline)
+    assert (await credits.get_balance(db_session, max_user.id))["balance"] == 500 - 1
+
+
+async def test_gate_verify_not_gated(db_session, free_user):
+    """verify has feature_gate=None → available on every plan; the gate only
+    enforces credits (402 here once the free allowance is spent)."""
+    await activate_subscription(db_session, free_user, "free", source="signup_bonus")
+    await db_session.commit()
+
+    cid = await enforce_action_gate(db_session, _client_ctx(free_user.id), "verify")
+    assert cid is not None  # 2 credits available
+    assert (await credits.get_balance(db_session, free_user.id))["balance"] == 1
+
+
 # ── Usage accumulation on the ledger ────────────────────────────────
 
 
@@ -271,7 +324,7 @@ async def test_record_llm_usage_accumulates_on_ledger_row(db_session, free_user)
     await activate_subscription(db_session, free_user, "free", source="signup_bonus")
     await db_session.commit()
 
-    cid = await enforce_action_gate(db_session, _client_ctx(free_user.id), "apply")
+    cid = await enforce_action_gate(db_session, _client_ctx(free_user.id), "cv_base")
     assert cid is not None
 
     # First LLM sub-call

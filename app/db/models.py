@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -317,8 +317,10 @@ class CreditTransaction(Base, TimestampMixin):
     correlation_id: Mapped[str | None] = mapped_column(String(36), index=True)
 
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    #  'refill' | 'signup_bonus' | 'purchase' | 'admin_adjust' | 'topup' | 'upgrade_prorate' |
-    #  'refund_revoke' | 'cv_base' | 'cv_adapted' | 'pipeline' | 'expiry'
+    #  Lifecycle: 'refill' | 'signup_bonus' | 'purchase' | 'admin_adjust' | 'topup' |
+    #  'upgrade_prorate' | 'refund_revoke' | 'expiry'
+    #  Billable (catalog in app/services/credit_costs.py): 'cv_base' | 'cv_adapted' |
+    #  'rank' | 'apply' | 'interview' | 'expand' | 'upskill' | 'verify'
     credits_delta: Mapped[int] = mapped_column(nullable=False)
 
     description: Mapped[str | None] = mapped_column(Text)
@@ -331,14 +333,35 @@ class CreditTransaction(Base, TimestampMixin):
 class AppConfig(Base, TimestampMixin):
     """Key/value application configuration (admin-editable singleton rows).
 
-    Used for the credit-cost calibration (``credit_costs`` key) and any
-    future tunable parameter.  One row per ``key``.
+    One row per ``key``.  NOTE: the ``credit_costs`` key was migrated to the
+    typed ``credit_cost_config`` table (plan.md §8.2) — do not reintroduce
+    billing calibration as a JSON blob.
     """
 
     __tablename__ = "app_config"
 
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
+
+
+class CreditCostConfig(Base, TimestampMixin):
+    """Effective credit cost per billable action (plan.md §8.2).
+
+    Single source of truth for the admin calibration — replaces the
+    ``app_config['credit_costs']`` JSON blob.  ``cost >= 0`` (0 = free).
+    ``updated_by`` records who changed it and ``version`` enables optimistic
+    concurrency when two admins edit at the same time (HTTP 409).
+    """
+
+    __tablename__ = "credit_cost_config"
+    __table_args__ = (CheckConstraint("cost >= 0", name="ck_credit_cost_config_cost_nonneg"),)
+
+    action: Mapped[str] = mapped_column(String(50), primary_key=True)
+    cost: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class AppNotification(Base, TimestampMixin):

@@ -18,25 +18,41 @@ class PurchaseMethod(str, Enum):
     EMAIL = "email"
 
 
-class CreditAction(str, Enum):
-    """Credit ledger actions."""
+# ── Credit-cost calibration (plan.md §8.2) ───────────────────────────
+# The canonical action catalog lives in ``app/services/credit_costs.py``;
+# these schemas only shape the admin API (GET rich catalog, PUT strict).
+# The old ``CreditAction`` enum was removed — it was dead documentation
+# that drifted from reality (0 usages; see plan.md §8.1 F1).
 
-    REFILL = "refill"
-    SIGNUP_BONUS = "signup_bonus"
-    PURCHASE = "purchase"
-    ADMIN_ADJUST = "admin_adjust"
-    CV_BASE = "cv_base"
-    CV_ADAPTED = "cv_adapted"
-    PIPELINE = "pipeline"
-    RANK = "rank"
-    EXPAND = "expand"
-    UPSKILL = "upskill"
-    APPLY = "apply"
-    INTERVIEW = "interview"
-    EXPIRY = "expiry"
-    TOPUP = "topup"
-    UPGRADE_PRORATE = "upgrade_prorate"
-    REFUND_REVOKE = "refund_revoke"
+
+class CreditCostOut(BaseModel):
+    """Admin view of one billable action: catalog metadata + effective cost."""
+
+    key: str
+    group: str
+    cost: int
+    default_cost: int
+    feature_gate: str | None = None
+    version: int = 1
+
+
+class CreditCostsOut(BaseModel):
+    """GET /admin/credit-costs — the frontend renders from this response
+    (never hardcoded lists, plan.md §8.2)."""
+
+    groups: list[str]
+    actions: list[CreditCostOut]
+
+
+class CreditCostsUpdate(BaseModel):
+    """PUT /admin/credit-costs — strict calibration payload.
+
+    ``expected_versions`` enables optimistic locking (HTTP 409 when another
+    admin edited first); keys without a version are not conflict-checked.
+    """
+
+    costs: dict[str, int]
+    expected_versions: dict[str, int] | None = None
 
 
 # ── Plans ────────────────────────────────────────────────────────────
