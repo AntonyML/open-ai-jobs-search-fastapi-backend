@@ -21,6 +21,12 @@ from app.services.topups import (
     get_topup_packs,
     set_topup_packs,
 )
+from app.api.v1.admin import (
+    get_admin_billing_policy,
+    get_admin_topup_packs,
+    put_admin_billing_policy,
+    put_admin_topup_packs,
+)
 
 
 @pytest.fixture
@@ -110,3 +116,54 @@ async def test_get_billing_policy_merges_partial_stored(db_session):
     policy = await get_billing_policy(db_session)
     assert policy["refund_credit_threshold"] == 8
     assert policy["annual_cooling_days"] == DEFAULT_BILLING_POLICY["annual_cooling_days"]
+
+
+# ── Admin API wiring (Fase 4) ────────────────────────────────────────
+
+
+def _admin_ctx() -> dict:
+    return {"sub": "admin-1", "role": "admin"}
+
+
+async def test_admin_topup_packs_endpoints(db_session):
+    assert await get_admin_topup_packs(admin=_admin_ctx(), db=db_session) == DEFAULT_TOPUP_PACKS
+
+    custom = {"packs": [{"price_usd": 4.99, "credits": 25}, {"price_usd": 14.99, "credits": 90}]}
+    saved = await put_admin_topup_packs(payload=custom, admin=_admin_ctx(), db=db_session)
+    assert saved == custom["packs"]
+    assert await get_admin_topup_packs(admin=_admin_ctx(), db=db_session) == custom["packs"]
+
+
+async def test_admin_topup_packs_rejects_bad_payload(db_session):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await put_admin_topup_packs(
+            payload={"packs": [DEFAULT_TOPUP_PACKS[0]]}, admin=_admin_ctx(), db=db_session
+        )
+    assert exc.value.status_code == 422
+
+    with pytest.raises(HTTPException) as exc:
+        await put_admin_topup_packs(payload={}, admin=_admin_ctx(), db=db_session)
+    assert exc.value.status_code == 422
+
+
+async def test_admin_billing_policy_endpoints(db_session):
+    assert await get_admin_billing_policy(admin=_admin_ctx(), db=db_session) == DEFAULT_BILLING_POLICY
+
+    custom = {"refund_credit_threshold": 8, "annual_cooling_days": 30}
+    saved = await put_admin_billing_policy(payload=custom, admin=_admin_ctx(), db=db_session)
+    assert saved == custom
+    assert await get_admin_billing_policy(admin=_admin_ctx(), db=db_session) == custom
+
+
+async def test_admin_billing_policy_rejects_bad_payload(db_session):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await put_admin_billing_policy(
+            payload={"refund_credit_threshold": -1, "annual_cooling_days": 14},
+            admin=_admin_ctx(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 422

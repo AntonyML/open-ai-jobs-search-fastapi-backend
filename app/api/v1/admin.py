@@ -31,6 +31,7 @@ from app.schemas.providers import (
     ProviderInfo,
 )
 from app.services import credits
+from app.services.billing_policy import get_billing_policy, set_billing_policy
 from app.services.notifications import (
     get_notification_ttl_days,
     mark_purchase_requests_read,
@@ -59,7 +60,12 @@ from app.services.subscriptions import (
     get_active_subscription,
     refund_subscription,
 )
-from app.services.topups import TopupNotAllowedError, apply_topup, get_topup_packs
+from app.services.topups import (
+    TopupNotAllowedError,
+    apply_topup,
+    get_topup_packs,
+    set_topup_packs,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -454,6 +460,76 @@ async def put_admin_notification_ttl(
     days = await set_notification_ttl_days(db, raw)
     await db.commit()
     return {"days": days}
+
+
+# ── Top-up packs (admin) ─────────────────────────────────────────────
+
+
+@router.get("/topup-packs")
+async def get_admin_topup_packs(
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current top-up packs (exactly 2). Admin only."""
+    return await get_topup_packs(db)
+
+
+@router.put("/topup-packs")
+async def put_admin_topup_packs(
+    payload: dict,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the top-up packs (exactly 2, positive price + credits). Admin only."""
+    raw = payload.get("packs")
+    if not isinstance(raw, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="packs must be a list",
+        )
+    try:
+        packs = await set_topup_packs(db, raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    await db.commit()
+    return packs
+
+
+# ── Billing policy (admin) ───────────────────────────────────────────
+
+
+@router.get("/billing-policy")
+async def get_admin_billing_policy(
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current refund/prorate policy. Admin only."""
+    return await get_billing_policy(db)
+
+
+@router.put("/billing-policy")
+async def put_admin_billing_policy(
+    payload: dict,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the refund/prorate policy. Admin only.
+
+    Accepts ``{"refund_credit_threshold": N, "annual_cooling_days": N}``
+    with non-negative integers; invalid input is rejected with 422.
+    """
+    try:
+        policy = await set_billing_policy(db, payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    await db.commit()
+    return policy
 
 
 # ── Credits & subscriptions (admin) ──────────────────────────────────
