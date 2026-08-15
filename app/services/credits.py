@@ -315,7 +315,32 @@ async def get_balance(db: AsyncSession, user_id: str) -> dict:
         "total_used": account.total_used,
         "quota_day_used": account.quota_day_used,
         "quota_week_used": account.quota_week_used,
+        # When the current quota windows reset (start of window + span).
+        "next_quota_reset_at": next_quota_reset_at(account),
     }
+
+
+def next_quota_reset_at(account: CreditAccount) -> datetime | None:
+    """Earliest upcoming quota-window reset for the account.
+
+    ``quota_day_reset_at`` / ``quota_week_reset_at`` mark the *start* of the
+    current window, so the next reset is start + 1 day / + 7 days.  Only
+    windows that have actually started count.  ``None`` when the account has
+    no quota windows at all.
+
+    Single source of truth shared by the billing status endpoint (weekly
+    quota bar) and the 429 gate detail (plan.md §4).
+    """
+    now = datetime.now(UTC)
+    candidates: list[datetime] = []
+    if account.quota_day_reset_at is not None:
+        candidates.append(_utc(account.quota_day_reset_at) + timedelta(days=1))
+    if account.quota_week_reset_at is not None:
+        candidates.append(_utc(account.quota_week_reset_at) + timedelta(days=7))
+    future = [c for c in candidates if c > now]
+    if future:
+        return min(future)
+    return min(candidates) if candidates else None
 
 
 async def check_quota(

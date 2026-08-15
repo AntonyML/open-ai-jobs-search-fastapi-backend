@@ -56,6 +56,15 @@ async def max_user(db_session):
     return u
 
 
+@pytest.fixture
+async def pro_user(db_session):
+    u = User(id="pro-1", email="pro@example.com", hashed_password="x", role="client", tier="free")
+    db_session.add(u)
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
 def _client_ctx(user_id: str) -> dict:
     """The user dict the routers pass to the gate (JWT shape)."""
     return {"sub": user_id, "role": "client"}
@@ -136,6 +145,63 @@ async def test_gate_apply_429_quota_exhausted(db_session, max_user):
     with pytest.raises(HTTPException) as exc:
         await enforce_action_gate(db_session, _client_ctx(max_user.id), "apply")
     assert exc.value.status_code == 429
+
+
+# ── Enriched 402/429 detail (plan.md §4) ───────────────────────────
+
+
+async def test_gate_402_detail_is_structured(db_session, free_user):
+    """402 detail carries code/balance/next_reset_at/topup_packs/correlation_id
+    so the frontend can key on code and render the top-up modal."""
+    await activate_subscription(db_session, free_user, "free", source="signup_bonus")
+    await db_session.commit()
+    await credits.consume_credits(db_session, free_user.id, "cv_base", 2)
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(free_user.id), "apply")
+    detail = exc.value.detail
+    assert detail["code"] == "insufficient_credits"
+    assert detail["balance"] == 0
+    assert detail["correlation_id"]  # preserved from the old string detail
+    assert {p["credits"] for p in detail["topup_packs"]} == {50, 120}
+    # free (weekly cadence) → next_refill = last_refill + 7 days, as ISO string
+    assert isinstance(detail["next_reset_at"], str)
+
+
+async def test_gate_402_next_reset_at_is_period_end_for_paid(db_session, pro_user):
+    """Paid plans refill per period → next_reset_at mirrors the period_end."""
+    sub = await activate_subscription(db_session, pro_user, "pro", source="admin")
+    await db_session.commit()
+    # Spend the whole period allowance.
+    bal = await credits.get_balance(db_session, pro_user.id)
+    await credits.consume_credits(db_session, pro_user.id, "cv_base", bal["balance"])
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(pro_user.id), "apply")
+    detail = exc.value.detail
+    assert detail["code"] == "insufficient_credits"
+    assert detail["next_reset_at"] == sub.period_end.isoformat()
+
+
+async def test_gate_429_detail_is_structured(db_session, max_user):
+    """429 detail carries quota fields + next_reset_at and never a
+    correlation_id (quotas are not monetizable — no top-up CTA)."""
+    await activate_subscription(db_session, max_user, "max", source="admin")
+    await db_session.commit()
+    plan = await get_plan(db_session, "max")
+    for _ in range(plan.daily_quota):
+        await credits.consume_quota(db_session, max_user.id, plan)
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_action_gate(db_session, _client_ctx(max_user.id), "rank")
+    detail = exc.value.detail
+    assert detail["code"] == "quota_exceeded"
+    assert detail["quota_week_used"] == plan.daily_quota  # day quota also counts weekly
+    assert detail["quota_week_limit"] == plan.weekly_quota
+    assert detail["balance"] == 500  # period allowance granted by the refill
+    assert isinstance(detail["next_reset_at"], str)
+    assert {p["credits"] for p in detail["topup_packs"]} == {50, 120}
+    assert "correlation_id" not in detail
 
 
 # ── Gate: success path ──────────────────────────────────────────────

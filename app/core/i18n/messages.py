@@ -95,6 +95,16 @@ CATALOG: dict[str, dict[str, str]] = {
         "pipeline.reset": "Pipeline reset — {count} records deleted",
         # ── Billing ─────────────────────────────────────────────
         "billing.purchaseReceived": "Purchase request received. We'll contact you to complete the payment.",
+        "billing.topupReceived": "Top-up request received. We'll contact you to complete payment.",
+        "billing.topupRequiresPlan": "Top-ups need an active paid plan. Upgrade to continue.",
+        "billing.noActiveSubscription": "No active subscription",
+        "billing.cancelled": "Subscription cancelled.",
+        "billing.cancelledUntil": "Subscription cancelled. You keep access until {date}.",
+        "billing.refundReceived": "Refund request received. We'll contact you to complete it.",
+        "billing.refundUsageBlocked": "Refund unavailable: too many credits used this period.",
+        "billing.refundCoolingBlocked": "Annual refunds are only available in the first 14 days.",
+        "billing.upgradeReceived": "Upgrade request received. We'll contact you shortly.",
+        "billing.notAnUpgrade": "This plan is not an upgrade from your current one.",
     },
     "es": {
         # ── Common ────────────────────────────────────────────
@@ -178,6 +188,16 @@ CATALOG: dict[str, dict[str, str]] = {
         "pipeline.reset": "Pipeline reiniciado — {count} registros eliminados",
         # ── Billing ─────────────────────────────────────────────
         "billing.purchaseReceived": "Solicitud de compra recibida. Te contactaremos para completar el pago.",
+        "billing.topupReceived": "Solicitud de top-up recibida. Te contactaremos en breve.",
+        "billing.topupRequiresPlan": "Los top-ups requieren un plan de pago activo. Haz upgrade.",
+        "billing.noActiveSubscription": "No tienes una suscripción activa",
+        "billing.cancelled": "Suscripción cancelada.",
+        "billing.cancelledUntil": "Suscripción cancelada. Conservas acceso hasta el {date}.",
+        "billing.refundReceived": "Solicitud de reembolso recibida. Te contactaremos.",
+        "billing.refundUsageBlocked": "Reembolso no disponible: usaste demasiados créditos.",
+        "billing.refundCoolingBlocked": "Reembolso anual solo disponible los primeros 14 días.",
+        "billing.upgradeReceived": "Solicitud de upgrade recibida. Te contactaremos.",
+        "billing.notAnUpgrade": "Este plan no es una mejora de tu plan actual.",
     },
 }
 

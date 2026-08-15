@@ -34,6 +34,9 @@ class CreditAction(str, Enum):
     APPLY = "apply"
     INTERVIEW = "interview"
     EXPIRY = "expiry"
+    TOPUP = "topup"
+    UPGRADE_PRORATE = "upgrade_prorate"
+    REFUND_REVOKE = "refund_revoke"
 
 
 # ── Plans ────────────────────────────────────────────────────────────
@@ -147,6 +150,8 @@ class CreditStatusOut(BaseModel):
     quota_day_limit: int
     quota_week_used: int
     quota_week_limit: int
+    # When the quota windows reset (drives the weekly quota bar, plan.md §4).
+    next_reset_at: datetime | None = None
     features: list[str] = []
     credits: list[CreditTransactionOut] = []
     correlation_id: str | None = None
@@ -167,11 +172,19 @@ class CreditCosts(BaseModel):
     interview: int = 1
 
 
+class TopupPack(BaseModel):
+    """One fixed prepaid credit pack (manual SINPE/WhatsApp payment)."""
+
+    price_usd: float
+    credits: int
+
+
 class ProductCatalogOut(BaseModel):
     """What the frontend needs to render the buy/upgrade UI."""
 
     plans: list[PlanOut]
     credit_costs: CreditCosts
+    topup_packs: list[TopupPack] = []
     whatsapp_number: str = ""
     currency: str = "USD"
     last_updated: datetime | None = None
@@ -205,6 +218,32 @@ class PurchaseRequestOut(BaseModel):
     whatsapp_number: str = ""
 
 
+class TopupRequest(BaseModel):
+    """A user-initiated top-up request for a fixed credit pack.
+
+    Same manual flow as purchases: the request is recorded + emailed to the
+    admin, the user pays via SINPE/WhatsApp, and the admin approves it from
+    the admin panel (``POST /admin/credits/topup``).
+    """
+
+    # Identifies the pack by its credit amount (50 or 120) — the natural
+    # key of ``topup_packs`` since prices are admin-tunable.
+    pack_credits: int = Field(..., gt=0, description="Pack identifier: credits included")
+    method: PurchaseMethod = PurchaseMethod.SINPE
+    phone: str | None = Field(None, description="Phone for SINPE contact")
+    note: str | None = None
+
+
+class TopupRequestOut(BaseModel):
+    """Response confirming the top-up request was received."""
+
+    ok: bool = True
+    correlation_id: str
+    message: str
+    whatsapp_number: str = ""
+    pack: TopupPack | None = None
+
+
 # ── Admin adjust ─────────────────────────────────────────────────────
 
 
@@ -216,6 +255,70 @@ class AdminCreditAdjust(BaseModel):
     reason: str | None = None
 
 
+class AdminTopupApprove(BaseModel):
+    """Admin approves a pending top-up: add the pack's credits to the user.
+
+    ``correlation_id`` links the ledger entry back to the ``topup_request``
+    notification the user created (optional — the admin can also approve
+    ad-hoc from the credits page).
+    """
+
+    user_id: str
+    pack_credits: int = Field(..., gt=0)
+    correlation_id: str | None = None
+
+
+class AdminRefundApprove(BaseModel):
+    """Admin approves a pending refund: zero-out credits + mark refunded."""
+
+    user_id: str
+    correlation_id: str | None = None
+
+
+# ── Cancel / refund requests (user-facing) ──────────────────────────
+
+
+class CancelSubscriptionOut(BaseModel):
+    """Response to a user cancellation request."""
+
+    ok: bool = True
+    message: str
+    period_end: datetime | None = None
+
+
+class RefundRequestOut(BaseModel):
+    """Response confirming the refund request was received (policy-gated)."""
+
+    ok: bool = True
+    correlation_id: str
+    message: str
+    whatsapp_number: str = ""
+
+
+class UpgradeRequest(BaseModel):
+    """A user-initiated prorated upgrade request (mid-period plan change).
+
+    Same manual flow as purchases: the request records the prorated
+    ``amount_due`` and notifies the admin; once the user pays, the admin
+    activates the new plan (with ``price_paid`` = the amount due).
+    """
+
+    plan_key: str = Field(..., description="Target plan key, e.g. 'max'")
+    method: PurchaseMethod = PurchaseMethod.SINPE
+    phone: str | None = Field(None, description="Phone for SINPE contact")
+    note: str | None = None
+
+
+class UpgradeRequestOut(BaseModel):
+    """Response confirming the prorated upgrade request was received."""
+
+    ok: bool = True
+    correlation_id: str
+    message: str
+    amount_due: float
+    whatsapp_number: str = ""
+
+
 class AdminSubscriptionCreate(BaseModel):
     """Admin manually activates a subscription for a user."""
 
@@ -223,4 +326,6 @@ class AdminSubscriptionCreate(BaseModel):
     plan_key: str
     billing_cycle: str = "monthly"  # monthly | yearly
     auto_renew: bool = False
+    # What the user actually paid (e.g. the prorated amount of an upgrade).
+    price_paid: float = 0.0
     note: str | None = None

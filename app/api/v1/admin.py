@@ -9,22 +9,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, get_locale
 from app.core.i18n.locale import t
-from app.db.models import User
+from app.db.models import User, UserSubscription
 from app.llm.adapter import llm_completion
 from app.schemas.auth import AdminUserListOut, AdminUserOut, AdminUserUpdate
 from app.schemas.billing import (
     AdminCreditAdjust,
+    AdminRefundApprove,
     AdminSubscriptionCreate,
+    AdminTopupApprove,
     CreditTransactionOut,
     PlanAdminOut,
     PlanUpsert,
     SubscriptionAdminOut,
     UserSubscriptionOut,
 )
+from app.schemas.providers import (
+    KNOWN_PROVIDERS,
+    AdminProviderConfigOut,
+    AdminProviderConfigUpdate,
+    ModelListOut,
+    ProviderInfo,
+)
 from app.services import credits
 from app.services.notifications import (
     get_notification_ttl_days,
     mark_purchase_requests_read,
+    mark_refund_requests_read,
+    mark_topup_requests_read,
+    mark_upgrade_requests_read,
     set_notification_ttl_days,
 )
 from app.services.plans import (
@@ -34,14 +46,6 @@ from app.services.plans import (
     set_credit_costs,
     upsert_plan,
 )
-from app.services.subscriptions import activate_subscription
-from app.schemas.providers import (
-    AdminProviderConfigOut,
-    AdminProviderConfigUpdate,
-    KNOWN_PROVIDERS,
-    ModelListOut,
-    ProviderInfo,
-)
 from app.services.provider_config import (
     MASKED_KEY,
     clear_global_provider_config,
@@ -50,6 +54,12 @@ from app.services.provider_config import (
     set_global_provider_config,
 )
 from app.services.provider_models import list_provider_models
+from app.services.subscriptions import (
+    activate_subscription,
+    get_active_subscription,
+    refund_subscription,
+)
+from app.services.topups import TopupNotAllowedError, apply_topup, get_topup_packs
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -473,6 +483,131 @@ async def adjust_user_credits(
     return {"user_id": payload.user_id, "balance": account.balance}
 
 
+@router.post("/credits/topup")
+async def approve_topup(
+    payload: AdminTopupApprove,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a pending top-up: add the pack's credits to the user. Admin only.
+
+    Called after the user pays manually (SINPE/WhatsApp).  The paid-plan
+    rule is re-checked at apply time — if the user's subscription lapsed
+    between the request and the approval the top-up is rejected.
+    """
+    result = await db.execute(select(User).where(User.id == payload.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    packs = await get_topup_packs(db)
+    pack = next((p for p in packs if int(p["credits"]) == payload.pack_credits), None)
+    if pack is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown top-up pack",
+        )
+
+    try:
+        account = await apply_topup(
+            db,
+            payload.user_id,
+            pack,
+            correlation_id=payload.correlation_id,
+        )
+    except TopupNotAllowedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    # Auto-close the admin's pending top-up notifications for this user.
+    await mark_topup_requests_read(
+        db, admin["sub"], payload.user_id, payload.correlation_id
+    )
+    await db.commit()
+    return {
+        "user_id": payload.user_id,
+        "credits": int(pack["credits"]),
+        "price_usd": float(pack["price_usd"]),
+        "balance": account.balance,
+        "correlation_id": payload.correlation_id,
+    }
+
+
+@router.post("/credits/refund")
+async def approve_refund(
+    payload: AdminRefundApprove,
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a pending refund: zero-out credits + mark the sub refunded.
+
+    Executes plan.md §3: revokes the exact remaining balance (ledger
+    ``refund_revoke``, skipped when balance is 0), flips the subscription to
+    ``refunded`` + ``cancelled_at`` and resets the user's tier to free.
+    Idempotent — approving twice never re-runs the zero-out.
+    """
+    result = await db.execute(select(User).where(User.id == payload.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    sub = await get_active_subscription(db, payload.user_id)
+    if sub is None:
+        # Already refunded → idempotent no-op (plan.md §3.5): approving twice
+        # must never re-run the zero-out.  Anything else → nothing to refund.
+        existing = await db.execute(
+            select(UserSubscription)
+            .where(
+                UserSubscription.user_id == payload.user_id,
+                UserSubscription.status == "refunded",
+            )
+            .order_by(UserSubscription.created_at.desc())
+            .limit(1)
+        )
+        sub = existing.scalar_one_or_none()
+        if sub is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No active subscription to refund",
+            )
+        await mark_refund_requests_read(
+            db, admin["sub"], payload.user_id, payload.correlation_id
+        )
+        await db.commit()
+        return {
+            "user_id": payload.user_id,
+            "revoked_credits": 0,
+            "status": sub.status,
+            "correlation_id": payload.correlation_id,
+        }
+
+    _sub, revoked = await refund_subscription(db, sub)
+    # Auto-close the admin's pending refund notifications for this user.
+    await mark_refund_requests_read(
+        db, admin["sub"], payload.user_id, payload.correlation_id
+    )
+    await db.commit()
+    return {
+        "user_id": payload.user_id,
+        "revoked_credits": revoked,
+        "status": sub.status,
+        "correlation_id": payload.correlation_id,
+    }
+
+
 @router.post("/subscriptions", response_model=UserSubscriptionOut)
 async def create_subscription(
     payload: AdminSubscriptionCreate,
@@ -495,6 +630,7 @@ async def create_subscription(
             billing_cycle=payload.billing_cycle,
             source="admin",
             auto_renew=payload.auto_renew,
+            price_paid=payload.price_paid,
             note=payload.note,
         )
     except ValueError as exc:
@@ -502,8 +638,10 @@ async def create_subscription(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
-    # Auto-close the admin's pending purchase notifications for this user.
+    # Auto-close the admin's pending purchase / prorated-upgrade notifications
+    # for this user (plan.md §5 — the upgrade shows the amount_due paid).
     await mark_purchase_requests_read(db, admin["sub"], payload.user_id)
+    await mark_upgrade_requests_read(db, admin["sub"], payload.user_id)
     await db.commit()
     await db.refresh(sub)
     return sub
@@ -518,8 +656,6 @@ async def list_subscriptions(
     limit: int = 100,
 ):
     """List user subscriptions with optional filters. Admin only."""
-    from app.db.models import UserSubscription
-
     query = select(UserSubscription).order_by(UserSubscription.created_at.desc()).limit(min(max(limit, 1), 500))
     if plan:
         query = query.where(UserSubscription.plan_key == plan)

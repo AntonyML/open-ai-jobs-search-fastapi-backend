@@ -108,21 +108,24 @@ async def purge_expired_notifications(
     return max(result.rowcount or 0, 0)
 
 
-async def mark_purchase_requests_read(
+async def mark_notifications_read(
     db: AsyncSession,
     admin_id: str,
     user_id: str,
+    type_: str,
+    correlation_id: str | None = None,
 ) -> int:
-    """Mark the admin's unread ``purchase_request`` notifications as read.
+    """Mark the admin's unread notifications of ``type_`` for ``user_id`` as read.
 
-    Called after the admin activates a subscription for ``user_id`` so the
-    bell no longer shows the pending-request badge for that purchase.
-    Returns the number of notifications marked.
+    Called after the admin resolves a pending request (purchase, top-up,
+    refund) so the bell no longer shows the pending-request badge.  When
+    ``correlation_id`` is given, only the notification(s) carrying that
+    correlation id in the payload are matched.  Returns the number marked.
     """
     result = await db.execute(
         select(AppNotification.id).where(
             AppNotification.user_id == admin_id,
-            AppNotification.type == "purchase_request",
+            AppNotification.type == type_,
             AppNotification.is_read == False,  # noqa: E712
         )
     )
@@ -130,7 +133,7 @@ async def mark_purchase_requests_read(
     if not candidate_ids:
         return 0
 
-    # Filter by payload.user_id in Python — JSONB path queries differ between
+    # Filter by payload in Python — JSONB path queries differ between
     # SQLite (tests) and PostgreSQL, and candidate sets are tiny.
     payloads = await db.execute(
         select(AppNotification.id, AppNotification.payload).where(
@@ -141,6 +144,10 @@ async def mark_purchase_requests_read(
         nid
         for nid, payload in payloads.all()
         if (payload or {}).get("user_id") == user_id
+        and (
+            correlation_id is None
+            or (payload or {}).get("correlation_id") == correlation_id
+        )
     ]
     if not matched:
         return 0
@@ -152,3 +159,60 @@ async def mark_purchase_requests_read(
     )
     await db.flush()
     return len(matched)
+
+
+async def mark_purchase_requests_read(
+    db: AsyncSession,
+    admin_id: str,
+    user_id: str,
+) -> int:
+    """Mark the admin's unread ``purchase_request`` notifications as read.
+
+    Backward-compatible wrapper around :func:`mark_notifications_read`.
+    """
+    return await mark_notifications_read(db, admin_id, user_id, "purchase_request")
+
+
+async def mark_topup_requests_read(
+    db: AsyncSession,
+    admin_id: str,
+    user_id: str,
+    correlation_id: str | None = None,
+) -> int:
+    """Mark the admin's unread ``topup_request`` notifications as read.
+
+    Called after the admin approves a top-up for ``user_id``.
+    """
+    return await mark_notifications_read(
+        db, admin_id, user_id, "topup_request", correlation_id=correlation_id
+    )
+
+
+async def mark_refund_requests_read(
+    db: AsyncSession,
+    admin_id: str,
+    user_id: str,
+    correlation_id: str | None = None,
+) -> int:
+    """Mark the admin's unread ``refund_request`` notifications as read.
+
+    Called after the admin approves a refund for ``user_id``.
+    """
+    return await mark_notifications_read(
+        db, admin_id, user_id, "refund_request", correlation_id=correlation_id
+    )
+
+
+async def mark_upgrade_requests_read(
+    db: AsyncSession,
+    admin_id: str,
+    user_id: str,
+    correlation_id: str | None = None,
+) -> int:
+    """Mark the admin's unread ``upgrade_prorate`` notifications as read.
+
+    Called after the admin activates the new plan for ``user_id``.
+    """
+    return await mark_notifications_read(
+        db, admin_id, user_id, "upgrade_prorate", correlation_id=correlation_id
+    )

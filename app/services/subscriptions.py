@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import CreditAccount, User, UserSubscription
+from app.services.credits import adjust_credits, get_or_create_credit_account
 from app.services.plans import get_plan
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ def _period_bounds(cycle: str, start: datetime | None = None) -> tuple[datetime,
     return now, now + timedelta(days=days)
 
 
-async def _get_active_subscription(
+async def get_active_subscription(
     db: AsyncSession, user_id: str
 ) -> UserSubscription | None:
     """The user's latest active subscription row (any plan)."""
@@ -100,15 +101,19 @@ async def activate_subscription(
     if not plan.is_active:
         raise ValueError(f"Plan '{plan_key}' is not active")
 
-    # Cancel any previous active subscription.
+    # Supersede any previous active subscription (plan.md §9.3: the
+    # superseded row is marked cancelled + stamped with cancelled_at so the
+    # admin can distinguish it from a user-initiated cancellation).
     result = await db.execute(
         select(UserSubscription).where(
             UserSubscription.user_id == user.id,
             UserSubscription.status == "active",
         )
     )
+    now = datetime.now(UTC)
     for old in result.scalars().all():
         old.status = "cancelled"
+        old.cancelled_at = now
 
     period_start, period_end = _period_bounds(billing_cycle)
     subscription = UserSubscription(
@@ -147,7 +152,7 @@ async def ensure_admin_subscription(db: AsyncSession, user_id: str) -> None:
     Idempotent: if the user already has an active subscription the plan key
     is just synced to ``max`` (admin always sees the full pipeline).
     """
-    existing = await _get_active_subscription(db, user_id)
+    existing = await get_active_subscription(db, user_id)
     if existing is not None:
         return
 
@@ -214,6 +219,80 @@ async def expire_subscription(db: AsyncSession, subscription: UserSubscription) 
     )
 
 
+async def cancel_subscription(
+    db: AsyncSession, subscription: UserSubscription
+) -> UserSubscription:
+    """Cancel a subscription at the user's request (plan.md §2 / §9.3).
+
+    Stops auto-renewal and stamps ``cancelled_at`` but keeps the
+    subscription ``active`` until ``period_end`` — the user keeps the days
+    they paid for.  ``process_expired_subscriptions`` expires it (and drops
+    the tier to free) once the period ends.  Idempotent: cancelling an
+    already-cancelled subscription never bumps the timestamp.
+    """
+    if subscription.status != "active" or subscription.cancelled_at is not None:
+        return subscription
+    subscription.auto_renew = False
+    subscription.cancelled_at = datetime.now(UTC)
+    await db.flush()
+    logger.info(
+        "Subscription cancelled by user: user=%s plan=%s",
+        subscription.user_id,
+        subscription.plan_key,
+    )
+    return subscription
+
+
+async def refund_subscription(
+    db: AsyncSession, subscription: UserSubscription
+) -> tuple[UserSubscription, int]:
+    """Execute a refund: zero-out the user's credits and mark the sub refunded.
+
+    Called by the admin when the manual refund is completed (plan.md §3):
+
+    - ``balance > 0`` → a ``refund_revoke`` ledger entry with delta
+      ``-balance`` (the exact zero-out; ``adjust_credits`` keeps the
+      ``balance = earned - used`` invariant);
+    - ``balance == 0`` → skip the delta, just flip the status;
+    - the subscription is marked ``refunded`` + ``cancelled_at`` and the
+      user's tier resets to ``free`` (same as ``expire_subscription``).
+
+    Idempotent: a ``refunded`` subscription is a no-op (the guard prevents
+    re-running the zero-out — plan.md §3.5).
+
+    Returns ``(subscription, revoked_credits)``.
+    """
+    if subscription.status == "refunded":
+        return subscription, 0
+
+    account = await get_or_create_credit_account(db, subscription.user_id)
+    revoked = 0
+    if account.balance > 0:
+        revoked = account.balance
+        await adjust_credits(
+            db,
+            subscription.user_id,
+            -account.balance,
+            action="refund_revoke",
+            description="Refund zero-out",
+        )
+
+    subscription.status = "refunded"
+    subscription.cancelled_at = datetime.now(UTC)
+    result = await db.execute(select(User).where(User.id == subscription.user_id))
+    user = result.scalar_one_or_none()
+    if user is not None and user.tier == subscription.plan_key:
+        user.tier = "free"
+    await db.flush()
+    logger.info(
+        "Subscription refunded: user=%s plan=%s revoked=%s",
+        subscription.user_id,
+        subscription.plan_key,
+        revoked,
+    )
+    return subscription, revoked
+
+
 def _normalize(dt: datetime | None) -> datetime:
     """Timezone-aware UTC (SQLite returns naive datetimes)."""
     if dt is None:
@@ -263,7 +342,7 @@ async def get_user_access(db: AsyncSession, user: dict | User) -> dict:
     role = user.role if isinstance(user, User) else user.get("role", "client")
     is_admin = role == "admin"
 
-    sub = await _get_active_subscription(db, user_id)
+    sub = await get_active_subscription(db, user_id)
     plan = None
     if sub is not None:
         plan = await get_plan(db, sub.plan_key)

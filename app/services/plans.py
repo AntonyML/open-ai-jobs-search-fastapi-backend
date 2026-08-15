@@ -206,11 +206,16 @@ async def build_catalog(db: AsyncSession) -> dict[str, Any]:
     Shared by the authenticated ``/billing/catalog`` endpoint and the public
     ``/public/catalog`` endpoint so both return the exact same shape.
     """
+    # Lazy import: topups imports get_plan from this module, so a module-level
+    # import here would create a circular dependency.
+    from app.services.topups import get_topup_packs
+
     plans = await get_active_plans(db)
     last_updated = max((p.updated_at for p in plans), default=None)
     return {
         "plans": plans,
         "credit_costs": await get_credit_costs(db),
+        "topup_packs": await get_topup_packs(db),
         "whatsapp_number": await get_whatsapp_number(),
         "currency": "USD",
         "last_updated": last_updated,

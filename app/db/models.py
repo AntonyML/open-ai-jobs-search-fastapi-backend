@@ -242,10 +242,14 @@ class UserSubscription(Base, TimestampMixin):
     # ── Period ─────────────────────────────────────────────────
     period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(20), default="active")  # active | expired | cancelled
+    # active | expired | cancelled | refunded
+    status: Mapped[str] = mapped_column(String(20), default="active")
     source: Mapped[str] = mapped_column(String(20), default="purchase")  # purchase | admin | signup_bonus
     auto_renew: Mapped[bool] = mapped_column(default=False)
     price_paid: Mapped[float] = mapped_column(default=0.0)
+    # When the user requested cancellation (paid days remain until period_end).
+    # Superseded subscriptions (activate_subscription) stamp it too.
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped["User"] = relationship(back_populates="subscriptions")
 
@@ -313,7 +317,8 @@ class CreditTransaction(Base, TimestampMixin):
     correlation_id: Mapped[str | None] = mapped_column(String(36), index=True)
 
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    #  'refill' | 'signup_bonus' | 'purchase' | 'admin_adjust' | 'cv_base' | 'cv_adapted' | 'pipeline' | 'expiry'
+    #  'refill' | 'signup_bonus' | 'purchase' | 'admin_adjust' | 'topup' | 'upgrade_prorate' |
+    #  'refund_revoke' | 'cv_base' | 'cv_adapted' | 'pipeline' | 'expiry'
     credits_delta: Mapped[int] = mapped_column(nullable=False)
 
     description: Mapped[str | None] = mapped_column(Text)
@@ -342,6 +347,10 @@ class AppNotification(Base, TimestampMixin):
     Replaces the localStorage-only notification debt: events like a pending
     purchase request or an exhausted API quota land here and are surfaced
     by the frontend NotificationBell.
+
+    ``type`` is a free string; the billing flow uses ``purchase_request``,
+    ``topup_request``, ``refund_request`` and ``upgrade_prorate`` (the admin
+    resolves them from the admin credits page, see plan.md §5).
     """
 
     __tablename__ = "app_notifications"
@@ -350,7 +359,9 @@ class AppNotification(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    type: Mapped[str] = mapped_column(String(50), default="info")  # info | credits_low | quota_exhausted | ia_exhausted | purchase_request | plan_expired
+    # info | credits_low | quota_exhausted | ia_exhausted | purchase_request | plan_expired |
+    # topup_request | upgrade_prorate | refund_request
+    type: Mapped[str] = mapped_column(String(50), default="info")
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str | None] = mapped_column(Text)
     is_read: Mapped[bool] = mapped_column(default=False)
