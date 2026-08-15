@@ -31,7 +31,7 @@ from app.db.models import Application, CandidateProfile, JobPosting
 from app.llm.adapter import llm_completion_structured, get_provider_kwargs
 from app.schemas.ats_check import ATSResult
 from app.schemas.verification import LlmContentCheckOutput, VerificationCheck, VerificationResult
-from app.services import ats_check, credits
+from app.services import artifact_store, ats_check, credits
 from app.core.logging import get_logger, bind_context
 
 logger = get_logger(__name__)
@@ -122,7 +122,7 @@ async def run_verification_checklist(
         # ═══════════════════════════════════════════════════════════════
 
         ats_result: ATSResult | None = None
-        pdf_path_obj = Path(cv_pdf_path) if isinstance(cv_pdf_path, str) else cv_pdf_path if isinstance(cv_pdf_path, Path) else None
+        pdf_path_obj = artifact_store.resolve_existing("apply", cv_pdf_path)
         if pdf_path_obj and pdf_path_obj.exists():
             try:
                 ats_result = await ats_check.check_ats_parseability(

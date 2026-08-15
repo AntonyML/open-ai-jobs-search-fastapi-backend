@@ -16,7 +16,6 @@ passed straight to the LLM (recruiter-lens analysis → drafter).
 
 from __future__ import annotations
 
-import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -26,7 +25,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.db.models import CandidateProfile, GeneratedCV, JobPosting
 from app.exceptions import (
@@ -44,10 +42,9 @@ from app.services.apply_json import (
 )
 from app.services.notifications import notify_admin
 from app.services.pdf_compiler_typst import compile_cv
+from app.services.artifact_store import new_output_path, remove_file, resolve_existing
 from app.services.provider_config import get_active_provider_config
 from app.services.setup import get_profile
-
-logger = get_logger(__name__)
 
 # Free tier: max CVs generated per rolling hour.
 FREE_TIER_CVS_PER_HOUR = 5
@@ -267,16 +264,13 @@ async def _persist_and_compile(
     to the working directory, matching how /apply stores files).  ``pdf_path``
     keeps that relative path so the download route can resolve it.
     """
-    settings = get_settings()
     cv_id = str(uuid.uuid4())
 
-    pdf_path: Path | None = None
+    pdf_path: str | None = None
     if cv_type == "base" or output_dict.get("cv"):
-        rel_dir = Path(settings.cv_storage_path) / user_id
-        rel_dir.mkdir(parents=True, exist_ok=True)
-        pdf_path = rel_dir / f"{cv_id}.pdf"
         try:
-            compile_cv(output_dict, output=pdf_path)
+            abs_pdf_path, pdf_path = new_output_path("cv", user_id, f"{cv_id}.pdf")
+            compile_cv(output_dict, output=abs_pdf_path)
         except Exception:
             pdf_path = None  # LLM output stored; PDF compile failure is non-fatal
 
@@ -289,7 +283,7 @@ async def _persist_and_compile(
         job_url=job_url,
         job_description_text=job_description_text,
         cv_json=output_dict,
-        pdf_path=str(pdf_path) if pdf_path else None,
+        pdf_path=pdf_path,
         analysis=analysis_dict,
     )
     db.add(record)
@@ -383,10 +377,7 @@ async def _hard_delete_base(db: AsyncSession, record: GeneratedCV) -> None:
 
     This is the only path that actually frees space under ``generated_cvs/``.
     """
-    pdf = resolve_pdf_path(record)
-    if pdf is not None and pdf.exists():
-        with contextlib.suppress(OSError):
-            pdf.unlink()  # disk cleanup is best-effort; the DB row is authoritative
+    remove_file("cv", record.pdf_path)
     await db.delete(record)
 
 
@@ -394,14 +385,9 @@ def _remove_pdf_file(cv: GeneratedCV) -> None:
     """Best-effort removal of the PDF file from disk.
 
     The PDF is a derived artifact (``cv_json`` is the source of truth), so
-    removal is safe.  ``missing_ok=True`` makes this idempotent.
+    removal is safe.  ``remove_file`` is idempotent (missing files are fine).
     """
-    try:
-        pdf = resolve_pdf_path(cv)
-        if pdf is not None:
-            pdf.unlink(missing_ok=True)
-    except Exception:
-        logger.warning("Failed to remove PDF for CV %s", cv.id, exc_info=True)
+    remove_file("cv", cv.pdf_path)
 
 
 async def _demote_previous_bases(db: AsyncSession, user_id: str) -> None:
@@ -508,10 +494,7 @@ async def count_recent_cvs(
 
 def resolve_pdf_path(record: GeneratedCV) -> Path | None:
     """Resolve the stored relative ``pdf_path`` to an absolute path."""
-    if not record.pdf_path:
-        return None
-    path = Path(record.pdf_path)
-    return path if path.is_absolute() else Path.cwd() / path
+    return resolve_existing("cv", record.pdf_path)
 
 
 def build_pdf_url(record: GeneratedCV) -> str | None:

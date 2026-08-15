@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     tracker_path: str = "documents/tracker.json"
     # Directory where the CV generator stores compiled PDFs (per user subfolder).
     cv_storage_path: str = "generated_cvs"
+    # Directory where the apply pipeline stores compiled PDFs (per user/job subfolder).
+    generated_storage_path: str = "generated"
     # Public base URL used to build the pdf_url in CV responses.
     base_url: str = "http://localhost:8000"
 

@@ -34,7 +34,7 @@ from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluat
 from app.db.session import async_session_factory
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
-from app.services import ats_check, credits
+from app.services import artifact_store, ats_check, credits
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
@@ -618,20 +618,23 @@ async def execute_apply(
 
         # STAGE 5-6: RENDER + COMPILE via Typst
         final_cv_dict = cv_output.cv.model_dump()
-        generated_dir = Path("generated") / user_id / job_posting_id
-        generated_dir.mkdir(parents=True, exist_ok=True)
-        cv_pdf_path = generated_dir / f"cv_{job.company}_{job.title}.pdf"
-        _typst_compile(final_cv_dict, output=cv_pdf_path)
-        cv_pages = _get_pdf_page_count(cv_pdf_path)
+        cv_filename = (
+            f"cv_{artifact_store.safe_name(job.company)}_{artifact_store.safe_name(job.title)}.pdf"
+        )
+        cv_pdf_abs, cv_pdf_rel = artifact_store.new_output_path(
+            "apply", user_id, job_posting_id, cv_filename,
+        )
+        _typst_compile(final_cv_dict, output=cv_pdf_abs)
+        cv_pages = _get_pdf_page_count(cv_pdf_abs)
         cv_compiled = True
 
         if cv_output.cv.cover_letter is not None:
             # Cover letter is embedded in same PDF (after pagebreak)
-            cover_pdf_path = cv_pdf_path
+            cover_pdf_rel = cv_pdf_rel
             cover_pages = max(0, cv_pages - 1)
             cover_compiled = True
         else:
-            cover_pdf_path = None
+            cover_pdf_rel = None
             cover_pages = 0
             cover_compiled = False
 
@@ -648,17 +651,17 @@ async def execute_apply(
         ats_result = None
         try:
             ats_result = await ats_check.check_ats_parseability(
-                pdf_path=cv_pdf_path,
+                pdf_path=cv_pdf_abs,
                 job_posting=job,
                 candidate=candidate,
             )
         except Exception as e:
             logger.warning(f"ATS check failed (non-blocking): {e}")
 
-        application.cv_pdf_path = str(cv_pdf_path)
+        application.cv_pdf_path = cv_pdf_rel
         application.cv_compiled = True
         application.cv_pages = cv_pages
-        application.cover_letter_pdf_path = str(cover_pdf_path) if cover_pdf_path else None
+        application.cover_letter_pdf_path = cover_pdf_rel if cover_pdf_rel else None
         application.cover_letter_compiled = cover_compiled
         application.cover_letter_pages = cover_pages
         application.stage = "verified" if (ats_result and ats_result.pass_ats) else "compiled"
