@@ -79,7 +79,9 @@ class AdminUserListOut(BaseModel):
     total: int
     page: int
     page_size: int
-    stats: dict[str, int] = {"total": 0, "admins": 0, "premium": 0}
+    # plan.md §2.7: the legacy ``premium`` counter was almost always 0; it is
+    # replaced by ``active_subs`` (users with an active subscription).
+    stats: dict[str, int] = {"total": 0, "admins": 0, "active_subs": 0}
 
 
 # ── Payment / Upgrade schemas ─────────────────────────────────────

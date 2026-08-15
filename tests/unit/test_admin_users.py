@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.api.v1.admin import list_users
-from app.db.models import Base, User
+from app.api.v1.admin import list_subscriptions, list_users
+from app.db.models import Base, User, UserSubscription
 
 
 @pytest.fixture
@@ -67,7 +67,8 @@ class TestListUsersPagination:
         assert result.page == 1
         assert result.page_size == 5
         assert len(result.items) == 4
-        assert result.stats == {"total": 4, "admins": 1, "premium": 2}
+        # plan.md §2.7: the legacy ``premium`` stat is replaced by ``active_subs``.
+        assert result.stats == {"total": 4, "admins": 1, "active_subs": 0}
 
     @pytest.mark.asyncio
     async def test_page_size_limits_rows(self, db_session):
@@ -144,3 +145,66 @@ class TestListUsersSorting:
             admin={"role": "admin"}, db=db_session, sort="not_a_column"
         )
         assert result.total == 4
+
+
+class TestListUsersStats:
+    @pytest.mark.asyncio
+    async def test_active_subs_counts_users_with_active_subscription(self, db_session):
+        """active_subs = distinct users with status == 'active' (not rows)."""
+        db_session.add_all([
+            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+            UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
+            # A cancelled sub must NOT count, nor a second active row for the
+            # same user (distinct user_id).
+            UserSubscription(user_id="u-carol", plan_key="pro", status="cancelled", source="admin"),
+            UserSubscription(user_id="u-bob", plan_key="pro", status="active", source="admin"),
+        ])
+        await db_session.commit()
+
+        result = await list_users(admin={"role": "admin"}, db=db_session)
+        assert result.stats == {"total": 4, "admins": 1, "active_subs": 2}
+
+
+class TestListSubscriptions:
+    @pytest.mark.asyncio
+    async def test_filter_by_user_id(self, db_session):
+        db_session.add_all([
+            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+            UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
+        ])
+        await db_session.commit()
+
+        result = await list_subscriptions(
+            admin={"role": "admin"}, db=db_session, user_id="u-alice"
+        )
+        assert len(result) == 1
+        assert result[0].user_id == "u-alice"
+        assert result[0].plan_key == "pro"
+
+    @pytest.mark.asyncio
+    async def test_user_id_filter_combines_with_status(self, db_session):
+        db_session.add_all([
+            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+            UserSubscription(user_id="u-alice", plan_key="max", status="cancelled", source="admin"),
+        ])
+        await db_session.commit()
+
+        result = await list_subscriptions(
+            admin={"role": "admin"},
+            db=db_session,
+            user_id="u-alice",
+            status_filter="active",
+        )
+        assert len(result) == 1
+        assert result[0].plan_key == "pro"
+
+    @pytest.mark.asyncio
+    async def test_no_user_id_returns_all(self, db_session):
+        db_session.add_all([
+            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+            UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
+        ])
+        await db_session.commit()
+
+        result = await list_subscriptions(admin={"role": "admin"}, db=db_session)
+        assert len(result) == 2

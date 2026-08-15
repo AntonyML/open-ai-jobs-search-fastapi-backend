@@ -127,13 +127,19 @@ async def list_users(
     result = await db.execute(query.offset((page - 1) * page_size).limit(page_size))
     users = result.scalars().all()
 
-    # Global stats (unfiltered) for the dashboard cards.
+    # Global stats (unfiltered) for the dashboard cards. plan.md §2.7: the
+    # legacy ``premium`` counter is gone — ``active_subs`` counts users with
+    # an active subscription (the real paid-user metric).
     stats_total = (await db.execute(select(func.count()).select_from(User))).scalar_one()
     stats_admins = (
         await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))
     ).scalar_one()
-    stats_premium = (
-        await db.execute(select(func.count()).select_from(User).where(User.tier == "premium"))
+    stats_active_subs = (
+        await db.execute(
+            select(func.count(func.distinct(UserSubscription.user_id))).where(
+                UserSubscription.status == "active"
+            )
+        )
     ).scalar_one()
 
     return AdminUserListOut(
@@ -141,7 +147,7 @@ async def list_users(
         total=total,
         page=page,
         page_size=page_size,
-        stats={"total": stats_total, "admins": stats_admins, "premium": stats_premium},
+        stats={"total": stats_total, "admins": stats_admins, "active_subs": stats_active_subs},
     )
 
 
@@ -729,14 +735,21 @@ async def list_subscriptions(
     db: AsyncSession = Depends(get_db),
     plan: str = "",
     status_filter: str = "",
+    user_id: str = "",
     limit: int = 100,
 ):
-    """List user subscriptions with optional filters. Admin only."""
+    """List user subscriptions with optional filters. Admin only.
+
+    ``user_id`` scopes the list to one user (used by the user detail page,
+    plan.md §4.3).
+    """
     query = select(UserSubscription).order_by(UserSubscription.created_at.desc()).limit(min(max(limit, 1), 500))
     if plan:
         query = query.where(UserSubscription.plan_key == plan)
     if status_filter:
         query = query.where(UserSubscription.status == status_filter)
+    if user_id:
+        query = query.where(UserSubscription.user_id == user_id)
     result = await db.execute(query)
     subs = list(result.scalars().all())
 
