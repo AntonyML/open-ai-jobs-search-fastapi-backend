@@ -447,6 +447,44 @@ async def test_soft_delete_active_base_promotes_previous(db_session):
 
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())
 @patch(
+    "app.services.cv_generator.personalize_cv_llm",
+    new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
+)
+@patch(
+    "app.services.cv_generator.get_active_provider_config",
+    new=AsyncMock(return_value=PROVIDER_CFG),
+)
+async def test_soft_delete_personalized_removes_pdf(db_session):
+    """Soft-deleting a personalized CV removes its PDF, marks the row, idempotently.
+
+    Fase 1a: deleting a personalized CV must free the PDF on disk immediately
+    (it is a derived artifact re-compilable from ``cv_json``), not accumulate
+    orphaned files under ``generated_cvs/``.
+    """
+    record = await cv_generator.personalize_cv(
+        db_session, "test-user-id", "Senior Python Engineer at Acme..." * 3
+    )
+    assert record.cv_type == "personalized"
+
+    # Simulate a real compiled PDF on disk for the personalized CV.
+    pdf = cv_generator.resolve_pdf_path(record)
+    assert pdf is not None
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4 test")
+
+    await cv_generator.soft_delete_cv(db_session, "test-user-id", record.id)
+
+    assert not pdf.exists(), "PDF of a soft-deleted personalized CV should be removed from disk"
+    await db_session.refresh(record)
+    assert record.is_deleted is True
+    assert record.deleted_at is not None
+
+    # Idempotent: the file is already gone, calling again must not raise.
+    cv_generator._remove_pdf_file(record)
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+@patch(
     "app.services.cv_generator.adapt_cv_llm",
     new=AsyncMock(return_value=(SAMPLE_ANALYSIS, SAMPLE_OUTPUT)),
 )

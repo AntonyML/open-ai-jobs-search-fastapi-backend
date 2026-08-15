@@ -24,7 +24,8 @@ The report also flags:
 - empty user directories
 
 Usage:
-    python -m app.scripts.audit_artifacts [--storage-root PATH] [--generated-root PATH] [--output PATH]
+    python -m app.scripts.audit_artifacts \
+        [--storage-root PATH] [--generated-root PATH] [--output PATH]
 """
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ from typing import Any
 from sqlalchemy import text
 
 from app.core.settings import get_settings
-
 
 # ── Filesystem ──────────────────────────────────────────────────────
 
@@ -196,8 +196,9 @@ def _render_markdown(
         if cat not in order:
             continue
         merged = _merge_categories(cat, cv_items, apply_items)
+        action = order.get(cat, "review")
         lines.append(
-            f"| {cat} | {merged['count']} | {_human(merged['bytes'])} | {order.get(cat, 'review')} |"
+            f"| {cat} | {merged['count']} | {_human(merged['bytes'])} | {action} |"
         )
     lines.append("")
     lines.append(f"- Empty directories: **{len(empty_dirs)}**")
@@ -318,10 +319,20 @@ async def run(args: argparse.Namespace) -> int:
     )
 
     summary = _summarize(cv_items + apply_items)
-    print("\n".join(f"{cat:>11}: {e['count']:>3} files, {_human(e['bytes'])}" for cat, e in summary.items()))
+    lines_out = (
+        f"{cat:>11}: {count:>3} files, {_human(bytes_)}"
+        for cat, count, bytes_ in (
+            (cat, e["count"], e["bytes"]) for cat, e in summary.items()
+        )
+    )
+    print("\n".join(lines_out))
     if not db_ok:
         print("DB unavailable — active/deleted classification missing")
-    print(f"empty dirs: {len(empty_dirs)} | active rows missing file: {len(active_missing)} | rows without pdf: {rows_no_pdf}")
+    empty_msg = (
+        f"empty dirs: {len(empty_dirs)} | active rows missing file: "
+        f"{len(active_missing)} | rows without pdf: {rows_no_pdf}"
+    )
+    print(empty_msg)
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
