@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +67,7 @@ def _to_response(record: GeneratedCV) -> CVResponse:
         job_description_text=record.job_description_text,
         json_cv=record.cv_json or {},
         pdf_url=build_pdf_url(record),
+        pdf_ready=record.pdf_path is not None,
         analysis=analysis,
         created_at=record.created_at,
     )
@@ -93,13 +94,21 @@ async def _record_usage_after(
 @router.post("/base", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
 async def create_base_cv(
     payload: CVBaseCreate,
+    background_tasks: BackgroundTasks,
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a generic base CV from the candidate profile."""
+    """Generate a generic base CV from the candidate profile.
+
+    The response returns as soon as the JSON is validated; the PDF compiles in
+    the background and the row's ``pdf_ready`` flips to true when done.
+    """
     usage: dict[str, Any] = {"tokens_input": 0, "tokens_output": 0, "cost_usd_cents": 0, "model_used": None}
     cid = await enforce_action_gate(db, user, "cv_base", label="Base CV generation")
     record = await cv_generator.generate_base_cv(db, user["sub"], usage=usage)
+    background_tasks.add_task(
+        cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json
+    )
     await _record_usage_after(db, cid, usage)
     return _to_response(record)
 
@@ -125,6 +134,7 @@ async def recover_base_cv(
 @router.post("/personalize", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
 async def create_personalized_cv(
     payload: CVPersonalizeCreate,
+    background_tasks: BackgroundTasks,
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -134,6 +144,9 @@ async def create_personalized_cv(
     record = await cv_generator.personalize_cv(
         db, user["sub"], payload.job_description_text, usage=usage,
     )
+    background_tasks.add_task(
+        cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json
+    )
     await _record_usage_after(db, cid, usage)
     return _to_response(record)
 
@@ -141,6 +154,7 @@ async def create_personalized_cv(
 @router.post("/personalize-job", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
 async def create_adapted_cv(
     payload: CVPersonalizeJobCreate,
+    background_tasks: BackgroundTasks,
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -157,6 +171,9 @@ async def create_adapted_cv(
     record = await cv_generator.adapt_cv(
         db, user["sub"], payload.base_cv_id, payload.job_posting_id, usage=usage,
     )
+    background_tasks.add_task(
+        cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json
+    )
     await _record_usage_after(db, cid, usage)
     return _to_response(record)
 
@@ -164,6 +181,7 @@ async def create_adapted_cv(
 @router.post("/adapt-url", response_model=CVResponse, status_code=status.HTTP_201_CREATED)
 async def create_adapted_cv_from_url(
     payload: CVAdaptUrlCreate,
+    background_tasks: BackgroundTasks,
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -178,6 +196,9 @@ async def create_adapted_cv_from_url(
     cid = await enforce_action_gate(db, user, "cv_adapted", label="CV adaptation by URL")
     record = await cv_generator.adapt_cv_from_url(
         db, user["sub"], payload.base_cv_id, payload.url, usage=usage,
+    )
+    background_tasks.add_task(
+        cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json
     )
     await _record_usage_after(db, cid, usage)
     return _to_response(record)

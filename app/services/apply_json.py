@@ -25,6 +25,7 @@ from app.llm.adapter import (
 )
 from app.schemas.apply import ReviewFeedback
 from app.schemas.cv import CV, CoverLetter, CVAnalysis, CVMetadata, GenerateCVOutput
+from app.services.cv_linter import lint_cv
 from app.services.orchestrator.llm_response_sanitizer import (
     default_field_constraints,
     sanitize_llm_response,
@@ -51,6 +52,18 @@ Use the X-Y-Z formula for every experience bullet:
 - X = What you accomplished
 - Y = How it was measured
 - Z = How you did it
+"""
+
+ATS_GUARDRAIL = """
+ATS FORMATTING RULES (follow strictly):
+- All text fields must be plain text — no markdown (no **, no *, no #, no _)
+- Email and phone must appear as literal characters in the header, not as icons
+- Skills must be comma-separated plain text within each group, no tables or bullets
+- No section labels with symbols (✓, →, •) — plain labels only
+- Every experience bullet must open with a strong past-tense action verb
+- Never use "Responsible for", "Helped with", "Assisted in", "Worked on" as openers
+- core_competencies: exactly 10 items, 2–3 words each, no trailing punctuation
+- Each experience entry: exactly 3 bullets, each under 20 words, one line each
 """
 
 REVIEWER_GUARDRAIL = """
@@ -374,7 +387,7 @@ def build_base_cv_prompt(candidate: CandidateProfile) -> list[dict[str, str]]:
     system = (
         "You are an expert CV writer. Generate a complete, polished CV document "
         "in JSON format according to the provided schema.\n\n"
-        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n" + ATS_GUARDRAIL + "\n\n"
         + "Your output MUST have the following structure:\n"
         + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
     )
@@ -502,6 +515,73 @@ def _drop_cover_letter(output_dict: dict[str, Any]) -> None:
     cv = output_dict.get("cv")
     if isinstance(cv, dict) and cv.get("cover_letter"):
         cv["cover_letter"] = None
+
+
+# ── Directed retry (CAPA 3 — CVLinter) ────────────────────────────────
+
+
+def build_lint_retry_prompt(
+    old_cv: dict[str, Any],
+    issues: list[str],
+) -> list[dict[str, str]]:
+    """Directed retry prompt — tells the model exactly what to fix (no blind retry).
+
+    The prompt is deliberately short (old CV JSON + the issue list), so the
+    correction call is cheaper and faster than the original drafter call.
+    """
+    cv_text = json.dumps(old_cv, indent=2, ensure_ascii=False)
+
+    system = (
+        "You are an expert CV writer. Your previous output had quality issues.\n\n"
+        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE
+    )
+
+    user = f"""
+The previous CV output had quality issues. Fix ONLY the following:
+{''.join(f'- {issue}\n' for issue in issues)}
+=== CURRENT CV JSON (keep its structure) ===
+{cv_text}
+
+Do not change anything else. Output the corrected GenerateCVOutput JSON object.
+"""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user.strip()},
+    ]
+
+
+async def _lint_and_directed_retry(
+    output_dict: dict[str, Any],
+    candidate: CandidateProfile,
+    provider_config: dict[str, Any],
+    usage: dict | None = None,
+) -> dict[str, Any]:
+    """Run the deterministic CVLinter; on issues, ask the model to fix exactly those.
+
+    One directed retry at most — if the corrected output fails to parse/validate
+    or still carries issues, the original output is kept (the JSON is the source
+    of truth; quality issues degrade gracefully instead of failing the request).
+    """
+    issues = lint_cv(output_dict, candidate)
+    if not issues:
+        return output_dict
+
+    logger.warning(
+        "CVLinter flagged %d issue(s) — running directed retry", len(issues)
+    )
+    try:
+        corrected = await _llm_json(
+            build_lint_retry_prompt(output_dict, issues),
+            GenerateCVOutput,
+            provider_config,
+            temperature=0.3,
+            max_tokens=8000,
+            usage=usage,
+        )
+    except LLMError:
+        logger.exception("Directed retry failed to produce valid output — keeping original CV")
+        return output_dict
+    return corrected
 
 
 # ── LLM generation functions (with sanitizer) ────────────────────────
@@ -690,7 +770,7 @@ async def generate_base_cv_llm(
         messages, GenerateCVOutput, provider_config,
         temperature=0.3, max_tokens=8000, usage=usage,
     )
-    return raw_dict
+    return await _lint_and_directed_retry(raw_dict, candidate, provider_config, usage=usage)
 
 
 async def personalize_cv_llm(
@@ -726,6 +806,7 @@ async def personalize_cv_llm(
         usage=usage,
     )
     _drop_cover_letter(output_dict)
+    output_dict = await _lint_and_directed_retry(output_dict, candidate, provider_config, usage=usage)
     return analysis_dict, output_dict
 
 
@@ -887,6 +968,7 @@ async def adapt_cv_llm(
         usage=usage,
     )
     _drop_cover_letter(output_dict)
+    output_dict = await _lint_and_directed_retry(output_dict, candidate, provider_config, usage=usage)
     return analysis_dict, output_dict
 
 
@@ -1053,4 +1135,5 @@ async def adapt_cv_llm_with_url(
         usage=usage,
     )
     _drop_cover_letter(output_dict)
+    output_dict = await _lint_and_directed_retry(output_dict, candidate, provider_config, usage=usage)
     return analysis_dict, output_dict

@@ -8,7 +8,10 @@ into this service, which:
 3. Generates a ``GenerateCVOutput`` dict — either a generic base CV
    (``POST /cv/base``) or a job-tailored CV from free-text job description
    (``POST /cv/personalize``).
-4. Compiles it to PDF via Typst and persists a ``GeneratedCV`` row.
+4. Persists a ``GeneratedCV`` row **immediately** (the JSON is the source of
+   truth); the PDF is compiled asynchronously by ``compile_cv_in_background``
+   (scheduled from the endpoint as a FastAPI ``BackgroundTask``) so Typst is
+   never on the request's critical path.
 
 The personalize flow never touches ``JobPosting``: the job description text is
 passed straight to the LLM (recruiter-lens analysis → drafter).
@@ -16,6 +19,7 @@ passed straight to the LLM (recruiter-lens analysis → drafter).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,8 +29,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.db.models import CandidateProfile, GeneratedCV, JobPosting
+from app.db.session import async_session_factory
 from app.exceptions import (
     NotFoundError,
     PreconditionError,
@@ -45,6 +51,8 @@ from app.services.pdf_compiler_typst import compile_cv
 from app.services.artifact_store import new_output_path, remove_file, resolve_existing
 from app.services.provider_config import get_active_provider_config
 from app.services.setup import get_profile
+
+logger = get_logger(__name__)
 
 # Free tier: max CVs generated per rolling hour.
 FREE_TIER_CVS_PER_HOUR = 5
@@ -258,21 +266,15 @@ async def _persist_and_compile(
     job_posting_id: str | None = None,
     job_url: str | None = None,
 ) -> GeneratedCV:
-    """Compile the PDF, persist the record, and return it.
+    """Persist the record and return it.
 
-    The PDF is written to ``{cv_storage_path}/{user_id}/{cv_id}.pdf`` (relative
-    to the working directory, matching how /apply stores files).  ``pdf_path``
-    keeps that relative path so the download route can resolve it.
+    The record is saved with ``pdf_path=None`` — the JSON (``cv_json``) is the
+    source of truth and the API responds as soon as it is validated.  The
+    endpoint schedules ``compile_cv_in_background`` (FastAPI BackgroundTask),
+    which writes ``{cv_storage_path}/{user_id}/{cv_id}.pdf`` and updates the
+    row once Typst finishes.
     """
     cv_id = str(uuid.uuid4())
-
-    pdf_path: str | None = None
-    if cv_type == "base" or output_dict.get("cv"):
-        try:
-            abs_pdf_path, pdf_path = new_output_path("cv", user_id, f"{cv_id}.pdf")
-            compile_cv(output_dict, output=abs_pdf_path)
-        except Exception:
-            pdf_path = None  # LLM output stored; PDF compile failure is non-fatal
 
     record = GeneratedCV(
         id=cv_id,
@@ -283,13 +285,67 @@ async def _persist_and_compile(
         job_url=job_url,
         job_description_text=job_description_text,
         cv_json=output_dict,
-        pdf_path=pdf_path,
+        pdf_path=None,
         analysis=analysis_dict,
     )
     db.add(record)
     await db.commit()
     await db.refresh(record)
     return record
+
+
+async def compile_cv_in_background(
+    record_id: str,
+    user_id: str,
+    cv_json: dict[str, Any],
+    *,
+    session_factory: Any = None,
+) -> None:
+    """Compile a CV's JSON to PDF off the request path (CAPA 4).
+
+    Scheduled from the endpoints as a FastAPI ``BackgroundTask``.  Runs the
+    blocking, in-process Typst compile in a worker thread (``asyncio.to_thread``)
+    so the event loop is never frozen, then records ``pdf_path`` on the row so
+    ``pdf_ready`` becomes true and the download URL appears.
+
+    Failure is non-fatal: the JSON stays the source of truth, the admin is
+    notified, and the row keeps ``pdf_path=None``.  If the CV was deleted while
+    compiling, the freshly written PDF is removed so no orphaned files
+    accumulate under ``generated_cvs/``.
+
+    ``session_factory`` is only used by tests (they pass their in-memory
+    factory); production always uses the app's ``async_session_factory``.
+    """
+    abs_pdf_path, pdf_path = new_output_path("cv", user_id, f"{record_id}.pdf")
+    try:
+        await asyncio.to_thread(compile_cv, cv_json, output=abs_pdf_path)
+    except Exception:
+        logger.exception("PDF compile failed for CV %s (user %s)", record_id, user_id)
+        try:
+            factory = session_factory or async_session_factory
+            async with factory() as db:
+                await notify_admin(
+                    db,
+                    "cv_pdf_compile_failed",
+                    "PDF compile failed",
+                    (
+                        f"CV {record_id} could not be rendered to PDF. "
+                        "The structured JSON is still available."
+                    ),
+                )
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to notify admin about PDF compile failure")
+        return
+
+    factory = session_factory or async_session_factory
+    async with factory() as db:
+        record = await db.get(GeneratedCV, record_id)
+        if record is None or record.is_deleted:
+            remove_file("cv", pdf_path)
+            return
+        record.pdf_path = pdf_path
+        await db.commit()
 
 
 # ── Queries / lifecycle ──────────────────────────────────────────────

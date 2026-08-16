@@ -33,6 +33,9 @@ async def db_session():
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
+        # Expose the factory so tests of compile_cv_in_background can open a
+        # second session over the same in-memory engine.
+        session._test_factory = session_factory
         session.add(
             User(
                 id="test-user-id",
@@ -116,7 +119,9 @@ async def test_generate_base_cv_persists(db_session):
     assert record.cv_json["cv"]["profile_statement"]
     assert record.analysis is None
     assert record.job_description_text is None
-    assert record.pdf_path and record.pdf_path.endswith(".pdf")
+    # PDF compilation is async (CAPA 4): the record returns without a path;
+    # compile_cv_in_background() records it once Typst finishes.
+    assert record.pdf_path is None
 
 
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())
@@ -302,6 +307,97 @@ async def test_adapt_cv_job_not_owned_raises(db_session):
         )
 
 
+# ── Async PDF compile (CAPA 4) ────────────────────────────────────────
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+async def test_compile_cv_in_background_sets_pdf_path(db_session):
+    """The background task compiles the PDF and records the path on the row."""
+    record = GeneratedCV(
+        id="cv-async-1",
+        user_id="test-user-id",
+        cv_type="base",
+        base_status="active",
+        cv_json=SAMPLE_OUTPUT,
+    )
+    db_session.add(record)
+    await db_session.commit()
+
+    await cv_generator.compile_cv_in_background(
+        "cv-async-1",
+        "test-user-id",
+        SAMPLE_OUTPUT,
+        session_factory=getattr(db_session, "_test_factory"),
+    )
+
+    await db_session.refresh(record)
+    assert record.pdf_path and record.pdf_path.endswith(".pdf")
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock())
+async def test_compile_cv_in_background_skips_deleted_record(db_session):
+    """If the CV was deleted while compiling, no path is written back."""
+    record = GeneratedCV(
+        id="cv-async-2",
+        user_id="test-user-id",
+        cv_type="personalized",
+        cv_json=SAMPLE_OUTPUT,
+        is_deleted=True,
+    )
+    db_session.add(record)
+    await db_session.commit()
+
+    # Must not raise, and must not resurrect the deleted row's pdf_path.
+    await cv_generator.compile_cv_in_background(
+        "cv-async-2",
+        "test-user-id",
+        SAMPLE_OUTPUT,
+        session_factory=getattr(db_session, "_test_factory"),
+    )
+
+    await db_session.refresh(record)
+    assert record.pdf_path is None
+
+
+@patch("app.services.cv_generator.compile_cv", new=MagicMock(side_effect=RuntimeError("typst boom")))
+async def test_compile_cv_in_background_failure_is_non_fatal(db_session):
+    """A failed compile keeps the record (pdf_path stays None) and notifies the admin."""
+    admin = User(
+        id="admin-user-id",
+        email="admin@example.com",
+        hashed_password="fakehash",
+        full_name="Admin",
+        role="admin",
+    )
+    db_session.add(admin)
+    record = GeneratedCV(
+        id="cv-async-3",
+        user_id="test-user-id",
+        cv_type="base",
+        base_status="active",
+        cv_json=SAMPLE_OUTPUT,
+    )
+    db_session.add(record)
+    await db_session.commit()
+
+    await cv_generator.compile_cv_in_background(
+        "cv-async-3",
+        "test-user-id",
+        SAMPLE_OUTPUT,
+        session_factory=getattr(db_session, "_test_factory"),
+    )
+
+    await db_session.refresh(record)
+    assert record.pdf_path is None
+
+    result = await db_session.execute(
+        select(AppNotification).where(AppNotification.user_id == "admin-user-id")
+    )
+    notes = list(result.scalars().all())
+    assert len(notes) == 1
+    assert notes[0].type == "cv_pdf_compile_failed"
+
+
 # ── Max-2 base CV lifecycle (active / obsolete) ────────────────────────
 
 
@@ -406,7 +502,10 @@ async def test_soft_delete_obsolete_base_hard_deletes_pdf(db_session):
     await db_session.refresh(first)
     assert first.base_status == "obsolete"
 
-    # Simulate a real compiled PDF on disk for the obsolete base.
+    # Compilation is async now — simulate a record whose background task
+    # already finished by recording its pdf_path (the compiled file on disk).
+    first.pdf_path = f"generated_cvs/{first.user_id}/{first.id}.pdf"
+    await db_session.commit()
     pdf = cv_generator.resolve_pdf_path(first)
     assert pdf is not None
     pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -466,7 +565,10 @@ async def test_soft_delete_personalized_removes_pdf(db_session):
     )
     assert record.cv_type == "personalized"
 
-    # Simulate a real compiled PDF on disk for the personalized CV.
+    # Compilation is async now — simulate a finished background task by
+    # recording the pdf_path (the compiled file on disk).
+    record.pdf_path = f"generated_cvs/{record.user_id}/{record.id}.pdf"
+    await db_session.commit()
     pdf = cv_generator.resolve_pdf_path(record)
     assert pdf is not None
     pdf.parent.mkdir(parents=True, exist_ok=True)

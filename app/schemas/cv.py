@@ -436,5 +436,10 @@ class CVResponse(BaseModel):
     job_description_text: str | None = Field(None, description="Job text used for personalization.")
     json_cv: dict[str, Any] = Field(..., description="The structured CV (CV + metadata).")
     pdf_url: str | None = Field(None, description="Download URL for the compiled PDF.")
+    pdf_ready: bool = Field(
+        ...,
+        description="True once the PDF has been compiled in the background "
+        "(pdf_url is non-null); false right after generation while Typst runs.",
+    )
     analysis: CVAnalysis | None = Field(None, description="Recruiter-lens analysis, when available.")
     created_at: datetime = Field(..., description="Creation timestamp.")
