@@ -3,7 +3,6 @@
 Uses pydantic-settings for validation and .env file support.
 """
 
-import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,11 +60,10 @@ class Settings(BaseSettings):
     # -- App ---------------------------------------------------
     app_env: str = "development"
     log_level: str = "INFO"
-    cors_origins: list[str] = [
-        o.strip()
-        for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-        if o.strip()
-    ]
+    # Let pydantic-settings load this from .env/environment.  Reading
+    # os.getenv() here happens while the class is defined, before the
+    # settings env file is loaded, so production origins were silently lost.
+    cors_origins: list[str] = ["http://localhost:3000"]
 
     # -- Paths -------------------------------------------------
     documents_dir: str = "documents"
