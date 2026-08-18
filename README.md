@@ -108,6 +108,25 @@ scripts/                    utilidades y E2E
 
 ## Despliegue
 
+### Render (recomendado, plan free)
+
+El repo incluye `render.yaml` (blueprint) y `Dockerfile`:
+
+1. Subir el repo a GitHub.
+2. En [Render](https://render.com) → **New Blueprint** → conectar el repo.
+3. Llenar en el dashboard los secrets marcados `sync: false`:
+   `DATABASE_URL`, `JWT_SECRET_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+   `NVIDIA_NIM_API_KEY`, `RESEND_API_KEY`, `SENTRY_DSN`, `INGEST_SERVICE_URL`
+   (URL del microservicio de ingesta en Render), y ajustar `CORS_ORIGINS` a la
+   URL real del frontend.
+4. Deploy. Queda en `https://open-ai-jobs-search-api.onrender.com`.
+
+**Limitaciones del plan free**: se duerme tras 15 min sin tráfico (cold start
+~1 min); no hay disco persistente, así que `DOCUMENTS_DIR`/`TRACKER_PATH` se
+reinician en cada redeploy; 750 h/mes.
+
+### Fly.io (alternativa)
+
 El servicio se despliega en Fly.io con `Dockerfile` y `fly.toml`:
 
 ```bash
