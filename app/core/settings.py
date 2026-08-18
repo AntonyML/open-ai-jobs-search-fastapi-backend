@@ -5,6 +5,7 @@ Uses pydantic-settings for validation and .env file support.
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +26,12 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+asyncpg://postgres:password@localhost:5432/postgres"
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def strip_database_url(cls, value: object) -> object:
+        """Strip accidental surrounding whitespace from the DB URL."""
+        return value.strip() if isinstance(value, str) else value
 
     # -- LiteLLM / LLM Providers -------------------------------
     llm_default_provider: str = "anthropic"
