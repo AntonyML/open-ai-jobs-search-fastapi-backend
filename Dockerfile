@@ -1,7 +1,9 @@
 # Dockerfile for FastAPI backend with Typst
 # PDFs (CV + cover letter) se compilan in-process con Typst - sin LaTeX ni Bun.
+# Python 3.12: el código usa backslashes dentro de f-strings (PEP 701),
+# que no compilan en 3.11.
 
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 # Runtime system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
