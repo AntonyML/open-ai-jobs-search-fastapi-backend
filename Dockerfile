@@ -22,7 +22,11 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir .
 
 # Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# /app/logs, documents, generated etc. se crean en build para que el usuario
+# no-root pueda escribir (logging, tracker, PDFs) — Render/Fly no montan disco.
+RUN groupadd -r appuser && useradd -r -g appuser appuser \
+    && mkdir -p /app/logs /app/documents /app/generated /app/generated_cvs \
+    && chown -R appuser:appuser /app
 
 # Copy entrypoint script
 COPY --chown=appuser:appuser entrypoint.sh /entrypoint.sh
