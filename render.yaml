@@ -37,9 +37,12 @@ services:
       - key: LLM_TIMEOUT
         value: "180"
 
-      # ── CORS: reemplaza con la URL real del frontend (Cloudflare) ─
+      # ── CORS: frontend real (Cloudflare) + localhost para dev ─
+      # Debe ser JSON válido: el campo cors_origins es list[str] y
+      # pydantic-settings lo parsea con json.loads. Sin barra final en
+      # la URL (el header Origin no la trae y el match fallaría).
       - key: CORS_ORIGINS
-        value: http://localhost:3000
+        value: '["https://cvmeld.tonyml.com", "http://localhost:3000"]'
 
       # ── Secrets (llenar en Render Dashboard tras el primer deploy) ─
       # Los valores NO van en el repo: sync: false crea las variables
