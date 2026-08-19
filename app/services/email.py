@@ -216,6 +216,30 @@ async def send_refund_request(
     )
 
 
+async def send_no_provider_notification(
+    admin_email: str,
+) -> dict:
+    """Notify the admin that no AI provider key has been configured.
+
+    This is a system-level alert: the orchestrator has no stored API key
+    and is falling back to the .env configuration (or has no provider at all).
+    """
+    html = """<h2>⚠️ Alerta: Sin proveedor de IA configurado</h2>
+<p><strong>El sistema no tiene una clave API de proveedor de IA configurada.</strong></p>
+<p>Las funcionalidades de inteligencia artificial (ranking, generación de CV,
+adaptación, entrevistas) pueden no estar disponibles para los usuarios.</p>
+<p><strong>Acción requerida:</strong> Configura un proveedor de IA desde el panel
+ de administración en <code>/admin/providers</code>.</p>
+<hr>
+<p><em>Este es un correo automático del sistema. Si ya configuraste el
+ proveedor, puedes ignorar este mensaje.</em></p>"""
+    return await send_resend_email(
+        to=admin_email,
+        subject="⚠️ Alerta: Sin proveedor de IA configurado — Acción requerida",
+        html_body=html,
+    )
+
+
 async def send_donation_notification(
     admin_email: str,
     user_email: str,

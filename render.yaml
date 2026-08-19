@@ -78,4 +78,4 @@ services:
 # cron:
 #   - name: housekeeping
 #     schedule: "0 */6 * * *"
-#     command: curl -fsS https://open-ai-jobs-search-api.onrender.com/api/v1/health
+#     command: curl -fsS https://api.cvmeld.tonyml.com/api/v1/health

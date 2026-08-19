@@ -79,7 +79,7 @@ jobs:
 
             **Entorno:** ${{ github.event.inputs.environment }}
 
-            **URL:** https://open-ai-jobs-search-fastapi.fly.dev/health
+            **URL:** https://api.cvmeld.tonyml.com/health
 
             **Desplegado por:** @${{ github.actor }}
           target_commitish: ${{ github.sha }}

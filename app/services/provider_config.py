@@ -85,7 +85,7 @@ async def get_global_provider_config_out(db: AsyncSession) -> dict[str, Any]:
 
     if row is not None and row.provider:
         model = row.model or (await _default_model_for(row.provider))
-        return {
+        config = {
             "provider": row.provider,
             "display_name": PROVIDER_DISPLAY_MAP.get(row.provider),
             "model": model,
@@ -98,12 +98,19 @@ async def get_global_provider_config_out(db: AsyncSession) -> dict[str, Any]:
             "updated_at": row.updated_at,
             "web_search_enabled": _web_search_for(row.provider, model),
         }
+        # Notify admin when no API key is stored (debounced: only if no
+        # recent unread notification of this type exists).
+        if not config["has_key"]:
+            await _notify_admin_no_provider(db)
+        return config
 
     from app.core.settings import get_settings
 
     settings = get_settings()
     display = PROVIDER_DISPLAY_MAP.get(settings.llm_default_provider)
     model = await _default_model_for(settings.llm_default_provider)
+    # Always notify when falling back to .env with no stored key.
+    await _notify_admin_no_provider(db)
     return {
         "provider": settings.llm_default_provider,
         "display_name": display,
@@ -117,6 +124,53 @@ async def get_global_provider_config_out(db: AsyncSession) -> dict[str, Any]:
         "updated_at": None,
         "web_search_enabled": _web_search_for(settings.llm_default_provider, model),
     }
+
+
+async def _notify_admin_no_provider(db: AsyncSession) -> None:
+    """Send in-app notification + email to the first admin when no provider
+    key is configured.  Debounced: skips if an unread ``no_provider_alert``
+    notification already exists (avoids spam on every profile page load).
+    """
+    from sqlalchemy import select
+    from app.db.models import AppNotification, User
+    from app.services.notifications import notify_admin
+    from app.core.settings import get_settings
+
+    # Check for existing unread alert to avoid duplicate notifications.
+    admin_result = await db.execute(
+        select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1)
+    )
+    admin = admin_result.scalar_one_or_none()
+    if admin is None:
+        return
+
+    existing = await db.execute(
+        select(AppNotification.id).where(
+            AppNotification.user_id == admin.id,
+            AppNotification.type == "no_provider_alert",
+            AppNotification.is_read == False,  # noqa: E712
+        ).limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        return  # Already has an unread alert — don't spam.
+
+    await notify_admin(
+        db,
+        type_="no_provider_alert",
+        title="Sin proveedor de IA configurado",
+        body="El sistema no tiene una clave API de proveedor de IA configurada."
+             " Algunas funcionalidades de IA pueden no estar disponibles.",
+        payload={"action": "configure_provider", "href": "/admin/providers"},
+    )
+    await db.flush()
+
+    # Send email asynchronously (fire-and-forget; failures are logged).
+    try:
+        from app.services.email import send_no_provider_notification
+        settings = get_settings()
+        await send_no_provider_notification(admin_email=settings.admin_email)
+    except Exception:
+        pass  # Best-effort; the in-app notification is the primary channel.
 
 
 def _web_search_for(provider: str | None, model: str | None) -> bool:
