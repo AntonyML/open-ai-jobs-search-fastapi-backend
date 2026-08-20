@@ -347,11 +347,13 @@ async def compile_cv_in_background(
         return
 
     # Upload to R2 (if configured), fallback to local disk
+    r2_upload_failed = False
     if r2_storage._r2_configured():
         try:
             r2_storage.upload_pdf(pdf_path, pdf_bytes)
             abs_pdf_path.unlink(missing_ok=True)
         except Exception:
+            r2_upload_failed = True
             logger.exception("R2 upload failed for CV %s — keeping local", record_id)
     else:
         logger.debug("R2 not configured — PDF kept on local disk")
@@ -367,6 +369,19 @@ async def compile_cv_in_background(
             return
         record.pdf_path = pdf_path
         await db.commit()
+
+        # Notify admin if R2 upload failed (non-blocking)
+        if r2_upload_failed:
+            try:
+                await notify_admin(
+                    db,
+                    type_="r2_upload_failed",
+                    title="R2 upload failed",
+                    body=f"PDF for CV {record_id} could not be uploaded to R2. PDF kept on local disk.",
+                    payload={"record_id": record_id, "pdf_path": pdf_path},
+                )
+            except Exception:
+                logger.warning("Failed to send admin notification for R2 upload failure")
 
 
 # ── Queries / lifecycle ──────────────────────────────────────────────
