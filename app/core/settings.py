@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     # Public base URL used to build the pdf_url in CV responses.
     base_url: str = "http://localhost:8000"
 
+    # -- Cloudflare R2 (S3-compatible object storage) ----------------
+    # Si las credenciales estan vacias, el sistema usa disco local (dev mode).
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "open-ia-jons-files"
+    r2_signed_url_ttl: int = 3600  # 1 hour
+    r2_region: str = "auto"  # R2 siempre usa "auto"
+
     # -- Orchestrator -------------------------------------------
     # Max concurrent LLM workers in the execution queue
     orchestrator_max_concurrency: int = 4
