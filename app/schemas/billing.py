@@ -72,6 +72,12 @@ class PlanOut(BaseModel):
     daily_quota: int = 0
     weekly_quota: int = 0
     features: list[str] = []
+    max_apply_count: int = 1000
+    max_prepare_count: int = 1000
+    max_rank_iterations: int = 100
+    max_track_count: int = 1000
+    expand_locked: bool = False
+    upskill_locked: bool = False
     is_active: bool = True
     sort_order: int = 10
 
@@ -101,6 +107,12 @@ class PlanUpsert(BaseModel):
     daily_quota: int = Field(0, ge=0)
     weekly_quota: int = Field(0, ge=0)
     features: list[str] = []
+    max_apply_count: int = Field(1000, ge=0)
+    max_prepare_count: int = Field(1000, ge=0)
+    max_rank_iterations: int = Field(100, ge=0)
+    max_track_count: int = Field(1000, ge=0)
+    expand_locked: bool = False
+    upskill_locked: bool = False
     is_active: bool = True
     sort_order: int = 10
 

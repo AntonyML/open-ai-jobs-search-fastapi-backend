@@ -210,11 +210,35 @@ class Plan(Base, TimestampMixin):
     # ── Feature flags: ["cv_base", "cv_adapted", "pipeline", "expand", "upskill"]
     features: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
+    # ── Usage caps (feature limits; read by /users/usage and outcome gating) ──
+    max_apply_count: Mapped[int] = mapped_column(default=1000)
+    max_prepare_count: Mapped[int] = mapped_column(default=1000)
+    max_rank_iterations: Mapped[int] = mapped_column(default=100)
+    max_track_count: Mapped[int] = mapped_column(default=1000)
+    expand_locked: Mapped[bool] = mapped_column(default=False)
+    upskill_locked: Mapped[bool] = mapped_column(default=False)
+
     is_active: Mapped[bool] = mapped_column(default=True)
     sort_order: Mapped[int] = mapped_column(default=10)
 
     def has_feature(self, feature: str) -> bool:
         return bool(self.features and feature in self.features)
+
+    @property
+    def limits(self) -> dict[str, int | bool]:
+        """Per-plan usage caps, mirroring the legacy ``tiers.py`` shape.
+
+        Falls back to the paid-style column defaults when a row is
+        incomplete (e.g. an unsaved Plan instance or a legacy DB row).
+        """
+        return {
+            "max_apply_count": self.max_apply_count if self.max_apply_count is not None else 1000,
+            "max_prepare_count": self.max_prepare_count if self.max_prepare_count is not None else 1000,
+            "max_rank_iterations": self.max_rank_iterations if self.max_rank_iterations is not None else 100,
+            "max_track_count": self.max_track_count if self.max_track_count is not None else 1000,
+            "expand_locked": bool(self.expand_locked),
+            "upskill_locked": bool(self.upskill_locked),
+        }
 
 
 class UserSubscription(Base, TimestampMixin):
