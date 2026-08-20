@@ -30,6 +30,9 @@ _DEFAULT_API_BASE: dict[str, str] = {
 # Providers that do not require an API key (local servers)
 _NO_KEY_PROVIDERS = {"lm_studio", "ollama"}
 
+# Providers whose list-models endpoint is OpenAI-compatible (GET /models)
+_OPENAI_COMPAT_PROVIDERS = {"openai", "nvidia_nim", "lm_studio", "custom"}
+
 # Timeout for live model-listing calls (seconds)
 _LIST_TIMEOUT = 10.0
 
@@ -69,6 +72,13 @@ async def _resolve_credential(
         raise ProviderAuthError(
             f"Provider '{provider}' requires an api_base to be configured. "
             f"Set it via PUT /admin/providers before listing models."
+        )
+
+    # Custom provider needs both api_key and api_base
+    if provider == "custom" and not api_base:
+        raise ProviderAuthError(
+            "Provider 'custom' requires an api_base (base URL) to be configured. "
+            "Set it via PUT /admin/providers before listing models."
         )
 
     # Remote providers require an API key
@@ -166,26 +176,39 @@ async def list_provider_models(
         ProviderAuthError: no API key configured (or no api_base for local providers).
         LLMError: the live call failed or could not be parsed.
     """
-    # Anthropic: static curated list, no credential needed for listing
-    if provider == "anthropic":
-        static = _static_models_for("anthropic") or []
-        return ModelListOut(
-            provider=provider,
-            source="static",
-            models=[ModelInfo(id=m, object=None, owned_by="anthropic", source="static") for m in static],
-        )
+    # Static-list providers (Anthropic, Gemini): curated model list, no HTTP call
+    from app.schemas.providers import KNOWN_PROVIDERS as _CATALOG
+    for info in _CATALOG:
+        if info.name == provider and info.static_listing:
+            models = info.static_models or []
+            return ModelListOut(
+                provider=provider,
+                source="static",
+                models=[ModelInfo(id=m, object=None, owned_by=provider, source="static") for m in models],
+            )
+
+    # Custom provider requires api_base
+    if provider == "custom" and not api_base:
+        # Try to resolve from stored config
+        if api_key is None:
+            api_key, api_base = await _resolve_credential(db, provider)
+        if not api_base:
+            raise ProviderAuthError(
+                "Provider 'custom' requires an api_base to be configured. "
+                "Set it via PUT /admin/providers before listing models."
+            )
 
     # Unknown provider?
-    if provider not in _DEFAULT_API_BASE:
+    if provider not in _DEFAULT_API_BASE and provider != "custom":
         raise NotFoundError(f"Unknown provider '{provider}'")
 
     if api_key is None and api_base is None:
         api_key, api_base = await _resolve_credential(db, provider)
-    base_url = api_base or _DEFAULT_API_BASE[provider]
+    base_url = api_base or _DEFAULT_API_BASE.get(provider, "")
 
     if provider == "ollama":
         models = await _list_ollama(base_url)
-    else:  # openai, nvidia_nim, lm_studio are OpenAI-compatible
+    else:  # openai, nvidia_nim, lm_studio, custom are OpenAI-compatible
         models = await _list_openai_compatible(base_url, api_key, provider)
 
     return ModelListOut(provider=provider, source="live", models=models)

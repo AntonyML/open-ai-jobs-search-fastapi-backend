@@ -30,8 +30,14 @@ def _build_kwargs(
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> dict[str, Any]:
-    """Build the kwargs dict for a LiteLLM completion call."""
-    kwargs: dict[str, Any] = {"model": f"{provider}/{model}"}
+    """Build the kwargs dict for a LiteLLM completion call.
+
+    For ``custom`` providers the LiteLLM model string uses the ``openai/``
+    prefix so the request is sent through an OpenAI-compatible gateway.
+    """
+    # Custom providers are OpenAI-compatible under the hood
+    litellm_provider = "openai" if provider == "custom" else provider
+    kwargs: dict[str, Any] = {"model": f"{litellm_provider}/{model}"}
 
     if api_key:
         kwargs["api_key"] = api_key
@@ -143,13 +149,21 @@ async def llm_completion(
             "anthropic": settings.anthropic_api_key,
             "openai": settings.openai_api_key,
             "nvidia_nim": settings.nvidia_nim_api_key,
+            "gemini": settings.gemini_api_key,
         }
         api_key = key_map.get(provider)
 
-    if api_key is None and provider not in ("lm_studio",):
+    if api_key is None and provider not in ("lm_studio", "custom"):
         raise ProviderAuthError(
             f"No API key configured for provider '{provider}'. "
             f"Set it in .env or store it encrypted in your user profile."
+        )
+
+    # Custom provider: use openai/ prefix for LiteLLM (OpenAI-compatible)
+    if provider == "custom" and not api_base:
+        raise ProviderAuthError(
+            "Provider 'custom' requires an api_base (base URL) to be configured. "
+            "Set it via PUT /admin/providers."
         )
 
     if api_base is None and provider == "lm_studio":

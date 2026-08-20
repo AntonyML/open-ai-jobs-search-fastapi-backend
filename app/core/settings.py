@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     nvidia_nim_api_key: str | None = None
+    gemini_api_key: str | None = None
     lm_studio_api_base: str = "http://localhost:1234/v1"
 
     # -- Auth / JWT --------------------------------------------

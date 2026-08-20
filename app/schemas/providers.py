@@ -73,6 +73,10 @@ class ProviderInfo(BaseModel):
         None,
         description="Curated static model list for providers without a public list-models endpoint (e.g. Anthropic).",
     )
+    static_listing: bool = Field(
+        default=False,
+        description="If True, the model list is always served from the static_models catalog (no live HTTP call).",
+    )
     web_search_models: list[str] = Field(
         default_factory=list,
         description="Models of this provider that support the web_search tool (used by the adapt-by-URL feature).",
@@ -182,7 +186,8 @@ KNOWN_PROVIDERS: list[ProviderInfo] = [
         display_name="Anthropic (Claude)",
         requires_api_key=True,
         supports_custom_base=False,
-        default_model="claude-sonnet-4-6",  # was: claude-sonnet-4-20250514 (deprecated snapshot format)
+        default_model="claude-sonnet-4-6",
+        static_listing=True,  # was: claude-sonnet-4-20250514 (deprecated snapshot format)
         static_models=[
             "claude-sonnet-4-5",
             "claude-opus-4-1",
@@ -238,6 +243,28 @@ KNOWN_PROVIDERS: list[ProviderInfo] = [
         supports_custom_base=True,
         default_model="llama3.2",  # fue: llama3.1 (3.2 es el tag actual en ollama hub)
         example_base_url="http://localhost:11434/v1",
+    ),
+    ProviderInfo(
+        name="gemini",
+        display_name="Google Gemini",
+        requires_api_key=True,
+        supports_custom_base=False,
+        default_model="gemini-2.5-flash",
+        static_listing=True,
+        static_models=[
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+        ],
+    ),
+    ProviderInfo(
+        name="custom",
+        display_name="Custom (OpenAI-Compatible)",
+        requires_api_key=True,
+        supports_custom_base=True,
+        default_model="",
+        example_base_url="https://api.example.com/v1",
     ),
 ]
 
