@@ -18,10 +18,6 @@ services:
     healthCheckPath: /api/v1/health
     autoDeploy: true
     envVars:
-      # Render inyecta PORT; el Dockerfile/entrypoint escuchan en 8000,
-      # así que se fija explícitamente para que coincidan.
-      - key: PORT
-        value: "8000"
 
       # ── App ──────────────────────────────────────────────────────
       - key: APP_ENV

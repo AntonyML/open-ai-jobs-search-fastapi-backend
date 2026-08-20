@@ -1,15 +1,17 @@
 """Verification router — POST /apply/{id}/verify to run the FASE 2 checklist.
 
 Runs the comprehensive verification checklist on a generated application's
-documents (CV + cover letter + compiled PDF). Stores the result in the
+documents (structured CV JSON + compiled PDF). Stores the result in the
 Application.verification_result JSONB column.
 
 The checklist combines:
-- 10 deterministic checks (name, email, role, company, dates, braces, placeholders, CID, contact, keywords)
+- 9 deterministic checks (name, email, role, company, dates, placeholders, CID, contact, keywords)
 - 1 LLM content quality check (fabricated claims, profile specificity, tone consistency)
 
 Non-blocking — the pipeline always completes regardless of failures.
 """
+
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -38,7 +40,7 @@ async def verify_application(
 ):
     """Run the verification checklist on a generated application's documents.
 
-    Returns the VerificationResult with all 10+ checks, their outcomes,
+    Returns the VerificationResult with all 9+ checks, their outcomes,
     and a human-readable summary. The result is persisted in the
     Application record so it can be viewed later without re-running.
 
@@ -85,13 +87,19 @@ async def verify_application(
         label="Application verification checklist",
     )
 
-    # 5. Run verification checklist
+    # 5. Run verification checklist on the structured CV JSON
+    cv_json = app.cv_json
+    if not cv_json and app.draft_cv_tex:
+        try:
+            cv_json = json.loads(app.draft_cv_tex)
+        except (ValueError, TypeError):
+            cv_json = None
+
     verify_result = await verification.run_verification_checklist(
         application=app,
         candidate=candidate,
         job_posting=job,
-        cv_latex=app.draft_cv_tex or "",
-        cover_letter_latex=app.draft_cover_letter_tex or "",
+        cv_json=cv_json,
         cv_pdf_path=app.cv_pdf_path,
         provider_config=provider_config,
         correlation_id=correlation_id,

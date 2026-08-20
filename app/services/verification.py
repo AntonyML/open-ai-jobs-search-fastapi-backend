@@ -1,7 +1,7 @@
 """Verification checklist service — FASE 2.
 
 Runs a comprehensive quality checklist on generated CV and cover letter
-documents. Combines 10 deterministic checks with 1 LLM-based content
+documents. Combines 9 deterministic checks with 1 LLM-based content
 quality check.
 
 Architecture decision:
@@ -15,11 +15,14 @@ Architecture decision:
   decide whether to re-run /apply with improved settings.
 - PDF checks use the existing ats_check service (FASE 3) to avoid
   duplicating PDF extraction logic.
+- All content checks operate on the STRUCTURED CV JSON
+  (``applications.cv_json``), the source of truth for verification.
 """
 
 from __future__ import annotations
 
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,8 +47,7 @@ async def run_verification_checklist(
         application: Application,
         candidate: CandidateProfile | None,
         job_posting: JobPosting,
-        cv_latex: str | None = None,
-        cover_letter_latex: str | None = None,
+        cv_json: dict[str, Any] | None = None,
         cv_pdf_path: str | Path | None = None,
         provider_config: dict | None = None,
         correlation_id: str | None = None,
@@ -57,8 +59,7 @@ async def run_verification_checklist(
         application: The Application record (for context and storage).
         candidate: The candidate profile (ground truth for checks).
         job_posting: The job posting being applied to.
-        cv_latex: The LaTeX source of the CV (reads from DB if None).
-        cover_letter_latex: The LaTeX source of the cover letter.
+        cv_json: The structured CV JSON (reads from DB if None).
         cv_pdf_path: Path to compiled CV PDF (optional, for ATS checks).
         provider_config: LLM provider config for the single LLM check.
         correlation_id: Ledger correlation id for credit usage accounting.
@@ -69,19 +70,22 @@ async def run_verification_checklist(
     """
     usage: dict[str, Any] = {}
     with bind_context(stage="verify"):
-        # Resolve from DB if not provided
-        if cv_latex is None and application.draft_cv_tex:
-            cv_latex = application.draft_cv_tex
-        if cv_latex is None and application.cv_tex_path:
+        # Resolve structured CV JSON from DB if not provided
+        if cv_json is None and application.cv_json:
+            cv_json = application.cv_json
+        if cv_json is None and application.draft_cv_tex:
+            # Legacy fallback: historical rows store the draft CV JSON in
+            # the misnamed `draft_cv_tex` column.
             try:
-                cv_latex = Path(application.cv_tex_path).read_text(encoding="utf-8")
-            except Exception:
-                pass
+                cv_json = json.loads(application.draft_cv_tex)
+            except (ValueError, TypeError):
+                cv_json = None
+        if not cv_json:
+            cv_json = {}
 
-        if cv_latex is None:
-            cv_latex = ""
-        if cover_letter_latex is None:
-            cover_letter_latex = ""
+        # Cover letter text is derived from the structured CV JSON
+        cover_letter = _extract_cover_letter_text(cv_json)
+
         if cv_pdf_path is None and application.cv_pdf_path:
             cv_pdf_path = application.cv_pdf_path
 
@@ -97,25 +101,22 @@ async def run_verification_checklist(
         candidate_profile_stmt = candidate.profile_statement if candidate else None
 
         # 1. Candidate name in CV
-        checks.append(_check_name_in_cv(cv_latex, candidate_name))
+        checks.append(_check_name_in_cv(cv_json, candidate_name))
 
         # 2. Email in CV
-        checks.append(_check_email_in_cv(cv_latex, candidate_email))
+        checks.append(_check_email_in_cv(cv_json, candidate_email))
 
         # 3. Job role in profile statement
-        checks.append(_check_role_in_profile(cv_latex, job_posting.title, candidate_profile_stmt))
+        checks.append(_check_role_in_profile(cv_json, job_posting.title, candidate_profile_stmt))
 
         # 4. Company name in cover letter
-        checks.append(_check_company_in_cover(cover_letter_latex, job_posting.company))
+        checks.append(_check_company_in_cover(cover_letter, job_posting.company))
 
         # 5. Consistent date format
-        checks.append(_check_date_format(cv_latex))
+        checks.append(_check_date_format(cv_json))
 
-        # 6. Balanced LaTeX braces
-        checks.append(_check_latex_balance(cv_latex))
-
-        # 7. No placeholders
-        checks.append(_check_no_placeholders(cv_latex, cover_letter_latex))
+        # 6. No placeholders
+        checks.append(_check_no_placeholders(cv_json))
 
         # ═══════════════════════════════════════════════════════════════
         # PASS 2: ATS parseability check (delegates to ats_check service)
@@ -147,7 +148,7 @@ async def run_verification_checklist(
         # ═══════════════════════════════════════════════════════════════
 
         llm_checks = await _run_llm_content_checks(
-            cv_latex, cover_letter_latex,
+            cv_json,
             job_posting, candidate,
             provider_config,
             usage=usage,
@@ -204,118 +205,123 @@ async def run_verification_checklist(
 # ── Individual deterministic checks ─────────────────────────────────
 
 
-def _check_name_in_cv(cv_latex: str, candidate_name: str | None) -> VerificationCheck:
-    """Check 1: Candidate name appears in CV LaTeX.
+def _check_name_in_cv(cv_json: dict[str, Any], candidate_name: str | None) -> VerificationCheck:
+    """Check 1: Candidate name appears in the CV header (first_name + last_name).
 
-    Searches for the candidate's full name (case-insensitive, word-boundary).
-    Falls back to checking first name if full name not found.
+    Compares the structured header fields against the candidate's full
+    name (case-insensitive). Falls back to first name only.
     """
-    if not candidate_name or not cv_latex:
+    if not candidate_name:
         return VerificationCheck(
             name="name_in_cv",
             label="Candidate name in CV",
             category="content",
             passed=False,
-            details="No candidate name available to check." if not candidate_name else "No CV text to check.",
+            details="No candidate name available to check.",
             suggestion="Ensure candidate name is set in profile before generating CV.",
         )
+    if not cv_json:
+        return VerificationCheck(
+            name="name_in_cv",
+            label="Candidate name in CV",
+            category="content",
+            passed=False,
+            details="No CV data to check.",
+            suggestion="Generate CV before running verification.",
+        )
 
-    # Case-insensitive word boundary search
-    name_escaped = re.escape(candidate_name)
-    pattern = re.compile(rf"\b{name_escaped}\b", re.IGNORECASE)
-    if pattern.search(cv_latex):
+    cv_first = (cv_json.get("first_name") or "").strip()
+    cv_last = (cv_json.get("last_name") or "").strip()
+    cv_full = f"{cv_first} {cv_last}".strip()
+
+    if candidate_name.lower() == cv_full.lower():
         return VerificationCheck(
             name="name_in_cv",
             label="Candidate name in CV",
             category="content",
             passed=True,
-            details=f"✅ '{candidate_name}' found in CV.",
+            details=f"✅ '{candidate_name}' found in CV header.",
         )
 
-    # Fallback: check first name only
+    # Fallback: first name only
     first_name = candidate_name.split()[0]
-    if first_name and len(first_name) > 1:
-        fn_pattern = re.compile(rf"\b{re.escape(first_name)}\b", re.IGNORECASE)
-        if fn_pattern.search(cv_latex):
-            return VerificationCheck(
-                name="name_in_cv",
-                label="Candidate name in CV",
-                category="content",
-                passed=True,
-                details=f"✅ First name '{first_name}' found in CV (full name not matched).",
-            )
+    if first_name and len(first_name) > 1 and cv_first.lower() == first_name.lower():
+        return VerificationCheck(
+            name="name_in_cv",
+            label="Candidate name in CV",
+            category="content",
+            passed=True,
+            details=f"✅ First name '{first_name}' found in CV header (full name not matched).",
+        )
 
     return VerificationCheck(
         name="name_in_cv",
         label="Candidate name in CV",
         category="content",
         passed=False,
-        details=f"❌ '{candidate_name}' not found in CV LaTeX.",
-        suggestion="Check the CV template — ensure the name placeholder was replaced correctly.",
+        details=f"❌ '{candidate_name}' not found in CV header (got '{cv_full}').",
+        suggestion="Check the CV template — ensure the name fields were filled correctly.",
     )
 
 
-def _check_email_in_cv(cv_latex: str, candidate_email: str | None) -> VerificationCheck:
-    """Check 2: Candidate email appears in CV LaTeX.
+def _check_email_in_cv(cv_json: dict[str, Any], candidate_email: str | None) -> VerificationCheck:
+    """Check 2: Candidate email appears in the CV header.
 
-    Searches for the exact email address (case-insensitive).
-    Falls back to general email regex pattern if no specific email known.
+    Compares the structured ``email`` field against the candidate's
+    email (case-insensitive). Passes with the CV email when no
+    candidate email is known.
     """
-    if not cv_latex:
+    if not cv_json:
         return VerificationCheck(
             name="email_in_cv",
             label="Email in CV",
             category="content",
             passed=False,
-            details="No CV text to check.",
+            details="No CV data to check.",
             suggestion="Generate CV before running verification.",
         )
 
-    if candidate_email:
-        # Exact match (case-insensitive)
-        escaped = re.escape(candidate_email)
-        # Escape the @ and . for regex while keeping the match literal
-        if re.search(escaped, cv_latex, re.IGNORECASE):
-            return VerificationCheck(
-                name="email_in_cv",
-                label="Email in CV",
-                category="content",
-                passed=True,
-                details=f"✅ '{candidate_email}' found in CV.",
-            )
-
-    # Fallback: general email pattern
-    email_pattern = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b", re.IGNORECASE)
-    if email_pattern.search(cv_latex):
-        found = email_pattern.search(cv_latex).group()
+    cv_email = (cv_json.get("email") or "").strip()
+    if not cv_email:
         return VerificationCheck(
             name="email_in_cv",
             label="Email in CV",
             category="content",
-            passed=True,
-            details=f"✅ Email found in CV: '{found}'"
-            + (f" (matches '{candidate_email}')" if candidate_email and candidate_email.lower() == found.lower() else "."),
+            passed=False,
+            details="❌ No email address found in CV header.",
+            suggestion="Check the CV template — ensure the email field was filled.",
+        )
+
+    if candidate_email and cv_email.lower() != candidate_email.lower():
+        return VerificationCheck(
+            name="email_in_cv",
+            label="Email in CV",
+            category="content",
+            passed=False,
+            details=f"❌ CV email '{cv_email}' does not match candidate '{candidate_email}'.",
+            suggestion="Check the CV template — ensure the email field was filled correctly.",
         )
 
     return VerificationCheck(
         name="email_in_cv",
         label="Email in CV",
         category="content",
-        passed=False,
-        details="❌ No email address found in CV LaTeX.",
-        suggestion="Check the CV template — ensure the email placeholder was replaced.",
+        passed=True,
+        details=f"✅ '{cv_email}' found in CV header."
+        + ("" if candidate_email else " (no candidate email to compare against)."),
     )
 
 
 def _check_role_in_profile(
-    cv_latex: str,
+    cv_json: dict[str, Any],
     job_title: str | None,
     profile_statement: str | None,
 ) -> VerificationCheck:
-    """Check 3: Job role appears in CV profile statement.
+    """Check 3: Job role appears in the CV profile statement.
 
     Searches for the job title (or its first significant word) in the
-    profile section of the CV. This catches generic profile statements
+    structured ``profile_statement`` field. Falls back to the candidate's
+    own profile statement. This catches generic profile statements
     that don't mention the specific role.
     """
     if not job_title:
@@ -327,26 +333,26 @@ def _check_role_in_profile(
             details="No job title available to check — skipping.",
         )
 
-    # Look for the job title in the CV text
+    # Look for the job title in the CV profile statement
     title_words = job_title.lower().split()
     # Remove common filler words
     filler = {"a", "an", "the", "and", "or", "in", "of", "for", "to", "with", "junior", "senior", "lead", "principal", "staff"}
     significant_words = [w for w in title_words if w not in filler]
 
-    cv_lower = cv_latex.lower() if cv_latex else ""
+    profile_text = ((cv_json.get("profile_statement") or "") if cv_json else "").lower()
 
     for word in significant_words:
         pattern = re.compile(rf"\b{re.escape(word)}\b", re.IGNORECASE)
-        if pattern.search(cv_lower):
+        if pattern.search(profile_text):
             return VerificationCheck(
                 name="role_in_profile",
                 label="Role in profile statement",
                 category="content",
                 passed=True,
-                details=f"✅ Job title keyword '{word}' found in CV.",
+                details=f"✅ Job title keyword '{word}' found in CV profile statement.",
             )
 
-    # Check profile statement as fallback
+    # Check candidate's own profile statement as fallback
     if profile_statement:
         ps_lower = profile_statement.lower()
         for word in significant_words:
@@ -356,7 +362,7 @@ def _check_role_in_profile(
                     label="Role in profile statement",
                     category="content",
                     passed=True,
-                    details=f"✅ Job title keyword '{word}' found in profile statement.",
+                    details=f"✅ Job title keyword '{word}' found in candidate profile statement.",
                 )
 
     return VerificationCheck(
@@ -364,12 +370,12 @@ def _check_role_in_profile(
         label="Role in profile statement",
         category="content",
         passed=False,
-        details=f"❌ No mention of role '{job_title}' in CV or profile statement.",
+        details=f"❌ No mention of role '{job_title}' in CV profile statement.",
         suggestion="Update the profile statement to reference the specific role being applied for.",
     )
 
 
-def _check_company_in_cover(cover_latex: str, company: str | None) -> VerificationCheck:
+def _check_company_in_cover(cover_text: str, company: str | None) -> VerificationCheck:
     """Check 4: Company name appears in cover letter.
 
     The cover letter MUST mention the target company by name.
@@ -383,7 +389,7 @@ def _check_company_in_cover(cover_latex: str, company: str | None) -> Verificati
             details="No company name available to check — skipping.",
         )
 
-    cover_lower = cover_latex.lower() if cover_latex else ""
+    cover_lower = cover_text.lower() if cover_text else ""
     company_lower = company.lower()
 
     # Try exact match first
@@ -419,39 +425,40 @@ def _check_company_in_cover(cover_latex: str, company: str | None) -> Verificati
     )
 
 
-def _check_date_format(cv_latex: str) -> VerificationCheck:
+def _check_date_format(cv_json: dict[str, Any]) -> VerificationCheck:
     """Check 5: Dates use a consistent format throughout the CV.
 
-    Accepts: YYYY–YYYY, YYYY-MM, MM/YYYY, "Month YYYY", "Present".
-    Flags inconsistent mixing of formats.
+    Validates the structured ``date_range`` fields of experience and
+    education entries. Accepts: "YYYY–YYYY", "YYYY-MM", "MM/YYYY",
+    "Month YYYY", "YYYY", "Present". Flags inconsistent mixing of formats.
     """
-    if not cv_latex:
+    if not cv_json:
         return VerificationCheck(
             name="date_format",
             label="Consistent date format",
             category="formatting",
             passed=False,
-            details="No CV text to check.",
+            details="No CV data to check.",
             suggestion="Generate CV before running verification.",
         )
 
-    # Find all date-like patterns
-    patterns = {
-        "range": re.compile(r"\b\d{4}–\d{4}\b"),  # em dash range
-        "range_hyphen": re.compile(r"\b\d{4}-\d{4}\b"),  # hyphen range
-        "month_year": re.compile(r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{4}\b", re.IGNORECASE),
-        "yyyy_mm": re.compile(r"\b\d{4}-\d{2}\b"),
-        "mm_yyyy": re.compile(r"\b\d{2}/\d{4}\b"),
-        "present": re.compile(r"\bPresent\b", re.IGNORECASE),
-    }
+    dates: list[str] = []
+    for entry in cv_json.get("experience") or []:
+        date_range = entry.get("date_range") or {}
+        if date_range.get("start"):
+            dates.append(str(date_range["start"]))
+        if date_range.get("end"):
+            dates.append(str(date_range["end"]))
+    for entry in cv_json.get("education") or []:
+        date_range = entry.get("date_range") or {}
+        if date_range.get("start"):
+            dates.append(str(date_range["start"]))
+        if date_range.get("end"):
+            dates.append(str(date_range["end"]))
+        if entry.get("period"):
+            dates.append(str(entry["period"]))
 
-    found_formats = {}
-    for fmt_name, pattern in patterns.items():
-        matches = pattern.findall(cv_latex)
-        if matches:
-            found_formats[fmt_name] = len(matches)
-
-    if not found_formats:
+    if not dates:
         return VerificationCheck(
             name="date_format",
             label="Consistent date format",
@@ -460,6 +467,12 @@ def _check_date_format(cv_latex: str) -> VerificationCheck:
             details="❌ No date patterns found in CV.",
             suggestion="Add dates to experience entries (e.g., '2020–2024' or 'Jan 2020').",
         )
+
+    found_formats: dict[str, int] = {}
+    for raw_date in dates:
+        fmt = _classify_date_format(raw_date)
+        if fmt:
+            found_formats[fmt] = found_formats.get(fmt, 0) + 1
 
     # More than 2 different formats is suspicious
     if len(found_formats) > 2:
@@ -483,51 +496,60 @@ def _check_date_format(cv_latex: str) -> VerificationCheck:
     )
 
 
-def _check_latex_balance(latex_text: str) -> VerificationCheck:
-    """Check 6: LaTeX has balanced curly braces.
-
-    Equal number of opening and closing curly braces is a minimum
-    requirement for valid LaTeX. Catches template rendering errors
-    that would cause compilation failures.
-    """
-    if not latex_text:
-        return VerificationCheck(
-            name="latex_balance",
-            label="Balanced LaTeX braces",
-            category="formatting",
-            passed=False,
-            details="No LaTeX text to check.",
-            suggestion="Generate LaTeX before running verification.",
-        )
-
-    opens = latex_text.count("{")
-    closes = latex_text.count("}")
-
-    if opens == closes:
-        return VerificationCheck(
-            name="latex_balance",
-            label="Balanced LaTeX braces",
-            category="formatting",
-            passed=True,
-            details=f"✅ Braces balanced: {opens} opening, {closes} closing.",
-        )
-
-    diff = opens - closes
-    return VerificationCheck(
-        name="latex_balance",
-        label="Balanced LaTeX braces",
-        category="formatting",
-        passed=False,
-        details=f"❌ Braces imbalanced: {opens} opening, {closes} closing (difference: {diff:+d}).",
-        suggestion="Check the LaTeX template for missing or extra curly braces.",
-    )
+def _classify_date_format(raw_date: str) -> str | None:
+    """Classify a single date string into a format family (or None)."""
+    value = raw_date.strip()
+    if not value:
+        return None
+    if "–" in value or (value.count("-") >= 2 and re.fullmatch(r"\d{4}[-–]\d{4}", value)):
+        return "range"
+    if re.fullmatch(r"\d{4}-\d{2}", value):
+        return "yyyy_mm"
+    if re.fullmatch(r"\d{2}/\d{4}", value):
+        return "mm_yyyy"
+    if re.fullmatch(r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{4}", value, re.IGNORECASE):
+        return "month_year"
+    if re.fullmatch(r"\d{4}", value):
+        return "yyyy"
+    if re.fullmatch(r"present", value, re.IGNORECASE):
+        return "present"
+    return None
 
 
-def _check_no_placeholders(cv_latex: str, cover_latex: str) -> VerificationCheck:
-    """Check 7: No placeholder tokens remain in the final documents.
+def _collect_strings(value: Any) -> list[str]:
+    """Recursively collect all string values from a JSON-like structure."""
+    out: list[str] = []
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            out.extend(_collect_strings(v))
+    elif isinstance(value, list):
+        for v in value:
+            out.extend(_collect_strings(v))
+    return out
 
-    Catches tokens like [YOUR_NAME], [COMPANY], [EMAIL], [PHONE] that
-    should have been replaced by the template renderer.
+
+def _extract_cover_letter_text(cv_json: dict[str, Any]) -> str:
+    """Flatten the structured cover letter object into a single text string."""
+    cl = cv_json.get("cover_letter") if cv_json else None
+    if not isinstance(cl, dict):
+        return ""
+    parts = [
+        cl.get("opening_paragraph"),
+        *[p for p in (cl.get("body_paragraphs") or []) if isinstance(p, str)],
+        cl.get("company_connection_paragraph"),
+        cl.get("closing_paragraph"),
+    ]
+    return "\n".join(str(p) for p in parts if p)
+
+
+def _check_no_placeholders(cv_json: dict[str, Any]) -> VerificationCheck:
+    """Check 6: No placeholder tokens remain in the final documents.
+
+    Scans every string in the structured CV JSON (including the cover
+    letter) for tokens like [YOUR_NAME], [COMPANY], [EMAIL], [PHONE]
+    that should have been replaced by the template renderer.
     """
     placeholder_patterns = [
         r"\[YOUR[_ ]?NAME\]",
@@ -544,7 +566,8 @@ def _check_no_placeholders(cv_latex: str, cover_latex: str) -> VerificationCheck
         r"\[Connection paragraph",
     ]
 
-    both_text = f"{cv_latex}\n{cover_latex}" if cover_latex else cv_latex
+    texts = _collect_strings(cv_json) if cv_json else []
+    both_text = "\n".join(texts)
     if not both_text:
         return VerificationCheck(
             name="no_placeholders",
@@ -613,7 +636,7 @@ def _check_cid_markers(ats: ATSResult | None) -> VerificationCheck:
         category="ats",
         passed=False,
         details="❌ (cid:*) glyph markers detected — ATS systems will fail to extract text.",
-        suggestion="Re-embed fonts or use a different LaTeX template that embeds fonts correctly.",
+        suggestion="Re-embed fonts or use a different CV template that embeds fonts correctly.",
     )
 
 
@@ -741,14 +764,15 @@ Return structured JSON with the following fields:
 
 
 async def _run_llm_content_checks(
-    cv_latex: str,
-    cover_latex: str,
+    cv_json: dict[str, Any],
     job_posting: JobPosting,
     candidate: CandidateProfile | None,
     provider_config: dict | None = None,
     usage: dict[str, Any] | None = None,
 ) -> list[VerificationCheck]:
     """Run LLM-based content quality checks (single call).
+
+    Receives the structured CV JSON (serialized into the prompt).
 
     Returns up to 3 VerificationCheck objects:
     - fabricated_claims: Whether any fabricated claims were detected
@@ -762,6 +786,9 @@ async def _run_llm_content_checks(
 
     system_prompt = LLM_CONTENT_CHECK_PROMPT
 
+    cv_text = json.dumps(cv_json, ensure_ascii=False, indent=2) if cv_json else "(no content)"
+    cover_text = _extract_cover_letter_text(cv_json)
+
     user_prompt = f"""\
 CANDIDATE PROFILE (ground truth):
 {candidate_summary}
@@ -771,11 +798,11 @@ Title: {job_posting.title}
 Company: {job_posting.company}
 Requirements: {', '.join(job_posting.requirements[:8]) if job_posting.requirements else 'N/A'}
 
-CV DOCUMENT (LaTeX, first 4000 chars):
-{cv_latex[:4000] if cv_latex else '(no content)'}
+CV DOCUMENT (JSON, first 4000 chars):
+{cv_text[:4000]}
 
-COVER LETTER (LaTeX, first 3000 chars):
-{cover_latex[:3000] if cover_latex else '(no content)'}
+COVER LETTER (text, first 3000 chars):
+{cover_text[:3000] if cover_text else '(no content)'}
 
 Evaluate these documents for fabricated claims, profile specificity, and tone consistency.
 """

@@ -1,7 +1,7 @@
 """Pydantic schemas for the ATS parseability check.
 
 ATS (Applicant Tracking System) compatibility verification happens after
-LaTeX compilation. It checks whether the generated PDF would pass through
+PDF compilation. It checks whether the generated PDF would pass through
 automated parsing systems without losing critical information.
 
 100% deterministic — no LLM calls.
@@ -14,7 +14,7 @@ class ATSResult(BaseModel):
     """Result of an ATS parseability check on a compiled PDF.
 
     All checks are deterministic (no LLM calls). The ATS check runs
-    after LaTeX compilation and before the application is marked complete.
+    after PDF compilation and before the application is marked complete.
 
     Attributes:
         raw_text: Full text extracted from PDF via pdftotext -layout.

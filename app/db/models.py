@@ -784,6 +784,8 @@ class Application(Base, TimestampMixin):
     addressed_red_flags: Mapped[list[str] | None] = mapped_column(FlexJSON)
 
     # ── Generated files ───────────────────────────────────────
+    # DEPRECATED: legacy LaTeX-era columns, no longer written by the
+    # Typst pipeline. Kept for historical rows; do not remove without migration.
     cv_tex_path: Mapped[str | None] = mapped_column(String(500))
     cv_pdf_path: Mapped[str | None] = mapped_column(String(500))
     cover_letter_tex_path: Mapped[str | None] = mapped_column(String(500))
@@ -800,9 +802,15 @@ class Application(Base, TimestampMixin):
         String(20), default="draft",
         comment="draft → reviewed → revised → compiled → verified",
     )
-    # Draft LaTeX content (pre-review, for audit trail)
+    # DEPRECATED: misnamed legacy columns. They store the DRAFT CV/cover JSON
+    # (json.dumps of the CV model), NOT LaTeX. Kept for historical rows and as
+    # verification fallback; do not remove without migration.
     draft_cv_tex: Mapped[str | None] = mapped_column(Text, comment="First draft CV LaTeX before review")
     draft_cover_letter_tex: Mapped[str | None] = mapped_column(Text, comment="First draft cover letter LaTeX before review")
+    # Final structured CV JSON (post-revision) — source of truth for verification
+    cv_json: Mapped[dict[str, Any] | None] = mapped_column(
+        FlexJSON, comment="Final structured CV JSON (post-revision) — source of truth for verification"
+    )
     # Reviewer feedback (JSON)
     review_feedback: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
     review_issues: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)

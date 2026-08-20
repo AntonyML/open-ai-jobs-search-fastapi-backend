@@ -1,18 +1,18 @@
 """Tests for FASE 2 — Verification Checklist service.
 
 Tests cover:
-- All 7 deterministic content checks
+- All 6 deterministic content checks (on structured CV JSON)
 - ATS-based checks (CID, contact, keywords)
 - LLM content quality checks (with mocked LLM)
 - Full integration test via run_verification_checklist
-- Edge cases: None values, empty strings, missing data
+- Edge cases: None values, empty dicts, missing data
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -61,26 +61,37 @@ def sample_job():
 
 
 @pytest.fixture
-def sample_application(sample_candidate, sample_job):
-    cv_latex = (
-        "\\begin{document}\n"
-        "\\name{Jane Doe}\n"
-        "\\email{jane.doe@example.com}\n"
-        "\\section{Profile}\n"
-        "Senior ML Engineer with expertise in Python and PyTorch.\n"
-        "\\section{Experience}\n"
-        "ML Engineer at Acme Corp — 2020–2024\n"
-        "\\end{document}"
-    )
+def sample_cv_json():
+    """Structured CV JSON matching the app.schemas.cv.CV shape."""
+    return {
+        "first_name": "Jane",
+        "last_name": "Doe",
+        "email": "jane.doe@example.com",
+        "phone": "+45 12345678",
+        "profile_statement": "Senior ML Engineer with expertise in Python and PyTorch.",
+        "experience": [
+            {
+                "title": "ML Engineer",
+                "company": "Acme Corp",
+                "date_range": {"start": "2020-01", "end": "2024-12"},
+                "bullets": ["Built ML pipelines processing 1M events/day."],
+            }
+        ],
+        "cover_letter": {
+            "opening_paragraph": "Dear TechCorp Hiring Team,",
+            "body_paragraphs": [
+                "I am writing to apply for the Senior ML Engineer position.",
+                "At Acme Corp, I built ML pipelines processing 1M events/day.",
+                "TechCorp's mission in AI aligns with my career goals.",
+            ],
+            "company_connection_paragraph": "TechCorp's mission in AI aligns with my career goals.",
+            "closing_paragraph": "Sincerely, Jane Doe",
+        },
+    }
 
-    cover_latex = (
-        "Dear TechCorp Hiring Team,\n"
-        "I am writing to apply for the Senior ML Engineer position.\n"
-        "At Acme Corp, I built ML pipelines processing 1M events/day.\n"
-        "TechCorp's mission in AI aligns with my career goals.\n"
-        "Sincerely,\nJane Doe"
-    )
 
+@pytest.fixture
+def sample_application(sample_cv_json):
     return Application(
         id="app-1",
         user_id="user-1",
@@ -88,8 +99,7 @@ def sample_application(sample_candidate, sample_job):
         rank_evaluation_id="eval-1",
         cv_tex_path=None,
         cv_pdf_path="/tmp/test_cv.pdf",
-        draft_cv_tex=cv_latex,
-        draft_cover_letter_tex=cover_latex,
+        cv_json=sample_cv_json,
         cv_compiled=True,
         cover_letter_compiled=True,
         stage="compiled",
@@ -122,81 +132,85 @@ def sample_ats_pass():
 
 class TestCheckNameInCV:
     def test_name_found(self):
-        result = verification._check_name_in_cv("Jane Doe — Senior ML Engineer", "Jane Doe")
+        result = verification._check_name_in_cv({"first_name": "Jane", "last_name": "Doe"}, "Jane Doe")
         assert result.passed is True
         assert "Jane Doe" in result.details
 
     def test_name_not_found(self):
-        result = verification._check_name_in_cv("John Smith — Engineer", "Jane Doe")
+        result = verification._check_name_in_cv({"first_name": "John", "last_name": "Smith"}, "Jane Doe")
         assert result.passed is False
         assert "not found" in result.details.lower()
 
     def test_empty_cv(self):
-        result = verification._check_name_in_cv("", "Jane Doe")
+        result = verification._check_name_in_cv({}, "Jane Doe")
         assert result.passed is False
 
     def test_no_candidate_name(self):
-        result = verification._check_name_in_cv("Some CV text", None)
+        result = verification._check_name_in_cv({"first_name": "Jane", "last_name": "Doe"}, None)
         assert result.passed is False
 
     def test_case_insensitive(self):
-        result = verification._check_name_in_cv("JANE DOE — Senior ML Engineer", "jane doe")
+        result = verification._check_name_in_cv({"first_name": "JANE", "last_name": "DOE"}, "jane doe")
         assert result.passed is True
 
     def test_first_name_fallback(self):
-        """When full name not found, checks first name as fallback."""
-        result = verification._check_name_in_cv("Jane — Senior ML Engineer", "Jane Doe")
+        """When full name not matched, checks first name as fallback."""
+        result = verification._check_name_in_cv({"first_name": "Jane", "last_name": ""}, "Jane Doe")
         assert result.passed is True
         assert "First name" in result.details
 
 
 class TestCheckEmailInCV:
     def test_email_found(self):
-        result = verification._check_email_in_cv("Contact: jane@example.com", "jane@example.com")
+        result = verification._check_email_in_cv({"email": "jane@example.com"}, "jane@example.com")
         assert result.passed is True
 
-    def test_email_not_found(self):
-        result = verification._check_email_in_cv("No contact info", "jane@example.com")
+    def test_email_mismatch(self):
+        result = verification._check_email_in_cv({"email": "other@example.com"}, "jane@example.com")
         assert result.passed is False
 
-    def test_fallback_general_pattern(self):
-        """When no specific email given, uses general email regex."""
-        result = verification._check_email_in_cv("Email: someone@example.com", None)
+    def test_no_candidate_email(self):
+        """When no candidate email given, CV email alone passes."""
+        result = verification._check_email_in_cv({"email": "someone@example.com"}, None)
         assert result.passed is True
 
     def test_empty_cv(self):
-        result = verification._check_email_in_cv("", "jane@example.com")
+        result = verification._check_email_in_cv({}, "jane@example.com")
+        assert result.passed is False
+
+    def test_missing_email_field(self):
+        result = verification._check_email_in_cv({"first_name": "Jane"}, "jane@example.com")
         assert result.passed is False
 
 
 class TestCheckRoleInProfile:
     def test_role_found_in_cv(self):
         result = verification._check_role_in_profile(
-            "Senior ML Engineer with experience.", "Senior ML Engineer", None
+            {"profile_statement": "Senior ML Engineer with experience."}, "Senior ML Engineer", None
         )
         assert result.passed is True
 
     def test_role_not_found(self):
         result = verification._check_role_in_profile(
-            "Data Scientist with experience.", "Senior ML Engineer", None
+            {"profile_statement": "Data Scientist with experience."}, "Senior ML Engineer", None
         )
         assert result.passed is False
 
-    def test_role_found_in_profile_statement(self):
+    def test_role_found_in_candidate_profile_statement(self):
         result = verification._check_role_in_profile(
-            "Generic CV text.", "Senior ML Engineer",
+            {"profile_statement": "Generic CV text."}, "Senior ML Engineer",
             "I am a Senior ML Engineer with 5+ years experience.",
         )
         assert result.passed is True
 
     def test_no_job_title(self):
-        result = verification._check_role_in_profile("Some text", None, "profile")
+        result = verification._check_role_in_profile({"profile_statement": "Some text"}, None, "profile")
         assert result.passed is True  # Skipped gracefully
 
     def test_single_keyword_match(self):
         """Matches on a significant word from the job title."""
         result = verification._check_role_in_profile(
-            "I love ML engineering.", "Senior ML Engineer", None
+            {"profile_statement": "I love ML engineering."}, "Senior ML Engineer", None
         )
         assert result.passed is True
 
@@ -231,62 +245,70 @@ class TestCheckCompanyInCover:
 
 class TestCheckDateFormat:
     def test_consistent_range(self):
-        result = verification._check_date_format("Experience: 2020–2024")
+        cv = {"experience": [{"date_range": {"start": "2020-01", "end": "2024-12"}}]}
+        result = verification._check_date_format(cv)
         assert result.passed is True
 
     def test_consistent_month_year(self):
-        result = verification._check_date_format("Experience: Jan 2020 – Present")
+        cv = {"experience": [{"date_range": {"start": "Jan 2020", "end": "Present"}}]}
+        result = verification._check_date_format(cv)
         assert result.passed is True
 
     def test_too_many_formats(self):
-        result = verification._check_date_format("2020–2024 and Jan 2020 and 2020-03 and 03/2020")
+        cv = {"experience": [
+            {"date_range": {"start": "2020–2024", "end": None}},
+            {"date_range": {"start": "Jan 2020", "end": None}},
+            {"date_range": {"start": "2020-03", "end": None}},
+            {"date_range": {"start": "03/2020", "end": None}},
+        ]}
+        result = verification._check_date_format(cv)
         assert result.passed is False
         assert "inconsistent" in result.details.lower() or "different" in result.details.lower()
 
     def test_no_dates(self):
-        result = verification._check_date_format("No dates in this document.")
+        cv = {"experience": [{"title": "Engineer", "date_range": {}}]}
+        result = verification._check_date_format(cv)
         assert result.passed is False
 
     def test_empty_cv(self):
-        result = verification._check_date_format("")
-        assert result.passed is False
-
-
-class TestCheckLatexBalance:
-    def test_balanced(self):
-        result = verification._check_latex_balance("\\begin{document}\\end{document}")
-        assert result.passed is True
-
-    def test_unbalanced_more_opens(self):
-        result = verification._check_latex_balance("\\begin{document}{")
-        assert result.passed is False
-
-    def test_unbalanced_more_closes(self):
-        result = verification._check_latex_balance("\\begin{document}}\\end{document}")
-        assert result.passed is False
-
-    def test_empty(self):
-        result = verification._check_latex_balance("")
+        result = verification._check_date_format({})
         assert result.passed is False
 
 
 class TestCheckNoPlaceholders:
     def test_no_placeholders(self):
-        result = verification._check_no_placeholders("Jane Doe — Engineer", "Dear Hiring Team,")
+        cv = {
+            "first_name": "Jane",
+            "experience": [{"bullets": ["Built things."]}],
+            "cover_letter": {"opening_paragraph": "Dear Hiring Team,"},
+        }
+        result = verification._check_no_placeholders(cv)
         assert result.passed is True
 
     def test_has_placeholder_in_cv(self):
-        result = verification._check_no_placeholders("Name: [YOUR_NAME]", "")
+        cv = {"first_name": "[YOUR_NAME]", "last_name": "Doe"}
+        result = verification._check_no_placeholders(cv)
         assert result.passed is False
         assert "placeholder" in result.details.lower()
 
     def test_has_placeholder_in_cover(self):
-        result = verification._check_no_placeholders("", "Dear [Hiring Manager")
+        cv = {"cover_letter": {"opening_paragraph": "Dear [Hiring Manager"}}
+        result = verification._check_no_placeholders(cv)
         assert result.passed is False
 
-    def test_empty_both(self):
-        result = verification._check_no_placeholders("", "")
+    def test_empty_cv(self):
+        result = verification._check_no_placeholders({})
         assert result.passed is False
+
+    def test_known_tokens(self):
+        """All known placeholder patterns are detected."""
+        cv = {
+            "profile_statement": "[YOUR_NAME] [YOUR_EMAIL] [First] [Last] [COMPANY] [PHONE]",
+            "experience": [{"bullets": ["++XX"]}],
+        }
+        result = verification._check_no_placeholders(cv)
+        assert result.passed is False
+        assert "placeholder" in result.details.lower()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -359,7 +381,7 @@ class TestCheckKeywordCoverage:
 
 
 @pytest.mark.asyncio
-async def test_llm_content_checks_pass(sample_candidate, sample_job):
+async def test_llm_content_checks_pass(sample_cv_json, sample_candidate, sample_job):
     """LLM content checks pass when no issues detected."""
     with patch("app.services.verification.llm_completion_structured") as mock_llm:
         mock_llm.return_value = LlmContentCheckOutput(
@@ -372,8 +394,7 @@ async def test_llm_content_checks_pass(sample_candidate, sample_job):
         )
 
         checks = await verification._run_llm_content_checks(
-            cv_latex="\\name{Jane Doe}",
-            cover_latex="Dear TechCorp,",
+            cv_json=sample_cv_json,
             job_posting=sample_job,
             candidate=sample_candidate,
         )
@@ -399,8 +420,7 @@ async def test_llm_content_checks_fabrications(sample_candidate, sample_job):
         )
 
         checks = await verification._run_llm_content_checks(
-            cv_latex="Led a team of 10 engineers.",
-            cover_latex="",
+            cv_json={"profile_statement": "Led a team of 10 engineers."},
             job_posting=sample_job,
             candidate=sample_candidate,
         )
@@ -412,14 +432,13 @@ async def test_llm_content_checks_fabrications(sample_candidate, sample_job):
 
 
 @pytest.mark.asyncio
-async def test_llm_content_checks_llm_failure(sample_candidate, sample_job):
+async def test_llm_content_checks_llm_failure(sample_cv_json, sample_candidate, sample_job):
     """When LLM fails, checks are skipped gracefully (pass with warning)."""
     with patch("app.services.verification.llm_completion_structured") as mock_llm:
         mock_llm.side_effect = Exception("LLM unavailable")
 
         checks = await verification._run_llm_content_checks(
-            cv_latex="Some CV.",
-            cover_latex="Some cover.",
+            cv_json=sample_cv_json,
             job_posting=sample_job,
             candidate=sample_candidate,
         )
@@ -436,7 +455,7 @@ async def test_llm_content_checks_llm_failure(sample_candidate, sample_job):
 
 @pytest.mark.asyncio
 async def test_run_verification_checklist_full_pass(
-    sample_application, sample_candidate, sample_job, sample_ats_pass
+    sample_application, sample_cv_json, sample_candidate, sample_job, sample_ats_pass
 ):
     """Full verification with all checks passing."""
     with patch("app.services.verification.ats_check.check_ats_parseability") as mock_ats:
@@ -465,8 +484,7 @@ async def test_run_verification_checklist_full_pass(
                 application=sample_application,
                 candidate=sample_candidate,
                 job_posting=sample_job,
-                cv_latex=sample_application.draft_cv_tex or "",
-                cover_letter_latex=sample_application.draft_cover_letter_tex or "",
+                cv_json=sample_cv_json,
                 cv_pdf_path=Path("/tmp/test_cv.pdf"),
             )
 
@@ -474,7 +492,7 @@ async def test_run_verification_checklist_full_pass(
     assert len(result.checks) > 0
     assert result.overall_pass is True
     assert len(result.failures) == 0
-    assert len(result.passes) >= 10
+    assert len(result.passes) >= 9
     assert result.application_id == "app-1"
 
 
@@ -483,9 +501,14 @@ async def test_run_verification_checklist_with_failures(
     sample_application, sample_candidate, sample_job
 ):
     """Verification with some failing checks."""
-    bad_cv = "\\begin{document}\\name{[YOUR_NAME]}\\end{document}"
-
-    bad_cover = "Dear Hiring Manager,"
+    bad_cv = {
+        "first_name": "[YOUR_NAME]",
+        "last_name": "Doe",
+        "email": "wrong@example.com",
+        "profile_statement": "Generic professional summary.",
+        "experience": [{"title": "Engineer", "date_range": {"start": "2020-01", "end": "2024-12"}}],
+        "cover_letter": {"opening_paragraph": "Dear Hiring Manager,"},
+    }
 
     bad_ats = ATSResult(
         raw_text="(cid:123) garbage text",
@@ -527,8 +550,7 @@ async def test_run_verification_checklist_with_failures(
                     application=sample_application,
                     candidate=sample_candidate,
                     job_posting=sample_job,
-                    cv_latex=bad_cv,
-                    cover_letter_latex=bad_cover,
+                    cv_json=bad_cv,
                     cv_pdf_path=Path("/tmp/test_cv.pdf"),
                 )
 
@@ -541,7 +563,7 @@ async def test_run_verification_checklist_with_failures(
 
 @pytest.mark.asyncio
 async def test_run_verification_checklist_no_pdf(
-    sample_application, sample_candidate, sample_job
+    sample_application, sample_cv_json, sample_candidate, sample_job
 ):
     """Verification runs gracefully without PDF (ATS checks skipped)."""
     with patch("app.services.verification._run_llm_content_checks") as mock_llm:
@@ -558,19 +580,18 @@ async def test_run_verification_checklist_no_pdf(
             application=sample_application,
             candidate=sample_candidate,
             job_posting=sample_job,
-            cv_latex=sample_application.draft_cv_tex or "",
-            cover_letter_latex=sample_application.draft_cover_letter_tex or "",
+            cv_json=sample_cv_json,
             cv_pdf_path=None,  # No PDF available
         )
 
-    assert len(result.checks) >= 10
+    assert len(result.checks) >= 9
     # ATS checks should pass with "skipped" messages
     assert result.overall_pass is True  # All ATS checks skipped gracefully
 
 
 @pytest.mark.asyncio
 async def test_run_verification_checklist_no_candidate(
-    sample_application, sample_job
+    sample_application, sample_cv_json, sample_job
 ):
     """Verification runs without candidate profile (some checks skipped)."""
     with patch("app.services.verification._run_llm_content_checks") as mock_llm:
@@ -587,12 +608,11 @@ async def test_run_verification_checklist_no_candidate(
             application=sample_application,
             candidate=None,
             job_posting=sample_job,
-            cv_latex=sample_application.draft_cv_tex or "",
-            cover_letter_latex=sample_application.draft_cover_letter_tex or "",
+            cv_json=sample_cv_json,
             cv_pdf_path=None,
         )
 
-    assert len(result.checks) >= 10
+    assert len(result.checks) >= 9
     assert result.application_id == "app-1"
 
 
@@ -601,24 +621,10 @@ async def test_run_verification_checklist_no_candidate(
 # ═══════════════════════════════════════════════════════════════════
 
 
-def test_check_no_placeholders_known_tokens():
-    """All known placeholder patterns are detected."""
-    text = "[YOUR_NAME] [YOUR_EMAIL] [First] [Last] [COMPANY] [PHONE]"
-    result = verification._check_no_placeholders(text, "")
-    assert result.passed is False
-    assert "placeholder" in result.details.lower()
-
-
-def test_check_latex_balance_large_document():
-    """Large documents with balanced braces pass."""
-    text = "{\\begin{itemize}\n\\item One\n\\item Two\n\\end{itemize}}" * 10
-    result = verification._check_latex_balance(text)
-    assert result.passed is True
-
-
 def test_check_date_format_present_accepted():
     """'Present' is accepted as a valid date token."""
-    result = verification._check_date_format("2020 – Present")
+    cv = {"experience": [{"date_range": {"start": "2020-01", "end": "Present"}}]}
+    result = verification._check_date_format(cv)
     assert result.passed is True
 
 
@@ -631,8 +637,7 @@ def test_check_keyword_coverage_edge_at_threshold():
 
 def test_check_email_in_cv_with_special_chars():
     """Email with + sign is found correctly."""
-    cv = "Contact: jane+work@example.com"
-    result = verification._check_email_in_cv(cv, "jane+work@example.com")
+    result = verification._check_email_in_cv({"email": "jane+work@example.com"}, "jane+work@example.com")
     assert result.passed is True
 
 
@@ -640,3 +645,30 @@ def test_check_company_in_cover_empty_string():
     """Empty company name is skipped gracefully."""
     result = verification._check_company_in_cover("Some cover letter.", "")
     assert result.passed is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_draft_cv_tex_fallback(sample_cv_json, sample_candidate, sample_job):
+    """Historical rows: verification falls back to JSON stored in draft_cv_tex."""
+    import json
+
+    app = Application(
+        id="app-legacy",
+        user_id="user-1",
+        job_posting_id="job-1",
+        rank_evaluation_id="eval-1",
+        cv_json=None,
+        draft_cv_tex=json.dumps(sample_cv_json),
+        stage="compiled",
+    )
+
+    with patch("app.services.verification._run_llm_content_checks") as mock_llm:
+        mock_llm.return_value = []
+        result = await verification.run_verification_checklist(
+            application=app,
+            candidate=sample_candidate,
+            job_posting=sample_job,
+            cv_pdf_path=None,
+        )
+
+    assert any(c.name == "name_in_cv" and c.passed for c in result.checks)

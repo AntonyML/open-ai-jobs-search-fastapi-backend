@@ -1,11 +1,11 @@
 """Pydantic schemas for the verification checklist.
 
-FASE 2 — Verification Checklist runs after LaTeX compilation to ensure
+FASE 2 — Verification Checklist runs after PDF compilation to ensure
 generated documents meet quality standards before being sent to recruiters.
 
 The checklist combines:
-- 10 deterministic checks (no LLM calls): name, email, role, company,
-  date format, LaTeX balance, placeholders, ATS parseability, keywords
+- 9 deterministic checks (no LLM calls): name, email, role, company,
+  date format, placeholders, ATS parseability, keywords
 - 1 LLM check: content quality (fabricated claims, tone consistency,
   role specificity)
 

@@ -68,9 +68,11 @@ class ApplicationOut(BaseModel):
     addressed_red_flags: list[AddressedRedFlag] | None = None
 
     # Generated files
-    cv_tex_path: str | None = None
+    # DEPRECATED: legacy LaTeX-era paths, no longer written by the Typst
+    # pipeline. Kept for backward compatibility with historical responses.
+    cv_tex_path: str | None = Field(None, deprecated=True)
     cv_pdf_path: str | None = None
-    cover_letter_tex_path: str | None = None
+    cover_letter_tex_path: str | None = Field(None, deprecated=True)
     cover_letter_pdf_path: str | None = None
 
     # Compilation status
@@ -160,7 +162,7 @@ class ReviewIssue(BaseModel):
 class ReviewFeedback(BaseModel):
     """Structured feedback from the reviewer agent.
 
-    The reviewer examines the full rendered LaTeX of both documents
+    The reviewer examines the full structured CV JSON of both documents
     and provides actionable feedback. Temperature 0 for reproducibility.
     """
 

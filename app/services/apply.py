@@ -589,7 +589,8 @@ async def execute_apply(
         if cv_cover is not None:
             cv_output.cv.cover_letter = cv_cover
 
-        # STAGE 2: PERSIST DRAFT
+        # STAGE 2: PERSIST DRAFT — legacy column `draft_cv_tex` stores the
+        # DRAFT CV as JSON (name is historical, it is NOT LaTeX).
         application.stage = "draft"
         application.draft_cv_tex = json.dumps(
             cv_output.cv.model_dump(), indent=2, ensure_ascii=False
@@ -639,6 +640,7 @@ async def execute_apply(
             cover_compiled = False
 
         # Store JSON CV for audit
+        application.cv_json = final_cv_dict
         application.tailored_experience = final_cv_dict.get("experience", [])
         application.incorporated_keywords = [
             kw.model_dump() for kw in (cv_output.metadata.incorporated_keywords or [])
