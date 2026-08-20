@@ -25,10 +25,11 @@ The script auto-detects the header row and column layout. For Excel files
 with paired count/index columns per category, it groups them automatically.
 """
 
-import json
-import sys
 import argparse
+import contextlib
+import json
 import re
+import sys
 from pathlib import Path
 
 try:
@@ -123,7 +124,7 @@ def parse_sheet(ws, sheet_label=None):
     # Identify data columns (everything that's not company/city)
     data_cols = []
     for i, h in enumerate(headers):
-        if i == company_col or i == city_col or not h:
+        if i in (company_col, city_col) or not h:
             continue
         data_cols.append((i, h))
 
@@ -144,35 +145,41 @@ def parse_sheet(ws, sheet_label=None):
                 # Use the header minus the count/index suffix as category name
                 cat_name = strip_type_patterns(col_header, COUNT_PATTERNS)
                 if not cat_name:
-                    cat_name = f"category_{len(categories)+1}"
+                    cat_name = f"category_{len(categories) + 1}"
                 else:
                     cat_name = cat_name.replace(" ", "_").replace("-", "_")
-                categories.append({
-                    "name": cat_name,
-                    "count_col": col_idx,
-                    "index_col": next_col_idx,
-                })
+                categories.append(
+                    {
+                        "name": cat_name,
+                        "count_col": col_idx,
+                        "index_col": next_col_idx,
+                    }
+                )
                 i += 2
                 continue
             elif col_type == "index" and next_col_type == "count":
                 cat_name = strip_type_patterns(col_header, INDEX_PATTERNS)
                 if not cat_name:
-                    cat_name = f"category_{len(categories)+1}"
+                    cat_name = f"category_{len(categories) + 1}"
                 else:
                     cat_name = cat_name.replace(" ", "_").replace("-", "_")
-                categories.append({
-                    "name": cat_name,
-                    "index_col": col_idx,
-                    "count_col": next_col_idx,
-                })
+                categories.append(
+                    {
+                        "name": cat_name,
+                        "index_col": col_idx,
+                        "count_col": next_col_idx,
+                    }
+                )
                 i += 2
                 continue
 
         # Single column - treat as a standalone value
-        categories.append({
-            "name": col_header.lower().replace(" ", "_"),
-            "value_col": col_idx,
-        })
+        categories.append(
+            {
+                "name": col_header.lower().replace(" ", "_"),
+                "value_col": col_idx,
+            }
+        )
         i += 1
 
     # Parse data rows
@@ -196,15 +203,11 @@ def parse_sheet(ws, sheet_label=None):
                 count_val = None
                 index_val = None
                 if cat["count_col"] < len(row) and row[cat["count_col"]] is not None:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         count_val = int(row[cat["count_col"]])
-                    except (ValueError, TypeError):
-                        pass
                 if cat["index_col"] < len(row) and row[cat["index_col"]] is not None:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         index_val = float(row[cat["index_col"]])
-                    except (ValueError, TypeError):
-                        pass
                 entry["categories"][cat_name] = {"count": count_val, "index": index_val}
             elif "value_col" in cat:
                 if cat["value_col"] < len(row) and row[cat["value_col"]] is not None:
@@ -221,24 +224,27 @@ def parse_sheet(ws, sheet_label=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Convert salary Excel data to JSON"
-    )
+    parser = argparse.ArgumentParser(description="Convert salary Excel data to JSON")
     parser.add_argument("excel_file", help="Path to the Excel file with salary data")
     parser.add_argument(
-        "--output", default=None,
+        "--output",
+        default=None,
         help="Output JSON file path (default: salary_data.json in repo root)",
     )
     parser.add_argument(
-        "--source", default=None,
+        "--source",
+        default=None,
         help="Name of the data source (e.g., 'Union Statistics 2025')",
     )
     parser.add_argument(
-        "--baseline", type=float, default=100,
+        "--baseline",
+        type=float,
+        default=100,
         help="Baseline value for index comparison (default: 100)",
     )
     parser.add_argument(
-        "--baseline-desc", default=None,
+        "--baseline-desc",
+        default=None,
         help="Description of what the baseline means (e.g., 'Index 100 = median salary')",
     )
     args = parser.parse_args()

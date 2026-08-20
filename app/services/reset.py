@@ -39,25 +39,25 @@ async def _get_profile_preview(db: AsyncSession, user_id: str) -> tuple[str, boo
     # Check CandidateProfile
     prof_res = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user_id))
     profile = prof_res.scalar_one_or_none()
-    
+
     if not profile:
         return "Profile data is already empty.", False
-        
+
     # Check BehavioralProfile
     bp_res = await db.execute(select(BehavioralProfile).where(BehavioralProfile.candidate_id == profile.id))
     bp = bp_res.scalar_one_or_none()
-    
+
     # Check StarExamples
     star_res = await db.execute(select(StarExample).where(StarExample.candidate_id == profile.id))
     stars = list(star_res.scalars().all())
-    
+
     lines = [
         "## Profile reset will clear:",
         f"- Candidate Profile (ID: {profile.id}) — [has content]",
         f"- Behavioral Profile — [{'has content' if bp else 'already empty'}]",
         f"- STAR Examples — [{len(stars)} example(s) found]",
         "",
-        "The CandidateProfile record will be deleted. Cascading foreign keys will automatically delete the associated BehavioralProfile and STAR Examples.",
+        "The CandidateProfile record will be deleted. Cascading foreign keys will automatically delete the associated BehavioralProfile and STAR Examples.",  # noqa: E501
     ]
     return "\n".join(lines), True
 
@@ -79,11 +79,11 @@ def _get_documents_preview() -> tuple[str, bool, list[Path]]:
         if not folder.exists():
             lines.append("  - (directory does not exist)")
             continue
-            
+
         items = list(folder.iterdir())
         files = [f for f in items if f.is_file() and f.name != "README.md"]
         dirs = [d for d in items if d.is_dir()]
-        
+
         if not files and not dirs:
             lines.append("  - (empty)")
         else:
@@ -123,7 +123,7 @@ async def _reset_workspace_guidance_files() -> list[str]:
                 if re.search(pattern, content, re.DOTALL):
                     new_content = re.sub(
                         pattern,
-                        "**Profile statement templates:**\n\n<!-- Run /setup to populate role-specific profile statements -->",
+                        "**Profile statement templates:**\n\n<!-- Run /setup to populate role-specific profile statements -->",  # noqa: E501
                         content,
                         flags=re.DOTALL,
                     )
@@ -143,13 +143,13 @@ async def _reset_workspace_guidance_files() -> list[str]:
                 # Remove ## Ready-Made STAR Examples and ## STAR Candidates
                 pattern = r"## Ready-Made STAR Examples.*?(?=##|$)"
                 if re.search(pattern, content, re.DOTALL):
-                    replacement = "## Ready-Made STAR Examples\n\n<!-- Run /setup to populate STAR examples from your actual experience -->\n\n"
+                    replacement = "## Ready-Made STAR Examples\n\n<!-- Run /setup to populate STAR examples from your actual experience -->\n\n"  # noqa: E501
                     new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
-                    
+
                     # Also try to remove STAR Candidates if they exist
                     pattern_candidates = r"## STAR Candidates \(Complete Manually\).*?(?=##|$)"
                     new_content = re.sub(pattern_candidates, "", new_content, flags=re.DOTALL)
-                    
+
                     loc.write_text(new_content, encoding="utf-8")
                     modified_files.append(f"07-interview-prep.md ({loc.parent.name})")
                     break
@@ -210,26 +210,18 @@ async def execute_reset(
         if has_profile_content:
             prof_res = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user_id))
             profile = prof_res.scalar_one()
-            
+
             # Delete associated BehavioralProfile if exists
-            await db.execute(
-                delete(BehavioralProfile).where(
-                    BehavioralProfile.candidate_id == profile.id
-                )
-            )
+            await db.execute(delete(BehavioralProfile).where(BehavioralProfile.candidate_id == profile.id))
 
             # Delete associated StarExamples if any exist
-            await db.execute(
-                delete(StarExample).where(
-                    StarExample.candidate_id == profile.id
-                )
-            )
+            await db.execute(delete(StarExample).where(StarExample.candidate_id == profile.id))
 
             # Delete CandidateProfile
             await db.delete(profile)
             await db.commit()
             cleared.append("Database: CandidateProfile, BehavioralProfile, STAR Examples")
-            
+
             # Reset workspace guidance files if found
             guidance_cleared = await _reset_workspace_guidance_files()
             cleared.extend(guidance_cleared)

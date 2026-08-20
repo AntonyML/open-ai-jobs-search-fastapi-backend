@@ -7,7 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_max_or_admin
 from app.db.models import Outcome
 from app.db.session import get_db as _get_db
-from app.schemas.outcome import CalibrationReport, OutcomeCreate, OutcomeOut, OutcomeSummaryOut, OutcomeUpdate, TrackerRowOut
+from app.schemas.outcome import (
+    CalibrationReport,
+    OutcomeCreate,
+    OutcomeOut,
+    OutcomeSummaryOut,
+    OutcomeUpdate,
+    TrackerRowOut,
+)
 from app.services import fit_calibration, outcome
 from app.services.plans import get_plan
 
@@ -42,7 +49,7 @@ async def create_outcome(
         if track_count >= max_track:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="You have reached the maximum number of tracked outcomes on your current plan. Upgrade to Premium for unlimited tracking.",
+                detail="You have reached the maximum number of tracked outcomes on your current plan. Upgrade to Premium for unlimited tracking.",  # noqa: E501
             )
     return await outcome.execute_outcome(db, user["sub"], payload)
 

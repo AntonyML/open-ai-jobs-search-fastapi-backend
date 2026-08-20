@@ -38,9 +38,7 @@ async def db_session():
 
 
 async def test_web_search_enabled_true_for_openai_gpt5(db_session):
-    await set_global_provider_config(
-        db_session, provider="openai", model="gpt-5", updated_by="admin-1"
-    )
+    await set_global_provider_config(db_session, provider="openai", model="gpt-5", updated_by="admin-1")
     await db_session.commit()
 
     out = await get_global_provider_config_out(db_session)
@@ -51,9 +49,7 @@ async def test_web_search_enabled_true_for_openai_gpt5(db_session):
 
 async def test_web_search_enabled_true_for_anthropic(db_session):
     """Claude exposes the native web_fetch server tool, so URL reading works."""
-    await set_global_provider_config(
-        db_session, provider="anthropic", model="claude-sonnet-4-5", updated_by="admin-1"
-    )
+    await set_global_provider_config(db_session, provider="anthropic", model="claude-sonnet-4-5", updated_by="admin-1")
     await db_session.commit()
 
     out = await get_global_provider_config_out(db_session)
@@ -70,23 +66,17 @@ async def test_web_search_enabled_false_when_unconfigured(db_session):
 
 async def test_web_search_enabled_computed_from_saved_model(db_session):
     """Saving a new model immediately updates the capability flag."""
-    await set_global_provider_config(
-        db_session, provider="openai", model="gpt-4o", updated_by="admin-1"
-    )
+    await set_global_provider_config(db_session, provider="openai", model="gpt-4o", updated_by="admin-1")
     await db_session.commit()
     assert (await get_global_provider_config_out(db_session))["web_search_enabled"] is False
 
-    await set_global_provider_config(
-        db_session, provider="openai", model="gpt-5-mini", updated_by="admin-1"
-    )
+    await set_global_provider_config(db_session, provider="openai", model="gpt-5-mini", updated_by="admin-1")
     await db_session.commit()
     assert (await get_global_provider_config_out(db_session))["web_search_enabled"] is True
 
 
 async def test_singleton_row_reused(db_session):
-    await set_global_provider_config(
-        db_session, provider="openai", model="gpt-5", updated_by="admin-1"
-    )
+    await set_global_provider_config(db_session, provider="openai", model="gpt-5", updated_by="admin-1")
     await db_session.commit()
 
     row = await db_session.get(GlobalProviderConfig, GLOBAL_PROVIDER_CONFIG_ID)

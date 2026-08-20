@@ -240,10 +240,7 @@ async def llm_completion_with_web_search(
 
     try:
         response = await responses(
-            input=[
-                {"role": m.get("role", "user"), "content": m.get("content", "")}
-                for m in messages
-            ],
+            input=[{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages],
             model=model_ref,
             api_key=api_key,
             api_base=api_base,
@@ -320,9 +317,7 @@ async def _anthropic_web_fetch_completion(
     message = response.choices[0].message
     content = message.content
     if isinstance(content, list):
-        content = "\n".join(
-            part.get("text", "") for part in content if isinstance(part, dict)
-        ).strip()
+        content = "\n".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
     if not content:
         raise LLMError("LLM returned empty response")
     _record_usage(response, usage)

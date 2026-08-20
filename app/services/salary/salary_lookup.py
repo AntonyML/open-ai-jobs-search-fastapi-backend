@@ -17,10 +17,10 @@ Usage:
     python salary_lookup.py --list-all
 """
 
+import argparse
 import json
 import re
-import argparse
-import unicodedata
+import sys
 from pathlib import Path
 
 from app.exceptions import NotFoundError
@@ -29,17 +29,32 @@ DATA_FILE = Path(__file__).parent / "salary_data.json"
 
 # Common Danish <-> anglicized spelling variants
 SPELLING_VARIANTS = {
-    "ø": "o", "æ": "ae", "å": "aa",
-    "ö": "o", "ä": "ae", "ü": "u",
+    "ø": "o",
+    "æ": "ae",
+    "å": "aa",
+    "ö": "o",
+    "ä": "ae",
+    "ü": "u",
 }
 
 # Legal suffixes and noise to strip when matching company names
 STRIP_PATTERNS = [
-    r"\ba/s\b", r"\baps\b", r"\bi/s\b", r"\bp/s\b", r"\bk/s\b",
-    r"\bivs\b", r"\bamba\b", r"\ba\.m\.b\.a\.\b",
-    r"\(vg\)", r"\(.*?\)",  # (VG) and other parentheticals
-    r"\bdanmark\b", r"\bdenmark\b", r"\bscandinavia\b", r"\bnordic\b",
-    r"\bgroup\b", r"\bholding\b",
+    r"\ba/s\b",
+    r"\baps\b",
+    r"\bi/s\b",
+    r"\bp/s\b",
+    r"\bk/s\b",
+    r"\bivs\b",
+    r"\bamba\b",
+    r"\ba\.m\.b\.a\.\b",
+    r"\(vg\)",
+    r"\(.*?\)",  # (VG) and other parentheticals
+    r"\bdanmark\b",
+    r"\bdenmark\b",
+    r"\bscandinavia\b",
+    r"\bnordic\b",
+    r"\bgroup\b",
+    r"\bholding\b",
     r",\s*.*$",  # everything after comma (sub-entities)
 ]
 
@@ -51,7 +66,7 @@ def load_data():
             "See tools/README_SALARY_TOOL.md for setup instructions. "
             "If you don't have salary data, the salary lookup step will be skipped during /apply."
         )
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
+    with open(DATA_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -192,11 +207,11 @@ def search_company(data, query, city=None):
 def format_entry(entry, metadata):
     """Format a single company entry for display."""
     lines = []
-    lines.append(f"\n{'='*60}")
+    lines.append(f"\n{'=' * 60}")
     lines.append(f"  {entry['company']}")
     if entry.get("city"):
         lines.append(f"  Location: {entry['city']}")
-    lines.append(f"{'='*60}")
+    lines.append(f"{'=' * 60}")
 
     # Get category data (everything except company/city fields)
     categories = entry.get("categories", {})
@@ -212,7 +227,7 @@ def format_entry(entry, metadata):
         baseline = metadata.get("index_baseline", 100)
 
         lines.append(f"  {'Category':<22} {'Count':>6} {index_label:>8}  {'vs Baseline':>10}")
-        lines.append(f"  {'-'*50}")
+        lines.append(f"  {'-' * 50}")
 
         for label, data in categories.items():
             display_label = label.replace("_", " ").title()
@@ -220,7 +235,7 @@ def format_entry(entry, metadata):
             index = data.get("index")
             if count is not None or index is not None:
                 count_str = str(count) if count is not None else "-"
-                if isinstance(index, (int, float)):
+                if isinstance(index, int | float):
                     index_str = f"{index:.1f}"
                     if baseline == 0:
                         diff_str = ""
@@ -236,7 +251,7 @@ def format_entry(entry, metadata):
                     diff_str = ""
                 lines.append(f"  {display_label:<22} {count_str:>6} {index_str:>8}  {diff_str:>10}")
 
-        lines.append(f"\n  * N/A = Too few employees to publish (privacy)")
+        lines.append("\n  * N/A = Too few employees to publish (privacy)")
         if metadata.get("baseline_description"):
             lines.append(f"  {metadata['baseline_description']}")
         else:
@@ -291,7 +306,7 @@ def main():
         sys.stdout.write(f"\nFound {len(results)} match(es) for '{args.company}':" + chr(10))
         for entry in results:
             sys.stdout.write(format_entry(entry, metadata) + chr(10))
-        sys.stdout.write( + chr(10))
+        sys.stdout.write(chr(10))
 
 
 if __name__ == "__main__":

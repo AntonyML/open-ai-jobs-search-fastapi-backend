@@ -7,7 +7,6 @@ the codebase.  Handlers are registered on the app in main.py.
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
-
 from app.core.i18n.locale import t as _t
 
 
@@ -109,8 +108,11 @@ class WebSearchUnavailableError(PreconditionError):
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     origin = request.headers.get("origin", "")
     from app.core.settings import get_settings
+
     settings = get_settings()
-    allow_origin = origin if origin in settings.cors_origins else (settings.cors_origins[0] if settings.cors_origins else "")
+    allow_origin = (
+        origin if origin in settings.cors_origins else (settings.cors_origins[0] if settings.cors_origins else "")
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.code, "message": exc.message},
@@ -134,16 +136,16 @@ def _json_safe(obj):
         return obj.decode("utf-8", errors="replace")
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_json_safe(v) for v in obj]
     return obj
 
 
 async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch Pydantic validation errors from FastAPI and normalise the shape."""
-    from app.core.i18n.locale import get_locale_from_request, t
-
     from fastapi.exceptions import RequestValidationError
+
+    from app.core.i18n.locale import get_locale_from_request, t
 
     if isinstance(exc, RequestValidationError):
         locale = get_locale_from_request(request)
@@ -158,6 +160,7 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
         )
     # Fallback — should not happen if registered correctly
     from app.core.i18n.locale import get_locale_from_request, t
+
     locale = get_locale_from_request(request)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

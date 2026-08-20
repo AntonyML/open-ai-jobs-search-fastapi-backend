@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Coroutine
+from collections.abc import Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +31,14 @@ class BackgroundTaskManager:
             return
         logger.info("Waiting for %d background tasks...", len(self._tasks))
         done, pending = await asyncio.wait(
-            self._tasks, timeout=_SHUTDOWN_TIMEOUT,
+            self._tasks,
+            timeout=_SHUTDOWN_TIMEOUT,
         )
         if pending:
             logger.warning(
                 "Cancelling %d background tasks that did not finish in %ds",
-                len(pending), _SHUTDOWN_TIMEOUT,
+                len(pending),
+                _SHUTDOWN_TIMEOUT,
             )
             for task in pending:
                 task.cancel()

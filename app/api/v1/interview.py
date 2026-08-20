@@ -1,14 +1,17 @@
 """Interview router — endpoints for interview preparation."""
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_locale, require_max_or_admin
-from app.core.i18n.locale import t
-from app.db.models import InterviewPrep
 from app.db.session import get_db as _get_db
-from app.schemas.interview import InterviewPrepOut, InterviewPrepRequest, InterviewPrepSummaryOut, MockInterviewRequest, MockInterviewResponse
+from app.schemas.interview import (
+    InterviewPrepOut,
+    InterviewPrepRequest,
+    InterviewPrepSummaryOut,
+    MockInterviewRequest,
+    MockInterviewResponse,
+)
 from app.services import interview
 from app.services.access_gate import enforce_action_gate
 
@@ -107,7 +110,7 @@ def _parse_transcript(raw: str | None) -> list[dict[str, str]]:
     for line in raw.strip().split("\n"):
         line = line.strip()
         if line.startswith("INTERVIEWER:"):
-            turns.append({"role": "interviewer", "content": line[len("INTERVIEWER:"):].strip()})
+            turns.append({"role": "interviewer", "content": line[len("INTERVIEWER:") :].strip()})
         elif line.startswith("CANDIDATE:"):
-            turns.append({"role": "candidate", "content": line[len("CANDIDATE:"):].strip()})
+            turns.append({"role": "candidate", "content": line[len("CANDIDATE:") :].strip()})
     return turns

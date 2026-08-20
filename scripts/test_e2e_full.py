@@ -1,13 +1,19 @@
 """Full end-to-end: search → select → rank with job_ids from ingested_jobs."""
-import asyncio, httpx, json, sys
+
+import asyncio
+import json
+
+import httpx
+
 
 async def main():
     client = httpx.AsyncClient(timeout=60)
 
     # 1. Login (API principal)
     print("=== 1. Login ===")
-    resp = await client.post("http://127.0.0.1:8000/api/v1/auth/login",
-        json={"email": "demo@example.com", "password": "demo1234"})
+    resp = await client.post(
+        "http://127.0.0.1:8000/api/v1/auth/login", json={"email": "demo@example.com", "password": "demo1234"}
+    )
     print(f"  Status: {resp.status_code}")
     data = resp.json()
     token = data.get("access_token")
@@ -19,9 +25,9 @@ async def main():
 
     # 2. Ensure ingested_jobs has data — trigger ingest if needed
     print("\n=== 2. Search for jobs ===")
-    resp = await client.post("http://127.0.0.1:8000/api/v1/jobs/search",
-        headers=headers,
-        json={"keywords": "developer", "limit": 10})
+    resp = await client.post(
+        "http://127.0.0.1:8000/api/v1/jobs/search", headers=headers, json={"keywords": "developer", "limit": 10}
+    )
     print(f"  Status: {resp.status_code}")
     search = resp.json()
     print(f"  Response: {json.dumps(search, indent=2)[:500]}")
@@ -30,8 +36,9 @@ async def main():
     if not jobs:
         # Trigger ingest via microservice
         print("\n=== 2b. No jobs found, triggering ingest ===")
-        resp = await client.post("http://127.0.0.1:8001/api/v1/ingest",
-            json={"category_id": "stem_cr", "keywords": "developer"})
+        resp = await client.post(
+            "http://127.0.0.1:8001/api/v1/ingest", json={"category_id": "stem_cr", "keywords": "developer"}
+        )
         ingest = resp.json()
         print(f"  Ingest: {ingest}")
         job_id = ingest.get("ingest_job_id")
@@ -44,9 +51,9 @@ async def main():
                 if status.get("status") == "done":
                     break
         # Retry search
-        resp = await client.post("http://127.0.0.1:8000/api/v1/jobs/search",
-            headers=headers,
-            json={"keywords": "developer", "limit": 10})
+        resp = await client.post(
+            "http://127.0.0.1:8000/api/v1/jobs/search", headers=headers, json={"keywords": "developer", "limit": 10}
+        )
         jobs = resp.json().get("jobs", [])
         print(f"  After ingest: {len(jobs)} jobs found")
 
@@ -59,9 +66,9 @@ async def main():
     selected_ids = [j["id"] for j in jobs[:2]]
     print(f"  Selected {len(selected_ids)} jobs: {selected_ids}")
 
-    resp = await client.post("http://127.0.0.1:8000/api/v1/rank/",
-        headers=headers,
-        json={"top_n": 5, "job_ids": selected_ids})
+    resp = await client.post(
+        "http://127.0.0.1:8000/api/v1/rank/", headers=headers, json={"top_n": 5, "job_ids": selected_ids}
+    )
     print(f"  Status: {resp.status_code}")
     rank = resp.json()
     print(f"  Response: {json.dumps(rank, indent=2)}")
@@ -84,13 +91,13 @@ async def main():
 
     # 4. Verify the imported jobs exist in job_postings
     print("\n=== 4. Verify jobs in job_postings ===")
-    from app.db.session import async_session_factory
-    from app.db.models import JobPosting
     from sqlalchemy import select
+
+    from app.db.models import JobPosting
+    from app.db.session import async_session_factory
+
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(JobPosting).where(JobPosting.id.in_(selected_ids))
-        )
+        result = await db.execute(select(JobPosting).where(JobPosting.id.in_(selected_ids)))
         imported = result.scalars().all()
         print(f"  Found {len(imported)} of {len(selected_ids)} imported JobPosting records")
         for jp in imported:
@@ -98,14 +105,16 @@ async def main():
 
     # 5. Check rank endpoint lists them
     print("\n=== 5. GET /rank/jobs ===")
-    resp = await client.get("http://127.0.0.1:8000/api/v1/rank/jobs",
-        headers=headers)
+    resp = await client.get("http://127.0.0.1:8000/api/v1/rank/jobs", headers=headers)
     ranked = resp.json()
     print(f"  {len(ranked)} ranked jobs returned:")
     for rj in ranked[:5]:
-        print(f"    - {rj['id'][:12]}... {rj['title'][:50]} | score={rj.get('rank_score')} | verdict={rj.get('rank_verdict')}")
+        print(
+            f"    - {rj['id'][:12]}... {rj['title'][:50]} | score={rj.get('rank_score')} | verdict={rj.get('rank_verdict')}"  # noqa: E501
+        )
 
     await client.aclose()
     print("\n=== ALL DONE ===")
+
 
 asyncio.run(main())

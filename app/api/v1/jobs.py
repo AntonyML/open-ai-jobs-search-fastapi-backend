@@ -5,11 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_max_or_admin
 from app.schemas.jobs import (
+    IngestStatusResponse,
     JobSearchRequest,
     JobSearchResponse,
-    IngestStatusResponse,
 )
-from app.services.job_search import search_jobs, get_ingest_status
+from app.services.job_search import get_ingest_status, search_jobs
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 

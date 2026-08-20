@@ -3,13 +3,10 @@
 Uses an in-memory SQLite database and mocks the LLM calls.
 """
 
-import asyncio
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import (
@@ -24,7 +21,6 @@ from app.db.models import (
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.services import interview
 
-
 # ── Fixtures ────────────────────────────────────────────────────────
 
 
@@ -34,6 +30,7 @@ async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with engine.begin() as conn:
         from app.db.models import Base
+
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -66,7 +63,12 @@ async def sample_candidate(db_session):
         employment_status="Employed",
         constraints="No relocation",
         education=[
-            {"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020", "key_topics": "ML, Distributed Systems"}
+            {
+                "degree": "MSc Computer Science",
+                "institution": "DTU",
+                "period": "2018-2020",
+                "key_topics": "ML, Distributed Systems",
+            }
         ],
         experience=[
             {
@@ -93,26 +95,30 @@ async def sample_candidate(db_session):
                 ],
             },
         ],
-        projects=[
-            {"name": "Open Source ML Library", "description": "Contributor to popular ML library"}
-        ],
+        projects=[{"name": "Open Source ML Library", "description": "Contributor to popular ML library"}],
         skills={
             "programming_ml": [
-                {"language": "Python", "proficiency": "Expert", "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"]},
+                {
+                    "language": "Python",
+                    "proficiency": "Expert",
+                    "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"],
+                },
                 {"language": "SQL", "proficiency": "Advanced", "frameworks": []},
             ],
             "domain_expertise": ["Machine Learning", "NLP", "Recommendation Systems"],
             "software_tools": ["Docker", "Kubernetes", "AWS", "Git"],
         },
         publications=[
-            {"authors": "Doe, J.", "year": "2021", "title": "Efficient Transformers", "journal": "NeurIPS", "doi": "10.xxxx/xxxx"}
+            {
+                "authors": "Doe, J.",
+                "year": "2021",
+                "title": "Efficient Transformers",
+                "journal": "NeurIPS",
+                "doi": "10.xxxx/xxxx",
+            }
         ],
-        awards=[
-            {"award": "Best Paper Award", "event": "ICML", "year": "2020"}
-        ],
-        references=[
-            {"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}
-        ],
+        awards=[{"award": "Best Paper Award", "event": "ICML", "year": "2020"}],
+        references=[{"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}],
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
@@ -140,7 +146,7 @@ async def sample_job(db_session, sample_candidate):
         url="https://linkedin.com/jobs/123",
         posting_date="2026-07-10",
         deadline="2026-08-10",
-        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",
+        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",  # noqa: E501
         requirements=[
             "5+ years ML engineering experience",
             "Expert in Python and PyTorch",
@@ -153,7 +159,7 @@ async def sample_job(db_session, sample_candidate):
         status="ranked",
         rank_score=83.0,
         rank_verdict="Strong Fit",
-        rank_date=datetime.now(timezone.utc),
+        rank_date=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.commit()
@@ -204,9 +210,9 @@ async def sample_application(db_session, sample_candidate, sample_job, sample_ev
                 "end_date": "Present",
                 "location": "Copenhagen",
                 "bullets": [
-                    "Accomplished 40% reduction in model inference latency, as measured by p99 latency, by implementing TensorRT optimization and batching",
-                    "Achieved processing of 1M+ events/day, measured by throughput metrics, by building scalable ML pipeline with PyTorch and Kubernetes",
-                    "Led team of 5 engineers to deliver real-time fraud detection system processing 10K transactions/sec with <50ms latency",
+                    "Accomplished 40% reduction in model inference latency, as measured by p99 latency, by implementing TensorRT optimization and batching",  # noqa: E501
+                    "Achieved processing of 1M+ events/day, measured by throughput metrics, by building scalable ML pipeline with PyTorch and Kubernetes",  # noqa: E501
+                    "Led team of 5 engineers to deliver real-time fraud detection system processing 10K transactions/sec with <50ms latency",  # noqa: E501
                 ],
             },
             {
@@ -216,14 +222,22 @@ async def sample_application(db_session, sample_candidate, sample_job, sample_ev
                 "end_date": "2019-12",
                 "location": "Aarhus",
                 "bullets": [
-                    "Increased recommendation click-through rate by 15%, measured via A/B test, by adding collaborative filtering signals to ranking model",
-                    "Published 2 papers at top conferences, demonstrating research impact, by conducting novel NLP research",
+                    "Increased recommendation click-through rate by 15%, measured via A/B test, by adding collaborative filtering signals to ranking model",  # noqa: E501
+                    "Published 2 papers at top conferences, demonstrating research impact, by conducting novel NLP research",  # noqa: E501
                 ],
             },
         ],
         incorporated_keywords=[
-            {"keyword": "Kubernetes", "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2", "original_context": "Required in job posting: Kubernetes"},
-            {"keyword": "AWS", "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2", "original_context": "Required in job posting: AWS"},
+            {
+                "keyword": "Kubernetes",
+                "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2",
+                "original_context": "Required in job posting: Kubernetes",
+            },
+            {
+                "keyword": "AWS",
+                "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2",
+                "original_context": "Required in job posting: AWS",
+            },
         ],
         addressed_red_flags=["Gap in employment 2017-2018"],
         cv_pdf_path="/tmp/cv.pdf",
@@ -252,8 +266,8 @@ async def sample_star_examples(db_session, sample_candidate):
             skill_demonstrated="ML Engineering",
             situation="Slow data pipeline processing 1M+ events/day with high latency",
             task="Reduce end-to-end latency by 50% while maintaining throughput",
-            action="Rewrote batch processing using PyTorch DataLoader with multiprocessing, implemented TensorRT optimization for inference, added Redis caching layer",
-            result="Achieved 40% latency reduction (p99 from 200ms to 120ms), maintained 1M+ events/day throughput, saved $50K/month in compute costs",
+            action="Rewrote batch processing using PyTorch DataLoader with multiprocessing, implemented TensorRT optimization for inference, added Redis caching layer",  # noqa: E501
+            result="Achieved 40% latency reduction (p99 from 200ms to 120ms), maintained 1M+ events/day throughput, saved $50K/month in compute costs",  # noqa: E501
             use_for=["technical challenge", "performance optimization", "ML engineering"],
         ),
         StarExample(
@@ -262,7 +276,7 @@ async def sample_star_examples(db_session, sample_candidate):
             skill_demonstrated="Leadership",
             situation="Team of 3 engineers struggling with delivery velocity and code quality",
             task="Improve team delivery and establish engineering best practices",
-            action="Introduced code review process, weekly tech talks, sprint planning with clear definitions of done, mentored junior engineers 1:1",
+            action="Introduced code review process, weekly tech talks, sprint planning with clear definitions of done, mentored junior engineers 1:1",  # noqa: E501
             result="Team velocity increased 30%, bug rate dropped 50%, 2 junior engineers promoted within 12 months",
             use_for=["leadership", "team management", "mentoring"],
         ),
@@ -272,8 +286,8 @@ async def sample_star_examples(db_session, sample_candidate):
             skill_demonstrated="ML Research",
             situation="Existing recommendation system had low click-through rate",
             task="Improve recommendation relevance and CTR",
-            action="Added collaborative filtering signals, implemented A/B testing framework, ran 5 experiments over 3 months",
-            result="Increased CTR by 15%, published 2 papers at top conferences, system deployed to production serving 10M+ users",
+            action="Added collaborative filtering signals, implemented A/B testing framework, ran 5 experiments over 3 months",  # noqa: E501
+            result="Increased CTR by 15%, published 2 papers at top conferences, system deployed to production serving 10M+ users",  # noqa: E501
             use_for=["technical challenge", "research", "A/B testing", "recommendation systems"],
         ),
     ]
@@ -294,7 +308,11 @@ def mock_company_research():
         values=["Innovation", "Transparency", "Customer obsession"],
         recent_news=[
             {"title": "TechCorp launches new AI platform", "url": "https://techcorp.com/news/1", "date": "2026-06-15"},
-            {"title": "TechCorp raises $50M Series B", "url": "https://techcrunch.com/2026/05/01", "date": "2026-05-01"},
+            {
+                "title": "TechCorp raises $50M Series B",
+                "url": "https://techcrunch.com/2026/05/01",
+                "date": "2026-05-01",
+            },
         ],
         products=["AI Platform", "MLOps Tools", "AutoML"],
         team_structure="Engineering org of 50, split into platform, ML, and product teams",
@@ -364,14 +382,14 @@ def mock_new_star_drafts():
                 question="Why TechCorp specifically?",
                 draft_situation="Interviewer asks about motivation for this specific company",
                 draft_task="Articulate genuine interest aligned with company mission and recent news",
-                draft_action="Reference TechCorp's mission to democratize AI, mention recent Series B and AI platform launch, connect to candidate's passion for production ML at scale",
+                draft_action="Reference TechCorp's mission to democratize AI, mention recent Series B and AI platform launch, connect to candidate's passion for production ML at scale",  # noqa: E501
                 draft_result="Demonstrates researched interest and alignment with company direction",
             ),
             interview.NewStarDraftOut(
                 question="What's your experience with Kubernetes and AWS?",
                 draft_situation="Job requires Kubernetes and AWS experience which are missing keywords",
                 draft_task="Honestly address gap while showing adjacent experience",
-                draft_action="Acknowledge no production K8s/AWS cert, highlight Docker experience, on-prem cluster management, express eagerness to learn, mention self-study of EKS",
+                draft_action="Acknowledge no production K8s/AWS cert, highlight Docker experience, on-prem cluster management, express eagerness to learn, mention self-study of EKS",  # noqa: E501
                 draft_result="Shows self-awareness, adjacent skills, and growth mindset",
             ),
         ]
@@ -405,23 +423,23 @@ def mock_tough_questions():
         questions=[
             interview.ToughQuestionOut(
                 question="Why did you leave Acme Corp?",
-                answer="I haven't left — I'm currently at Acme Corp. I'm exploring new opportunities because I want to work on larger-scale ML infrastructure (TechCorp's AI platform) and expand my cloud-native skills (Kubernetes/AWS) which aren't the focus in my current role.",
+                answer="I haven't left — I'm currently at Acme Corp. I'm exploring new opportunities because I want to work on larger-scale ML infrastructure (TechCorp's AI platform) and expand my cloud-native skills (Kubernetes/AWS) which aren't the focus in my current role.",  # noqa: E501
             ),
             interview.ToughQuestionOut(
                 question="You don't have explicit Kubernetes certification or AWS production experience.",
-                answer="You're right — I don't have a K8s cert or production AWS experience. However, I've managed Docker containers on on-prem Kubernetes clusters for 2 years, built CI/CD pipelines with GitLab, and have been self-studying EKS through AWS workshops. My PyTorch/TensorRT optimization work required deep infrastructure understanding. I'm eager to apply this foundation to cloud-native ML at TechCorp.",
+                answer="You're right — I don't have a K8s cert or production AWS experience. However, I've managed Docker containers on on-prem Kubernetes clusters for 2 years, built CI/CD pipelines with GitLab, and have been self-studying EKS through AWS workshops. My PyTorch/TensorRT optimization work required deep infrastructure understanding. I'm eager to apply this foundation to cloud-native ML at TechCorp.",  # noqa: E501
             ),
             interview.ToughQuestionOut(
                 question="Where do you see yourself in 5 years?",
-                answer="I want to be leading ML platform teams that enable organizations to deploy ML reliably at scale. TechCorp's AI platform mission aligns perfectly — I'd grow from senior engineer to tech lead to engineering manager here, building the tools I've wished for as an ML practitioner.",
+                answer="I want to be leading ML platform teams that enable organizations to deploy ML reliably at scale. TechCorp's AI platform mission aligns perfectly — I'd grow from senior engineer to tech lead to engineering manager here, building the tools I've wished for as an ML practitioner.",  # noqa: E501
             ),
             interview.ToughQuestionOut(
                 question="What's your biggest weakness?",
-                answer="I tend to dive deep into technical details and can lose sight of the bigger product picture. I've been working on this by forcing myself to write 'business impact' summaries for every technical decision and regularly syncing with product managers to align on priorities.",
+                answer="I tend to dive deep into technical details and can lose sight of the bigger product picture. I've been working on this by forcing myself to write 'business impact' summaries for every technical decision and regularly syncing with product managers to align on priorities.",  # noqa: E501
             ),
             interview.ToughQuestionOut(
                 question="Why TechCorp specifically?",
-                answer="Three reasons: 1) Your mission to democratize AI for enterprises matches my passion for production ML tooling. 2) Your recent Series B and AI platform launch show momentum I want to be part of. 3) The team structure (platform/ML/product split) is exactly the environment where I thrive — technical depth with product impact.",
+                answer="Three reasons: 1) Your mission to democratize AI for enterprises matches my passion for production ML tooling. 2) Your recent Series B and AI platform launch show momentum I want to be part of. 3) The team structure (platform/ML/product split) is exactly the environment where I thrive — technical depth with product impact.",  # noqa: E501
             ),
         ]
     )
@@ -477,19 +495,21 @@ def mock_logistics():
 
 
 @pytest.mark.asyncio
-async def test_execute_interview_prep_basic(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_execute_interview_prep_basic(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """execute_interview_prep generates a complete interview prep pack."""
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
         # Mock all LLM calls in sequence
         mock_llm.side_effect = [
-            mock_company_research(),      # company research
-            mock_likely_questions(),      # likely questions
-            mock_star_mapping(),          # STAR mapping
-            mock_new_star_drafts(),       # new STAR drafts
-            mock_consistency_brief(),     # consistency brief
-            mock_tough_questions(),       # tough questions
-            mock_questions_to_ask(),      # questions to ask
-            mock_logistics(),             # logistics
+            mock_company_research(),  # company research
+            mock_likely_questions(),  # likely questions
+            mock_star_mapping(),  # STAR mapping
+            mock_new_star_drafts(),  # new STAR drafts
+            mock_consistency_brief(),  # consistency brief
+            mock_tough_questions(),  # tough questions
+            mock_questions_to_ask(),  # questions to ask
+            mock_logistics(),  # logistics
         ]
 
         prep = await interview.execute_interview_prep(
@@ -585,7 +605,7 @@ async def test_execute_interview_prep_profile_incomplete(db_session):
         status="ranked",
         rank_score=80.0,
         rank_verdict="Strong Fit",
-        rank_date=datetime.now(timezone.utc),
+        rank_date=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.commit()
@@ -633,18 +653,19 @@ async def test_execute_interview_prep_profile_incomplete(db_session):
     await db_session.commit()
     await db_session.refresh(application)
 
-    with patch("app.services.interview.llm_completion_structured"):
-        with pytest.raises(ProfileIncompleteError):
-            await interview.execute_interview_prep(
-                db=db_session,
-                user_id="user-no-profile-interview",
-                application_id=application.id,
-                stage="technical",
-            )
+    with patch("app.services.interview.llm_completion_structured"), pytest.raises(ProfileIncompleteError):
+        await interview.execute_interview_prep(
+            db=db_session,
+            user_id="user-no-profile-interview",
+            application_id=application.id,
+            stage="technical",
+        )
 
 
 @pytest.mark.asyncio
-async def test_execute_interview_prep_llm_error(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_execute_interview_prep_llm_error(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """execute_interview_prep raises LLMError when LLM call fails."""
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
         mock_llm.side_effect = LLMError("LLM timeout")
@@ -659,7 +680,9 @@ async def test_execute_interview_prep_llm_error(db_session, sample_candidate, sa
 
 
 @pytest.mark.asyncio
-async def test_get_interview_prep(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_get_interview_prep(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """get_interview_prep returns the prep by ID."""
     # First create a prep
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
@@ -695,7 +718,9 @@ async def test_get_interview_prep_not_found(db_session):
 
 
 @pytest.mark.asyncio
-async def test_get_interview_prep_wrong_user(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_get_interview_prep_wrong_user(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """get_interview_prep raises NotFoundError when prep belongs to another user."""
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
         mock_llm.side_effect = [
@@ -721,7 +746,9 @@ async def test_get_interview_prep_wrong_user(db_session, sample_candidate, sampl
 
 
 @pytest.mark.asyncio
-async def test_list_interview_preps(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_list_interview_preps(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """list_interview_preps returns preps for the user."""
     # Each execute_interview_prep makes 8 LLM calls, so 3 preps = 24 calls
     mock_responses = [
@@ -739,7 +766,7 @@ async def test_list_interview_preps(db_session, sample_candidate, sample_job, sa
         mock_llm.side_effect = mock_responses
 
         # Create 3 preps
-        for i in range(3):
+        for _i in range(3):
             await interview.execute_interview_prep(
                 db=db_session,
                 user_id="test-user-id",
@@ -788,9 +815,7 @@ async def test_build_star_mapping_prompt(sample_candidate, sample_job, sample_st
         {"question": "Walk me through your ML pipeline experience", "source": "requirements", "priority": "high"},
         {"question": "Tell me about a leadership challenge", "source": "gaps", "priority": "high"},
     ]
-    messages = interview.build_star_mapping_prompt(
-        sample_candidate, sample_job, likely_questions, sample_star_examples
-    )
+    messages = interview.build_star_mapping_prompt(sample_candidate, sample_job, likely_questions, sample_star_examples)
 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
@@ -827,9 +852,7 @@ async def test_build_consistency_brief_prompt(sample_application):
 @pytest.mark.asyncio
 async def test_build_tough_questions_prompt(sample_candidate, sample_job, sample_evaluation):
     """build_tough_questions_prompt creates correct prompt structure."""
-    messages = interview.build_tough_questions_prompt(
-        sample_candidate, sample_job, sample_evaluation, "technical"
-    )
+    messages = interview.build_tough_questions_prompt(sample_candidate, sample_job, sample_evaluation, "technical")
 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
@@ -850,9 +873,7 @@ async def test_build_questions_to_ask_prompt(sample_candidate, sample_job):
         "growth_signals": ["Hiring"],
         "red_flags": [],
     }
-    messages = interview.build_questions_to_ask_prompt(
-        sample_candidate, sample_job, company_research, "technical"
-    )
+    messages = interview.build_questions_to_ask_prompt(sample_candidate, sample_job, company_research, "technical")
 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
@@ -862,9 +883,7 @@ async def test_build_questions_to_ask_prompt(sample_candidate, sample_job):
 @pytest.mark.asyncio
 async def test_build_logistics_prompt():
     """build_logistics_prompt creates correct prompt structure."""
-    messages = interview.build_logistics_prompt(
-        "technical", "video", "2026-07-20", ["Sarah Chen", "Mike Torres"]
-    )
+    messages = interview.build_logistics_prompt("technical", "video", "2026-07-20", ["Sarah Chen", "Mike Torres"])
 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
@@ -897,14 +916,13 @@ async def test_extract_conversation_hooks():
     assert any("AI Platform" in t for t in topics)
 
 
-
-
-
 # ── Mock interview tests ────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_start_mock_interview_returns_first_question(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_start_mock_interview_returns_first_question(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """start_mock_interview returns first question from prep pack."""
     # First create a prep pack with mock LLM
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
@@ -926,9 +944,7 @@ async def test_start_mock_interview_returns_first_question(db_session, sample_ca
         )
 
     # Start mock interview
-    result = await interview.start_mock_interview(
-        db_session, "test-user-id", prep.id
-    )
+    result = await interview.start_mock_interview(db_session, "test-user-id", prep.id)
 
     assert result["prep_id"] == prep.id
     assert result["question_number"] == 1
@@ -955,16 +971,16 @@ async def test_start_mock_interview_no_questions(db_session):
     await db_session.commit()
     await db_session.refresh(prep)
 
-    result = await interview.start_mock_interview(
-        db_session, "test-user-id", prep.id
-    )
+    result = await interview.start_mock_interview(db_session, "test-user-id", prep.id)
 
     assert result["is_complete"] is True
     assert "No questions available" in result["message"]
 
 
 @pytest.mark.asyncio
-async def test_submit_mock_answer_completes_last_question(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_submit_mock_answer_completes_last_question(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """submit_mock_answer returns feedback and marks complete when LLM returns __COMPLETE__."""
     # Create a prep pack with 1 question
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
@@ -986,13 +1002,11 @@ async def test_submit_mock_answer_completes_last_question(db_session, sample_can
         )
 
     # Mock the llm_completion call for mock interview feedback
-    transcript = [
-        {"role": "interviewer", "content": "Tell me about your experience with ML pipelines."}
-    ]
+    transcript = [{"role": "interviewer", "content": "Tell me about your experience with ML pipelines."}]
 
     with patch("app.llm.adapter.llm_completion") as mock_completion:
         mock_completion.return_value = {
-            "content": '{"feedback": "Great structured answer! You covered the key technologies well.", "next_question": "__COMPLETE__"}'
+            "content": '{"feedback": "Great structured answer! You covered the key technologies well.", "next_question": "__COMPLETE__"}'  # noqa: E501
         }
 
         result = await interview.submit_mock_answer(
@@ -1012,7 +1026,9 @@ async def test_submit_mock_answer_completes_last_question(db_session, sample_can
 
 
 @pytest.mark.asyncio
-async def test_submit_mock_answer_with_llm_error(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_submit_mock_answer_with_llm_error(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """submit_mock_answer handles LLM error gracefully (doesn't crash)."""
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
         mock_llm.side_effect = [
@@ -1032,9 +1048,7 @@ async def test_submit_mock_answer_with_llm_error(db_session, sample_candidate, s
             stage="technical",
         )
 
-    transcript = [
-        {"role": "interviewer", "content": "Tell me about your experience."}
-    ]
+    transcript = [{"role": "interviewer", "content": "Tell me about your experience."}]
 
     # Mock LLM to raise an error
     with patch("app.llm.adapter.llm_completion") as mock_completion:
@@ -1056,7 +1070,9 @@ async def test_submit_mock_answer_with_llm_error(db_session, sample_candidate, s
 
 
 @pytest.mark.asyncio
-async def test_submit_mock_answer_saves_transcript_to_db(db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples):
+async def test_submit_mock_answer_saves_transcript_to_db(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation, sample_star_examples
+):
     """submit_mock_answer saves the transcript to prep.mock_transcript."""
     with patch("app.services.interview.llm_completion_structured") as mock_llm:
         mock_llm.side_effect = [
@@ -1076,14 +1092,10 @@ async def test_submit_mock_answer_saves_transcript_to_db(db_session, sample_cand
             stage="technical",
         )
 
-    transcript = [
-        {"role": "interviewer", "content": "Tell me about your experience."}
-    ]
+    transcript = [{"role": "interviewer", "content": "Tell me about your experience."}]
 
     with patch("app.llm.adapter.llm_completion") as mock_completion:
-        mock_completion.return_value = {
-            "content": '{"feedback": "Good answer!", "next_question": "__COMPLETE__"}'
-        }
+        mock_completion.return_value = {"content": '{"feedback": "Good answer!", "next_question": "__COMPLETE__"}'}
 
         await interview.submit_mock_answer(
             db=db_session,

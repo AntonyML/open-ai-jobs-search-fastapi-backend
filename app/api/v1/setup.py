@@ -3,20 +3,19 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, get_locale
+from app.api.deps import get_current_user, get_locale
 from app.core.i18n.locale import t
 from app.db.session import get_db as _get_db
+from app.exceptions import NotFoundError
 from app.schemas.profile import (
     BehavioralProfileCreate,
     BehavioralProfileOut,
     CandidateProfileCreate,
     CandidateProfileOut,
     CandidateProfileUpdate,
-    ProfileSummaryOut,
     StarExampleCreate,
     StarExampleOut,
 )
-from app.exceptions import NotFoundError
 from app.services import setup
 
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -92,6 +91,7 @@ async def complete_setup(
     """Mark the profile setup as completed."""
     if setup_method not in ("documents", "cv_import", "interview"):
         from app.exceptions import AppError
+
         raise AppError(t("errors.validation", locale, detail="Invalid setup_method"))
     profile = await setup.complete_setup(db, user["sub"], setup_method)
     await db.commit()

@@ -4,24 +4,24 @@ Uses an in-memory SQLite database and mocks the LLM calls and web searches.
 """
 
 import re
-import asyncio
-from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, mock_open, patch
+from unittest.mock import mock_open, patch
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import (
     CandidateProfile,
-    CompetencyExpansion,
     User,
 )
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
-from app.schemas.expand import EnrichedCompetency, EnrichedCompetenciesLLMOutput, ProposedAddition, ProposedAdditionsLLMOutput
+from app.schemas.expand import (
+    EnrichedCompetenciesLLMOutput,
+    EnrichedCompetency,
+    ProposedAddition,
+    ProposedAdditionsLLMOutput,
+)
 from app.services import expand
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -32,6 +32,7 @@ async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with engine.begin() as conn:
         from app.db.models import Base
+
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -64,7 +65,12 @@ async def sample_candidate(db_session):
         employment_status="Employed",
         constraints="No relocation",
         education=[
-            {"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020", "key_topics": "ML, Distributed Systems"}
+            {
+                "degree": "MSc Computer Science",
+                "institution": "DTU",
+                "period": "2018-2020",
+                "key_topics": "ML, Distributed Systems",
+            }
         ],
         experience=[
             {
@@ -91,26 +97,30 @@ async def sample_candidate(db_session):
                 ],
             },
         ],
-        projects=[
-            {"name": "Open Source ML Library", "description": "Contributor to popular ML library"}
-        ],
+        projects=[{"name": "Open Source ML Library", "description": "Contributor to popular ML library"}],
         skills={
             "programming_ml": [
-                {"language": "Python", "proficiency": "Expert", "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"]},
+                {
+                    "language": "Python",
+                    "proficiency": "Expert",
+                    "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"],
+                },
                 {"language": "SQL", "proficiency": "Advanced", "frameworks": []},
             ],
             "domain_expertise": ["Machine Learning", "NLP", "Recommendation Systems"],
             "software_tools": ["Docker", "Kubernetes", "AWS", "Git"],
         },
         publications=[
-            {"authors": "Doe, J.", "year": "2021", "title": "Efficient Transformers", "journal": "NeurIPS", "doi": "10.xxxx/xxxx"}
+            {
+                "authors": "Doe, J.",
+                "year": "2021",
+                "title": "Efficient Transformers",
+                "journal": "NeurIPS",
+                "doi": "10.xxxx/xxxx",
+            }
         ],
-        awards=[
-            {"award": "Best Paper Award", "event": "ICML", "year": "2020"}
-        ],
-        references=[
-            {"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}
-        ],
+        awards=[{"award": "Best Paper Award", "event": "ICML", "year": "2020"}],
+        references=[{"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}],
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
@@ -197,25 +207,27 @@ async def test_execute_expand_basic(db_session, sample_candidate):
     with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
         mock_orc.side_effect = [
             mock_enriched_competencies(),  # enrichment
-            mock_proposed_additions(),     # proposed additions
+            mock_proposed_additions(),  # proposed additions
         ]
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
-                                expansion = await expand.execute_expand(
-                                    db=db_session,
-                                    user_id="test-user-id",
-                                    scan_cv=True,
-                                    scan_linkedin=True,
-                                    scan_diplomas=True,
-                                    scan_references=True,
-                                    scan_github=True,
-                                    scan_other_urls=True,
-                                )
+        with (
+            patch("app.services.expand._scan_cv_folder", return_value=[]),
+            patch("app.services.expand._scan_linkedin_folder", return_value=[]),
+            patch("app.services.expand._scan_diplomas_folder", return_value=[]),
+            patch("app.services.expand._scan_references_folder", return_value=[]),
+            patch("app.services.expand.fetch_github_repos", return_value=[]),
+            patch("app.services.expand._scan_other_urls_async", return_value=[]),
+        ):
+            expansion = await expand.execute_expand(
+                db=db_session,
+                user_id="test-user-id",
+                scan_cv=True,
+                scan_linkedin=True,
+                scan_diplomas=True,
+                scan_references=True,
+                scan_github=True,
+                scan_other_urls=True,
+            )
 
     assert expansion.id is not None
     assert expansion.user_id == "test-user-id"
@@ -246,18 +258,33 @@ async def test_execute_expand_llm_error(db_session, sample_candidate):
     with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock_orc:
         mock_orc.side_effect = LLMError("LLM timeout")
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[{"id": "cv_0", "source": "cv", "type": "job_bullet", "title": "Test", "description": "Test", "date": "2020-01", "source_file": "cv.pdf"}]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
-                                with pytest.raises(LLMError):
-                                    await expand.execute_expand(
-                                        db=db_session,
-                                        user_id="test-user-id",
-                                        scan_cv=True,
-                                    )
+        with (
+            patch(
+                "app.services.expand._scan_cv_folder",
+                return_value=[
+                    {
+                        "id": "cv_0",
+                        "source": "cv",
+                        "type": "job_bullet",
+                        "title": "Test",
+                        "description": "Test",
+                        "date": "2020-01",
+                        "source_file": "cv.pdf",
+                    }
+                ],
+            ),
+            patch("app.services.expand._scan_linkedin_folder", return_value=[]),
+            patch("app.services.expand._scan_diplomas_folder", return_value=[]),
+            patch("app.services.expand._scan_references_folder", return_value=[]),
+            patch("app.services.expand.fetch_github_repos", return_value=[]),
+            patch("app.services.expand._scan_other_urls_async", return_value=[]),
+            pytest.raises(LLMError),
+        ):
+            await expand.execute_expand(
+                db=db_session,
+                user_id="test-user-id",
+                scan_cv=True,
+            )
 
 
 @pytest.mark.asyncio
@@ -267,7 +294,9 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
         # Create a dynamic mock that returns enrichments based on the input items
         call_count = 0
 
-        async def dynamic_mock_enriched(user_id, messages, output_schema=None, pipeline="expand", description=None, temperature=0.2, **kwargs):
+        async def dynamic_mock_enriched(
+            user_id, messages, output_schema=None, pipeline="expand", description=None, temperature=0.2, **kwargs
+        ):
             nonlocal call_count
             call_count += 1
 
@@ -275,7 +304,7 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
                 # First call: competency enrichment
                 # Extract item IDs from the system prompt
                 full_text = " ".join(m.get("content", "") for m in messages)
-                item_ids = re.findall(r'ID:\s*(\w+)', full_text)
+                item_ids = re.findall(r"ID:\s*(\w+)", full_text)
 
                 # Return enrichments only for those items
                 all_enrichments = [
@@ -298,19 +327,32 @@ async def test_execute_expand_with_experience_items(db_session, sample_candidate
 
         mock_orc.side_effect = dynamic_mock_enriched
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[
-            {"id": "cv_0", "source": "cv", "type": "job_bullet", "title": "Senior ML Engineer", "description": "Built ML pipeline", "date": "2020-01", "source_file": "cv.pdf"},
-        ]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls", return_value=[]):
-                                expansion = await expand.execute_expand(
-                                    db=db_session,
-                                    user_id="test-user-id",
-                                    scan_cv=True,
-                                )
+        with (
+            patch(
+                "app.services.expand._scan_cv_folder",
+                return_value=[
+                    {
+                        "id": "cv_0",
+                        "source": "cv",
+                        "type": "job_bullet",
+                        "title": "Senior ML Engineer",
+                        "description": "Built ML pipeline",
+                        "date": "2020-01",
+                        "source_file": "cv.pdf",
+                    },
+                ],
+            ),
+            patch("app.services.expand._scan_linkedin_folder", return_value=[]),
+            patch("app.services.expand._scan_diplomas_folder", return_value=[]),
+            patch("app.services.expand._scan_references_folder", return_value=[]),
+            patch("app.services.expand.fetch_github_repos", return_value=[]),
+            patch("app.services.expand._scan_other_urls", return_value=[]),
+        ):
+            expansion = await expand.execute_expand(
+                db=db_session,
+                user_id="test-user-id",
+                scan_cv=True,
+            )
 
     assert expansion.experience_items is not None
     assert len(expansion.experience_items) == 1
@@ -329,19 +371,32 @@ async def test_execute_expand_proposes_additions(db_session, sample_candidate):
             mock_proposed_additions(),
         ]
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[
-            {"id": "cv_0", "source": "cv", "type": "job_bullet", "title": "Senior ML Engineer", "description": "Built ML pipeline with TensorRT", "date": "2020-01", "source_file": "cv.pdf"},
-        ]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
-                                expansion = await expand.execute_expand(
-                                    db=db_session,
-                                    user_id="test-user-id",
-                                    scan_cv=True,
-                                )
+        with (
+            patch(
+                "app.services.expand._scan_cv_folder",
+                return_value=[
+                    {
+                        "id": "cv_0",
+                        "source": "cv",
+                        "type": "job_bullet",
+                        "title": "Senior ML Engineer",
+                        "description": "Built ML pipeline with TensorRT",
+                        "date": "2020-01",
+                        "source_file": "cv.pdf",
+                    },
+                ],
+            ),
+            patch("app.services.expand._scan_linkedin_folder", return_value=[]),
+            patch("app.services.expand._scan_diplomas_folder", return_value=[]),
+            patch("app.services.expand._scan_references_folder", return_value=[]),
+            patch("app.services.expand.fetch_github_repos", return_value=[]),
+            patch("app.services.expand._scan_other_urls_async", return_value=[]),
+        ):
+            expansion = await expand.execute_expand(
+                db=db_session,
+                user_id="test-user-id",
+                scan_cv=True,
+            )
 
     assert expansion.proposed_additions is not None
     assert len(expansion.proposed_additions) == 3
@@ -360,17 +415,19 @@ async def test_get_expansion(db_session, sample_candidate):
             mock_proposed_additions(),
         ]
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
-                                created = await expand.execute_expand(
-                                    db=db_session,
-                                    user_id="test-user-id",
-                                    scan_cv=True,
-                                )
+        with (
+            patch("app.services.expand._scan_cv_folder", return_value=[]),
+            patch("app.services.expand._scan_linkedin_folder", return_value=[]),
+            patch("app.services.expand._scan_diplomas_folder", return_value=[]),
+            patch("app.services.expand._scan_references_folder", return_value=[]),
+            patch("app.services.expand.fetch_github_repos", return_value=[]),
+            patch("app.services.expand._scan_other_urls_async", return_value=[]),
+        ):
+            created = await expand.execute_expand(
+                db=db_session,
+                user_id="test-user-id",
+                scan_cv=True,
+            )
 
     fetched = await expand.get_expansion(db_session, created.id, "test-user-id")
     assert fetched.id == created.id
@@ -393,17 +450,19 @@ async def test_get_expansion_wrong_user(db_session, sample_candidate):
             mock_proposed_additions(),
         ]
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
-                                created = await expand.execute_expand(
-                                    db=db_session,
-                                    user_id="test-user-id",
-                                    scan_cv=True,
-                                )
+        with (
+            patch("app.services.expand._scan_cv_folder", return_value=[]),
+            patch("app.services.expand._scan_linkedin_folder", return_value=[]),
+            patch("app.services.expand._scan_diplomas_folder", return_value=[]),
+            patch("app.services.expand._scan_references_folder", return_value=[]),
+            patch("app.services.expand.fetch_github_repos", return_value=[]),
+            patch("app.services.expand._scan_other_urls_async", return_value=[]),
+        ):
+            created = await expand.execute_expand(
+                db=db_session,
+                user_id="test-user-id",
+                scan_cv=True,
+            )
 
     with pytest.raises(NotFoundError):
         await expand.get_expansion(db_session, created.id, "other-user-id")
@@ -418,18 +477,20 @@ async def test_list_expansions(db_session, sample_candidate):
             mock_proposed_additions(),
         ] * 3
 
-        with patch("app.services.expand._scan_cv_folder", return_value=[]):
-            with patch("app.services.expand._scan_linkedin_folder", return_value=[]):
-                with patch("app.services.expand._scan_diplomas_folder", return_value=[]):
-                    with patch("app.services.expand._scan_references_folder", return_value=[]):
-                        with patch("app.services.expand.fetch_github_repos", return_value=[]):
-                            with patch("app.services.expand._scan_other_urls_async", return_value=[]):
-                                for _ in range(3):
-                                    await expand.execute_expand(
-                                        db=db_session,
-                                        user_id="test-user-id",
-                                        scan_cv=True,
-                                    )
+        with (
+            patch("app.services.expand._scan_cv_folder", return_value=[]),
+            patch("app.services.expand._scan_linkedin_folder", return_value=[]),
+            patch("app.services.expand._scan_diplomas_folder", return_value=[]),
+            patch("app.services.expand._scan_references_folder", return_value=[]),
+            patch("app.services.expand.fetch_github_repos", return_value=[]),
+            patch("app.services.expand._scan_other_urls_async", return_value=[]),
+        ):
+            for _ in range(3):
+                await expand.execute_expand(
+                    db=db_session,
+                    user_id="test-user-id",
+                    scan_cv=True,
+                )
 
     expansions = await expand.list_expansions(db_session, "test-user-id", limit=10)
     assert len(expansions) == 3
@@ -443,7 +504,10 @@ async def test_scan_cv_folder():
     """_scan_cv_folder returns experience items from CV documents."""
     with patch("pathlib.Path.glob") as mock_glob:
         mock_glob.return_value = [Path("cv/test.pdf")]
-        with patch("app.services.expand._extract_text_from_pdf", return_value="Senior ML Engineer at Acme Corp. Built ML pipeline."):
+        with patch(
+            "app.services.expand._extract_text_from_pdf",
+            return_value="Senior ML Engineer at Acme Corp. Built ML pipeline.",
+        ):
             items = expand._scan_cv_folder()
 
     assert isinstance(items, list)
@@ -454,7 +518,12 @@ async def test_scan_linkedin_folder():
     """_scan_linkedin_folder returns experience items from LinkedIn export."""
     with patch("pathlib.Path.glob") as mock_glob:
         mock_glob.return_value = [Path("linkedin/export.json")]
-        with patch("builtins.open", mock_open(read_data='{"positions": [{"title": "ML Engineer", "company": "Acme", "description": "Built pipelines"}]}')):
+        with patch(
+            "builtins.open",
+            mock_open(
+                read_data='{"positions": [{"title": "ML Engineer", "company": "Acme", "description": "Built pipelines"}]}'  # noqa: E501
+            ),
+        ):
             items = expand._scan_linkedin_folder()
 
     assert isinstance(items, list)
@@ -465,7 +534,10 @@ async def test_scan_diplomas_folder():
     """_scan_diplomas_folder returns experience items from diplomas."""
     with patch("pathlib.Path.glob") as mock_glob:
         mock_glob.return_value = [Path("diplomas/diploma.pdf")]
-        with patch("app.services.expand._extract_text_from_pdf", return_value="MSc Computer Science, DTU, 2020. Thesis: Efficient Transformers."):
+        with patch(
+            "app.services.expand._extract_text_from_pdf",
+            return_value="MSc Computer Science, DTU, 2020. Thesis: Efficient Transformers.",
+        ):
             items = expand._scan_diplomas_folder()
 
     assert isinstance(items, list)
@@ -476,7 +548,9 @@ async def test_scan_references_folder():
     """_scan_references_folder returns experience items from reference letters."""
     with patch("pathlib.Path.glob") as mock_glob:
         mock_glob.return_value = [Path("references/ref.pdf")]
-        with patch("app.services.expand._extract_text_from_pdf", return_value="Reference for Jane Doe. She led ML team of 5."):
+        with patch(
+            "app.services.expand._extract_text_from_pdf", return_value="Reference for Jane Doe. She led ML team of 5."
+        ):
             items = expand._scan_references_folder()
 
     assert isinstance(items, list)
@@ -486,8 +560,22 @@ async def test_scan_references_folder():
 async def test_make_github_items():
     """_make_github_items converts repo data to experience items."""
     repos = [
-        {"name": "ml-lib", "description": "ML library", "language": "Python", "topics": ["machine-learning", "pytorch"], "stars": 42, "url": "https://github.com/user/ml-lib"},
-        {"name": "cv-tool", "description": "CV tool", "language": "Python", "topics": ["computer-vision"], "stars": 10, "url": "https://github.com/user/cv-tool"},
+        {
+            "name": "ml-lib",
+            "description": "ML library",
+            "language": "Python",
+            "topics": ["machine-learning", "pytorch"],
+            "stars": 42,
+            "url": "https://github.com/user/ml-lib",
+        },
+        {
+            "name": "cv-tool",
+            "description": "CV tool",
+            "language": "Python",
+            "topics": ["computer-vision"],
+            "stars": 10,
+            "url": "https://github.com/user/cv-tool",
+        },
     ]
     items = expand._make_github_items(repos, "https://github.com/user")
 
@@ -502,6 +590,7 @@ async def test_make_github_items():
 async def test_scan_other_urls():
     """_scan_other_urls returns experience items from other URLs in profile."""
     from app.db.models import CandidateProfile
+
     candidate = CandidateProfile(
         id="test-candidate-id",
         user_id="test-user-id",
@@ -520,8 +609,24 @@ async def test_scan_other_urls():
 async def test_build_competency_enrichment_prompt():
     """build_competency_enrichment_prompt creates correct prompt structure."""
     items = [
-        {"id": "cv_0", "source": "cv", "type": "job_bullet", "title": "Senior ML Engineer", "description": "Built ML pipeline with TensorRT", "date": "2020-01", "source_file": "cv.pdf"},
-        {"id": "li_0", "source": "linkedin", "type": "certification", "title": "AWS Certified ML", "description": "AWS ML certification", "date": "2021-06", "source_file": "linkedin.json"},
+        {
+            "id": "cv_0",
+            "source": "cv",
+            "type": "job_bullet",
+            "title": "Senior ML Engineer",
+            "description": "Built ML pipeline with TensorRT",
+            "date": "2020-01",
+            "source_file": "cv.pdf",
+        },
+        {
+            "id": "li_0",
+            "source": "linkedin",
+            "type": "certification",
+            "title": "AWS Certified ML",
+            "description": "AWS ML certification",
+            "date": "2021-06",
+            "source_file": "linkedin.json",
+        },
     ]
     messages = expand.build_competency_enrichment_prompt(items)
 
@@ -578,6 +683,3 @@ async def test_expand_request_schema_defaults():
     assert payload.scan_references is True
     assert payload.scan_github is True
     assert payload.scan_other_urls is True
-
-
-

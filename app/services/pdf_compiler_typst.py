@@ -5,10 +5,10 @@ Usage:
     pdf_bytes = compile_cv(cv_dict)     # returns bytes
     compile_cv(cv_dict, output_path)     # writes to file
 """
+
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 

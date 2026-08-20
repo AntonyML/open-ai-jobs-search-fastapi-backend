@@ -8,32 +8,31 @@ The LLM now only handles qualitative reasoning (strengths, gaps, red flags).
 from __future__ import annotations
 
 import json
-
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.logging import bind_context, get_logger
 from app.core.settings import get_settings
-from app.db.models import CandidateProfile, JobPosting, RankEvaluation, User
-from app.exceptions import NotFoundError, ProfileIncompleteError, LLMError
-from app.services.rank_analyzer import compute_quantitative_scores
-from app.services.orchestrator.orchestrator_deps import get_orchestrator
+from app.db.models import CandidateProfile, JobPosting, RankEvaluation
+from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
+from app.schemas.rank import JobPostingSummary, RankedJobOut, RankQualitativeOutput, RankResult
 from app.services.orchestrator.llm_response_sanitizer import default_field_constraints
-from app.schemas.rank import RankQualitativeOutput, RankResult, RankedJobOut
-from app.schemas.rank import JobPostingSummary
+from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.provider_config import get_active_provider_config
+from app.services.rank_analyzer import compute_quantitative_scores
 from app.services.salary import service as salary_service
-from app.core.logging import get_logger, bind_context
 
 settings = get_settings()
 logger = get_logger(__name__)
 
 # ── Version pinning (Fase 5) ─────────────────────────────────────────
 
-PROMPT_VERSION = "2.0.0"   # bumped when prompt changes — stored in RankEvaluationVersion
+PROMPT_VERSION = "2.0.0"  # bumped when prompt changes — stored in RankEvaluationVersion
 ALGORITHM_VERSION = "2.0.0"
 
 
@@ -94,9 +93,9 @@ YOUR TASK — qualitative reasoning only:
 Return ONLY valid JSON matching the RankQualitativeOutput schema:
 {{"behavioral_score": int, "career_score": int, "strengths": [...], "gaps": [...], "red_flags": [...], "confidence": "medium"}}
 Quantitative scores are computed server-side — do NOT include them in your response.
-"""
+"""  # noqa: E501
 
-    user_prompt = "Provide your qualitative evaluation. Return JSON with behavioral_score, career_score, strengths, gaps, red_flags, and confidence."
+    user_prompt = "Provide your qualitative evaluation. Return JSON with behavioral_score, career_score, strengths, gaps, red_flags, and confidence."  # noqa: E501
 
     return [
         {"role": "system", "content": system_prompt},
@@ -139,10 +138,12 @@ def _build_candidate_summary(candidate: CandidateProfile) -> str:
     if candidate.skills:
         skills = candidate.skills
         if skills.get("programming_ml"):
-            parts.append("Technical Skills: " + ", ".join(
-                f"{s.get('language', '')} ({s.get('proficiency', '')})"
-                for s in skills["programming_ml"][:5]
-            ))
+            parts.append(
+                "Technical Skills: "
+                + ", ".join(
+                    f"{s.get('language', '')} ({s.get('proficiency', '')})" for s in skills["programming_ml"][:5]
+                )
+            )
         if skills.get("domain_expertise"):
             parts.append("Domain Expertise: " + ", ".join(skills["domain_expertise"][:5]))
         if skills.get("software_tools"):
@@ -191,12 +192,7 @@ def compute_overall_score(
 
     Weights: Technical 30%, Experience 25%, Behavioral 15%, Career 30%
     """
-    return round(
-        technical * 0.30
-        + experience * 0.25
-        + behavioral * 0.15
-        + career * 0.30
-    )
+    return round(technical * 0.30 + experience * 0.25 + behavioral * 0.15 + career * 0.30)
 
 
 def score_to_verdict(score: int) -> str:
@@ -240,19 +236,22 @@ async def execute_rank(
             jobs = await _select_jobs_to_rank(db, user_id, focus_area, re_rank, max_jobs=max_jobs)
             if not jobs:
                 return RankResult(
-                    ranked_count=0, shortlist=[], below_threshold=0,
-                    expired_or_vetoed=0, message="No new jobs to rank.",
+                    ranked_count=0,
+                    shortlist=[],
+                    below_threshold=0,
+                    expired_or_vetoed=0,
+                    message="No new jobs to rank.",
                 )
 
             existing_evals = {
                 ev.job_posting_id: ev
                 for ev in (
                     await db.execute(
-                        select(RankEvaluation).where(
-                            RankEvaluation.job_posting_id.in_([j.id for j in jobs])
-                        )
+                        select(RankEvaluation).where(RankEvaluation.job_posting_id.in_([j.id for j in jobs]))
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             }
 
         # ── Phase 2: RANK (pure computation + LLM, 0 DB queries) ──
@@ -278,8 +277,11 @@ async def execute_rank(
 
         if not ranked_results:
             return RankResult(
-                ranked_count=0, shortlist=[], below_threshold=0,
-                expired_or_vetoed=0, message="All jobs failed.",
+                ranked_count=0,
+                shortlist=[],
+                below_threshold=0,
+                expired_or_vetoed=0,
+                message="All jobs failed.",
             )
 
         # ── Phase 3: SAVE (single batch session) ──────────────────
@@ -289,7 +291,9 @@ async def execute_rank(
                 job = await db.get(JobPosting, ev_data["job_id"])
                 cand = await db.get(CandidateProfile, candidate.id)
                 evaluation = await _build_rank_evaluation(
-                    db=db, candidate=cand, job=job,
+                    db=db,
+                    candidate=cand,
+                    job=job,
                     user_id=user_id,
                     quantitative=ev_data["quantitative"],
                     llm_output=ev_data["llm_output"],
@@ -318,7 +322,7 @@ async def execute_rank(
                 job.status = "ranked"
                 job.rank_score = evaluation.overall_score
                 job.rank_verdict = evaluation.verdict
-                job.rank_date = datetime.now(timezone.utc)
+                job.rank_date = datetime.now(UTC)
                 saved_evaluations.append((job, evaluation))
 
             # Sort for shortlist
@@ -346,7 +350,8 @@ async def execute_rank(
                 if salary_available and job.company:
                     try:
                         salary_benchmark = await salary_service.benchmark_job(
-                            db=db, user_id=user_id,
+                            db=db,
+                            user_id=user_id,
                             salary_data=salary_data,
                             company_name=job.company,
                             job_title=job.title,
@@ -387,20 +392,14 @@ async def execute_rank(
 async def _get_candidate_profile(db: AsyncSession, user_id: str) -> CandidateProfile:
     """Get the candidate profile, raising if incomplete."""
     result = await db.execute(
-        select(CandidateProfile)
-        .where(CandidateProfile.user_id == user_id)
-        .options(selectinload(CandidateProfile.user))
+        select(CandidateProfile).where(CandidateProfile.user_id == user_id).options(selectinload(CandidateProfile.user))
     )
     profile = result.scalar_one_or_none()
     if profile is None:
-        raise ProfileIncompleteError(
-            "Candidate profile not found. Run /setup/profile first."
-        )
+        raise ProfileIncompleteError("Candidate profile not found. Run /setup/profile first.")
     # Check for minimum required fields
     if not profile.full_name or not profile.experience:
-        raise ProfileIncompleteError(
-            "Profile is incomplete. Please fill in at least name and experience."
-        )
+        raise ProfileIncompleteError("Profile is incomplete. Please fill in at least name and experience.")
     return profile
 
 
@@ -461,7 +460,7 @@ def _validate_llm_output(raw: Any) -> RankQualitativeOutput:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON from LLM: {e}")
+            raise ValueError(f"Invalid JSON from LLM: {e}") from e
         return _validate_output_dict(data)
 
     if isinstance(raw, dict):
@@ -611,7 +610,10 @@ async def _rank_single_job(
     experience_score = quantitative["experience_score"]
 
     overall = compute_overall_score(
-        technical_score, experience_score, behavioral_score, career_score,
+        technical_score,
+        experience_score,
+        behavioral_score,
+        career_score,
     )
     verdict = score_to_verdict(overall)
 
@@ -649,9 +651,12 @@ def _veto_result(
         "job_id": job_id,
         "quantitative": quantitative,
         "llm_output": RankQualitativeOutput(
-            behavioral_score=0, career_score=0,
-            strengths=[], gaps=[],
-            red_flags=[reason], confidence="high",
+            behavioral_score=0,
+            career_score=0,
+            strengths=[],
+            gaps=[],
+            red_flags=[reason],
+            confidence="high",
         ),
         "existing_evaluation": existing_evaluation,
         "technical_score": quantitative["technical_score"],
@@ -746,9 +751,7 @@ async def _build_rank_evaluation(
 # ── Query helpers ───────────────────────────────────────────────────
 
 
-async def get_rank_evaluation(
-    db: AsyncSession, job_posting_id: str, user_id: str
-) -> RankEvaluation:
+async def get_rank_evaluation(db: AsyncSession, job_posting_id: str, user_id: str) -> RankEvaluation:
     """Get the rank evaluation for a job posting."""
     with db.no_autoflush:
         result = await db.execute(
@@ -780,9 +783,7 @@ async def count_jobs_to_rank(
     """
     re_rank = (payload or {}).get("re_rank", False) if payload else False
 
-    total_subq = select(func.count()).select_from(JobPosting).where(
-        JobPosting.user_id == user_id
-    )
+    total_subq = select(func.count()).select_from(JobPosting).where(JobPosting.user_id == user_id)
     if not re_rank:
         total_subq = total_subq.where(
             or_(
@@ -791,10 +792,14 @@ async def count_jobs_to_rank(
             )
         )
 
-    ranked_subq = select(func.count()).select_from(JobPosting).where(
-        JobPosting.user_id == user_id,
-        JobPosting.status == "ranked",
-        JobPosting.rank_score.isnot(None),
+    ranked_subq = (
+        select(func.count())
+        .select_from(JobPosting)
+        .where(
+            JobPosting.user_id == user_id,
+            JobPosting.status == "ranked",
+            JobPosting.rank_score.isnot(None),
+        )
     )
 
     stmt = select(

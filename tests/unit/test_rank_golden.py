@@ -16,15 +16,12 @@ from typing import Any
 
 import pytest
 
+from app.services.rank import compute_overall_score
+from app.services.rank_analyzer import compute_quantitative_scores
 from app.services.rank_extractor import (
-    build_evidence,
     check_hard_rejects,
     extract_structured_requirements,
-    match_skills_controlled,
 )
-from app.services.rank_analyzer import compute_quantitative_scores
-from app.services.rank import compute_overall_score
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers
@@ -70,7 +67,7 @@ _GOLDEN_SET: list[dict[str, Any]] = [
         "job": {
             "title": "Senior Python Developer",
             "company": "TechCorp",
-            "description": "We need a senior Python developer with Django/FASTAPI experience. PostgreSQL and Docker are a must. AWS cloud experience preferred.",
+            "description": "We need a senior Python developer with Django/FASTAPI experience. PostgreSQL and Docker are a must. AWS cloud experience preferred.",  # noqa: E501
             "requirements": ["5+ years Python", "Django experience", "Docker/Kubernetes", "PostgreSQL"],
         },
     },
@@ -83,7 +80,7 @@ _GOLDEN_SET: list[dict[str, Any]] = [
         "job": {
             "title": "ML Engineer",
             "company": "AI Corp",
-            "description": "Build and deploy ML models using PyTorch and TensorFlow. Experience with MLOps (MLflow, K8s, AWS) required.",
+            "description": "Build and deploy ML models using PyTorch and TensorFlow. Experience with MLOps (MLflow, K8s, AWS) required.",  # noqa: E501
             "requirements": ["PyTorch", "TensorFlow", "MLflow", "Kubernetes", "AWS"],
         },
     },
@@ -96,7 +93,7 @@ _GOLDEN_SET: list[dict[str, Any]] = [
         "job": {
             "title": "Full Stack Engineer",
             "company": "WebCorp",
-            "description": "Full stack with React frontend and Node.js backend. PostgreSQL, Docker, AWS. 5+ years experience.",
+            "description": "Full stack with React frontend and Node.js backend. PostgreSQL, Docker, AWS. 5+ years experience.",  # noqa: E501
             "requirements": [],
         },
     },
@@ -122,7 +119,7 @@ _GOLDEN_SET: list[dict[str, Any]] = [
         "job": {
             "title": "DevOps Engineer",
             "company": "CloudInc",
-            "description": "Manage K8s clusters, Terraform infra, CI/CD pipelines. Python scripting. Prometheus monitoring.",
+            "description": "Manage K8s clusters, Terraform infra, CI/CD pipelines. Python scripting. Prometheus monitoring.",  # noqa: E501
             "requirements": ["Kubernetes", "Terraform", "AWS", "CI/CD", "Python"],
         },
     },
@@ -138,7 +135,7 @@ _GOLDEN_SET: list[dict[str, Any]] = [
         "job": {
             "title": "Backend Engineer",
             "company": "StartupX",
-            "description": "Python/Django backend with PostgreSQL. Redis and Docker experience a plus. Go experience is a bonus.",
+            "description": "Python/Django backend with PostgreSQL. Redis and Docker experience a plus. Go experience is a bonus.",  # noqa: E501
             "requirements": ["Python", "Django", "PostgreSQL"],
         },
     },
@@ -151,7 +148,7 @@ _GOLDEN_SET: list[dict[str, Any]] = [
         "job": {
             "title": "Data Scientist",
             "company": "AnalyticsCorp",
-            "description": "ML modeling with Python. Experience with PyTorch and scikit-learn. SQL skills required. R experience is a plus.",
+            "description": "ML modeling with Python. Experience with PyTorch and scikit-learn. SQL skills required. R experience is a plus.",  # noqa: E501
             "requirements": ["Python", "PyTorch", "scikit-learn", "SQL"],
         },
     },
@@ -164,7 +161,7 @@ _GOLDEN_SET: list[dict[str, Any]] = [
         "job": {
             "title": "Cloud Engineer",
             "company": "CloudCo",
-            "description": "AWS infrastructure management. Terraform, Docker, Python automation. Some K8s experience preferred.",
+            "description": "AWS infrastructure management. Terraform, Docker, Python automation. Some K8s experience preferred.",  # noqa: E501
             "requirements": ["AWS", "Terraform", "Docker", "Python"],
         },
     },
@@ -490,9 +487,7 @@ class TestGoldenSet:
         target = case.get("job_target", {})
         expected = case["expected"]
 
-        extracted = extract_structured_requirements(
-            job.get("description", ""), job.get("requirements")
-        )
+        extracted = extract_structured_requirements(job.get("description", ""), job.get("requirements"))
         extracted["seniority"] = "senior" if "senior" in job.get("title", "").lower() else "mid"
         extracted["structured_location"] = {"work_mode": "onsite", "country": None, "region": None, "timezone": None}
         extracted["location_status"] = "PASS"
@@ -500,19 +495,15 @@ class TestGoldenSet:
         # Hard reject check
         veto_reason = check_hard_rejects(job, target, extracted)
         if veto_reason:
-            assert expected == "Hard Reject", (
-                f"{case['id']}: got Hard Reject ({veto_reason}), expected {expected}"
-            )
+            assert expected == "Hard Reject", f"{case['id']}: got Hard Reject ({veto_reason}), expected {expected}"
             return  # All good
         else:
-            assert expected != "Hard Reject", (
-                f"{case['id']}: expected Hard Reject but no veto returned"
-            )
+            assert expected != "Hard Reject", f"{case['id']}: expected Hard Reject but no veto returned"
 
         # Score-based evaluation via the real rank_analyzer
         candidate_dict = {
             "skills": {"programming_ml": [{"language": s, "proficiency": "Expert"} for s in skills]},
-            "experience": [{"title": "Engineer", "start_date": f"{2020-years}y", "end_date": "Present"}],
+            "experience": [{"title": "Engineer", "start_date": f"{2020 - years}y", "end_date": "Present"}],
             "location": "Copenhagen, Denmark",
             "constraints": "",
         }
@@ -543,9 +534,13 @@ class TestGoldenSet:
         # Allow 1-band difference for non-hard-reject cases
         if abs(actual_band - expected_band) > 1:
             import logging
+
             logging.getLogger("golden_set").warning(
                 "%s: got %s (score=%d), expected %s (Δ=%d)",
-                case["id"], actual_verdict, score, expected,
+                case["id"],
+                actual_verdict,
+                score,
+                expected,
                 abs(actual_band - expected_band),
             )
 
@@ -562,11 +557,14 @@ class TestGoldenSet:
             target = case.get("job_target", {})
             expected = case["expected"]
 
-            extracted = extract_structured_requirements(
-                job.get("description", ""), job.get("requirements")
-            )
+            extracted = extract_structured_requirements(job.get("description", ""), job.get("requirements"))
             extracted["seniority"] = "senior" if "senior" in job.get("title", "").lower() else "mid"
-            extracted["structured_location"] = {"work_mode": "onsite", "country": None, "region": None, "timezone": None}
+            extracted["structured_location"] = {
+                "work_mode": "onsite",
+                "country": None,
+                "region": None,
+                "timezone": None,
+            }
             extracted["location_status"] = "PASS"
 
             veto_reason = check_hard_rejects(job, target, extracted)
@@ -579,7 +577,7 @@ class TestGoldenSet:
 
             candidate_dict = {
                 "skills": {"programming_ml": [{"language": s, "proficiency": "Expert"} for s in skills]},
-                "experience": [{"title": "Engineer", "start_date": f"{2020-years}y", "end_date": "Present"}],
+                "experience": [{"title": "Engineer", "start_date": f"{2020 - years}y", "end_date": "Present"}],
                 "location": "Copenhagen, Denmark",
                 "constraints": "",
             }
@@ -605,7 +603,9 @@ class TestGoldenSet:
         # Soft target: warn but don't fail below 80%
         if rate < 80:
             import warnings
+
             warnings.warn(
                 f"Agreement rate {correct}/{total} = {rate:.0f}% is below 80% target. "
-                "This is expected during active development — refine scoring weights in rank_analyzer.py."
+                "This is expected during active development — refine scoring weights in rank_analyzer.py.",
+                stacklevel=2,
             )

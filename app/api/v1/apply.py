@@ -10,7 +10,7 @@ from app.api.deps import get_llm_provider, get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.db.models import Application, JobPosting, RankEvaluation
 from app.db.session import get_db as _get_db
-from app.schemas.apply import ApplyRequest, ApplyResult, ApplicationOut, ApplicationStatusOut
+from app.schemas.apply import ApplicationOut, ApplicationStatusOut, ApplyRequest, ApplyResult
 from app.schemas.rank import JobPostingSummary
 from app.services import apply
 from app.services.access_gate import enforce_action_gate
@@ -37,9 +37,7 @@ async def trigger_apply(
     real-time progress.
     """
     # Gate LLM usage (quota/credits) and get a correlation_id for usage accounting
-    correlation_id = await enforce_action_gate(
-        db, user, "apply", label=f"Apply for job {payload.job_posting_id}"
-    )
+    correlation_id = await enforce_action_gate(db, user, "apply", label=f"Apply for job {payload.job_posting_id}")
 
     # Resolve rank evaluation and validate job ownership
     job_fut = db.execute(
@@ -189,9 +187,7 @@ async def get_application_status(
         "verified": (100, t("apply.stage.verified", locale)),
         "failed": (0, t("apply.stage.failed", locale)),
     }
-    progress_pct, current_action = stage_progress.get(
-        app.stage, (0, t("apply.stage.initializing", locale))
-    )
+    progress_pct, current_action = stage_progress.get(app.stage, (0, t("apply.stage.initializing", locale)))
 
     return ApplicationStatusOut(
         id=app.id,

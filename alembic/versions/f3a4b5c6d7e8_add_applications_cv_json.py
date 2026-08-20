@@ -9,17 +9,18 @@ structured CV JSON (post-revision) used as source of truth for verification.
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
+from alembic import op
+
 # revision identifiers, used by Alembic.
 revision: str = "f3a4b5c6d7e8"
-down_revision: Union[str, None] = "f1a2b3c4d5e7"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "f1a2b3c4d5e7"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -28,8 +29,7 @@ def upgrade() -> None:
         "applications",
         sa.Column(
             "cv_json",
-            JSONB().with_variant(JSONB(), "postgresql")
-            .with_variant(sa.JSON(), "sqlite"),
+            JSONB().with_variant(JSONB(), "postgresql").with_variant(sa.JSON(), "sqlite"),
             nullable=True,
             comment="Final structured CV JSON (post-revision) — source of truth for verification",
         ),

@@ -128,7 +128,10 @@ async def get_catalog(
     try:
         return ProductCatalogOut(**await build_catalog(db))
     except NoPlansConfiguredError as exc:
-        raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail={"code": "no_plans_configured", "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "no_plans_configured", "message": str(exc)},
+        ) from exc
 
 
 @router.get("/transactions", response_model=list[CreditTransactionOut])
@@ -460,9 +463,7 @@ async def request_upgrade(
             detail="Current plan not found",
         )
 
-    amount_due = compute_prorated_due(
-        plan_from, plan_to, sub.period_start, sub.period_end
-    )
+    amount_due = compute_prorated_due(plan_from, plan_to, sub.period_start, sub.period_end)
     if amount_due <= 0:
         raise HTTPException(
             status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,

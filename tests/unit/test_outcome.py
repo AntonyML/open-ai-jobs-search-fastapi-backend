@@ -3,28 +3,24 @@
 Uses an in-memory SQLite database and mocks the CSV operations.
 """
 
-import asyncio
 import csv
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import (
     Application,
     CandidateProfile,
     JobPosting,
-    Outcome,
     RankEvaluation,
     User,
 )
 from app.exceptions import NotFoundError
 from app.services import outcome
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -35,6 +31,7 @@ async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with engine.begin() as conn:
         from app.db.models import Base
+
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -67,7 +64,12 @@ async def sample_candidate(db_session):
         employment_status="Employed",
         constraints="No relocation",
         education=[
-            {"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020", "key_topics": "ML, Distributed Systems"}
+            {
+                "degree": "MSc Computer Science",
+                "institution": "DTU",
+                "period": "2018-2020",
+                "key_topics": "ML, Distributed Systems",
+            }
         ],
         experience=[
             {
@@ -94,26 +96,30 @@ async def sample_candidate(db_session):
                 ],
             },
         ],
-        projects=[
-            {"name": "Open Source ML Library", "description": "Contributor to popular ML library"}
-        ],
+        projects=[{"name": "Open Source ML Library", "description": "Contributor to popular ML library"}],
         skills={
             "programming_ml": [
-                {"language": "Python", "proficiency": "Expert", "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"]},
+                {
+                    "language": "Python",
+                    "proficiency": "Expert",
+                    "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"],
+                },
                 {"language": "SQL", "proficiency": "Advanced", "frameworks": []},
             ],
             "domain_expertise": ["Machine Learning", "NLP", "Recommendation Systems"],
             "software_tools": ["Docker", "Kubernetes", "AWS", "Git"],
         },
         publications=[
-            {"authors": "Doe, J.", "year": "2021", "title": "Efficient Transformers", "journal": "NeurIPS", "doi": "10.xxxx/xxxx"}
+            {
+                "authors": "Doe, J.",
+                "year": "2021",
+                "title": "Efficient Transformers",
+                "journal": "NeurIPS",
+                "doi": "10.xxxx/xxxx",
+            }
         ],
-        awards=[
-            {"award": "Best Paper Award", "event": "ICML", "year": "2020"}
-        ],
-        references=[
-            {"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}
-        ],
+        awards=[{"award": "Best Paper Award", "event": "ICML", "year": "2020"}],
+        references=[{"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}],
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
@@ -135,7 +141,7 @@ async def sample_job(db_session, sample_candidate):
         url="https://linkedin.com/jobs/123",
         posting_date="2026-07-10",
         deadline="2026-08-10",
-        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",
+        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",  # noqa: E501
         requirements=[
             "5+ years ML engineering experience",
             "Expert in Python and PyTorch",
@@ -148,7 +154,7 @@ async def sample_job(db_session, sample_candidate):
         status="ranked",
         rank_score=83.0,
         rank_verdict="Strong Fit",
-        rank_date=datetime.now(timezone.utc),
+        rank_date=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.commit()
@@ -199,9 +205,9 @@ async def sample_application(db_session, sample_candidate, sample_job, sample_ev
                 "end_date": "Present",
                 "location": "Copenhagen",
                 "bullets": [
-                    "Accomplished 40% reduction in model inference latency, as measured by p99 latency, by implementing TensorRT optimization and batching",
-                    "Achieved processing of 1M+ events/day, measured by throughput metrics, by building scalable ML pipeline with PyTorch and Kubernetes",
-                    "Led team of 5 engineers to deliver real-time fraud detection system processing 10K transactions/sec with <50ms latency",
+                    "Accomplished 40% reduction in model inference latency, as measured by p99 latency, by implementing TensorRT optimization and batching",  # noqa: E501
+                    "Achieved processing of 1M+ events/day, measured by throughput metrics, by building scalable ML pipeline with PyTorch and Kubernetes",  # noqa: E501
+                    "Led team of 5 engineers to deliver real-time fraud detection system processing 10K transactions/sec with <50ms latency",  # noqa: E501
                 ],
             },
             {
@@ -211,14 +217,22 @@ async def sample_application(db_session, sample_candidate, sample_job, sample_ev
                 "end_date": "2019-12",
                 "location": "Aarhus",
                 "bullets": [
-                    "Increased recommendation click-through rate by 15%, measured via A/B test, by adding collaborative filtering signals to ranking model",
-                    "Published 2 papers at top conferences, demonstrating research impact, by conducting novel NLP research",
+                    "Increased recommendation click-through rate by 15%, measured via A/B test, by adding collaborative filtering signals to ranking model",  # noqa: E501
+                    "Published 2 papers at top conferences, demonstrating research impact, by conducting novel NLP research",  # noqa: E501
                 ],
             },
         ],
         incorporated_keywords=[
-            {"keyword": "Kubernetes", "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2", "original_context": "Required in job posting: Kubernetes"},
-            {"keyword": "AWS", "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2", "original_context": "Required in job posting: AWS"},
+            {
+                "keyword": "Kubernetes",
+                "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2",
+                "original_context": "Required in job posting: Kubernetes",
+            },
+            {
+                "keyword": "AWS",
+                "where_incorporated": "Senior ML Engineer at Acme Corp, bullet 2",
+                "original_context": "Required in job posting: AWS",
+            },
         ],
         addressed_red_flags=["Gap in employment 2017-2018"],
         cv_pdf_path="/tmp/cv.pdf",
@@ -245,21 +259,23 @@ def mock_tracker_csv():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=outcome._get_tracker_fieldnames())
         writer.writeheader()
-        writer.writerow({
-            "date": "2026-07-10",
-            "company": "TechCorp",
-            "sector": "Technology",
-            "role": "Senior Machine Learning Engineer",
-            "role_type": "full-time",
-            "channel": "linkedin",
-            "status": "applied",
-            "contact_person": "",
-            "fit_rating": "",
-            "notes": "",
-            "cv_file": "/tmp/cv.pdf",
-            "cover_letter_file": "/tmp/cover.pdf",
-            "source": "https://linkedin.com/jobs/123",
-        })
+        writer.writerow(
+            {
+                "date": "2026-07-10",
+                "company": "TechCorp",
+                "sector": "Technology",
+                "role": "Senior Machine Learning Engineer",
+                "role_type": "full-time",
+                "channel": "linkedin",
+                "status": "applied",
+                "contact_person": "",
+                "fit_rating": "",
+                "notes": "",
+                "cv_file": "/tmp/cv.pdf",
+                "cover_letter_file": "/tmp/cover.pdf",
+                "source": "https://linkedin.com/jobs/123",
+            }
+        )
         return Path(f.name)
 
 
@@ -272,20 +288,22 @@ async def test_execute_outcome_basic(db_session, sample_candidate, sample_job, s
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                outcome_result = await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="interview_invited",
-                        phone_screen_date="2026-07-15",
-                        notes="Phone screen scheduled with hiring manager",
-                    ),
-                )
+            outcome_result = await outcome.execute_outcome(
+                db=db_session,
+                user_id="test-user-id",
+                payload=outcome.OutcomeCreate(
+                    application_id=sample_application.id,
+                    status="interview_invited",
+                    phone_screen_date="2026-07-15",
+                    notes="Phone screen scheduled with hiring manager",
+                ),
+            )
 
     assert outcome_result.id is not None
     assert outcome_result.application_id == sample_application.id
@@ -299,27 +317,31 @@ async def test_execute_outcome_basic(db_session, sample_candidate, sample_job, s
 
 
 @pytest.mark.asyncio
-async def test_execute_outcome_resolution(db_session, sample_candidate, sample_job, sample_application, sample_evaluation):
+async def test_execute_outcome_resolution(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation
+):
     """execute_outcome with a resolution status sets date_resolved."""
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                outcome_result = await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="hired",
-                        date_resolved="2026-08-01",
-                        notes="Accepted offer! Starting September.",
-                        lessons_learned="Tailoring CV to job keywords made a huge difference.",
-                        valued_signals=["Tailored CV", "STAR examples", "Company research"],
-                    ),
-                )
+            outcome_result = await outcome.execute_outcome(
+                db=db_session,
+                user_id="test-user-id",
+                payload=outcome.OutcomeCreate(
+                    application_id=sample_application.id,
+                    status="hired",
+                    date_resolved="2026-08-01",
+                    notes="Accepted offer! Starting September.",
+                    lessons_learned="Tailoring CV to job keywords made a huge difference.",
+                    valued_signals=["Tailored CV", "STAR examples", "Company research"],
+                ),
+            )
 
     assert outcome_result.status == "hired"
     assert outcome_result.date_resolved == "2026-08-01"
@@ -361,30 +383,34 @@ async def test_execute_outcome_wrong_user(db_session, sample_application):
 
 
 @pytest.mark.asyncio
-async def test_execute_outcome_updates_tracker_csv(db_session, sample_candidate, sample_job, sample_application, sample_evaluation):
+async def test_execute_outcome_updates_tracker_csv(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation
+):
     """execute_outcome updates job_search_tracker.csv."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=outcome._get_tracker_fieldnames())
         writer.writeheader()
         tracker_path = Path(f.name)
 
-    with patch("app.services.outcome._get_tracker_path", return_value=tracker_path):
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+    with (
+        patch("app.services.outcome._get_tracker_path", return_value=tracker_path),
+        patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+        tempfile.TemporaryDirectory() as tmpdir,
+    ):
+        mock_apps_dir.return_value = Path(tmpdir)
 
-                await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="hired",
-                        date_resolved="2026-08-01",
-                    ),
-                )
+        await outcome.execute_outcome(
+            db=db_session,
+            user_id="test-user-id",
+            payload=outcome.OutcomeCreate(
+                application_id=sample_application.id,
+                status="hired",
+                date_resolved="2026-08-01",
+            ),
+        )
 
     # Read tracker and verify
-    with open(tracker_path, "r", encoding="utf-8") as f:
+    with open(tracker_path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
 
@@ -395,44 +421,48 @@ async def test_execute_outcome_updates_tracker_csv(db_session, sample_candidate,
 
 
 @pytest.mark.asyncio
-async def test_execute_outcome_archives_outcome_md(db_session, sample_candidate, sample_job, sample_application, sample_evaluation):
+async def test_execute_outcome_archives_outcome_md(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation
+):
     """execute_outcome archives outcome.md in documents/applications/."""
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="hired",
-                        date_resolved="2026-08-01",
-                        notes="Accepted offer!",
-                        lessons_learned="Tailoring CV worked.",
-                        valued_signals=["Tailored CV", "STAR examples"],
-                    ),
-                )
+            await outcome.execute_outcome(
+                db=db_session,
+                user_id="test-user-id",
+                payload=outcome.OutcomeCreate(
+                    application_id=sample_application.id,
+                    status="hired",
+                    date_resolved="2026-08-01",
+                    notes="Accepted offer!",
+                    lessons_learned="Tailoring CV worked.",
+                    valued_signals=["Tailored CV", "STAR examples"],
+                ),
+            )
 
-                # Check outcome.md was created (inside the temp dir context)
-                apps_dir = Path(tmpdir)
-                company_slug = "techcorp"
-                role_slug = "senior_machine_learning_engineer"
-                app_dir = apps_dir / f"{company_slug}_{role_slug}"
-                outcome_md_path = app_dir / "outcome.md"
+            # Check outcome.md was created (inside the temp dir context)
+            apps_dir = Path(tmpdir)
+            company_slug = "techcorp"
+            role_slug = "senior_machine_learning_engineer"
+            app_dir = apps_dir / f"{company_slug}_{role_slug}"
+            outcome_md_path = app_dir / "outcome.md"
 
-                assert outcome_md_path.exists()
-                content = outcome_md_path.read_text(encoding="utf-8")
-                assert "Outcome: TechCorp — Senior Machine Learning Engineer" in content
-                assert "**Status:** hired" in content
-                assert "**Date resolved:** 2026-08-01" in content
-                assert "Accepted offer!" in content
-                assert "Tailoring CV worked." in content
-                assert "Tailored CV" in content
-                assert "STAR examples" in content
+            assert outcome_md_path.exists()
+            content = outcome_md_path.read_text(encoding="utf-8")
+            assert "Outcome: TechCorp — Senior Machine Learning Engineer" in content
+            assert "**Status:** hired" in content
+            assert "**Date resolved:** 2026-08-01" in content
+            assert "Accepted offer!" in content
+            assert "Tailoring CV worked." in content
+            assert "Tailored CV" in content
+            assert "STAR examples" in content
 
 
 @pytest.mark.asyncio
@@ -441,19 +471,21 @@ async def test_get_outcome(db_session, sample_candidate, sample_job, sample_appl
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                created = await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="hired",
-                        date_resolved="2026-08-01",
-                    ),
-                )
+            created = await outcome.execute_outcome(
+                db=db_session,
+                user_id="test-user-id",
+                payload=outcome.OutcomeCreate(
+                    application_id=sample_application.id,
+                    status="hired",
+                    date_resolved="2026-08-01",
+                ),
+            )
 
     fetched = await outcome.get_outcome(db_session, created.id, "test-user-id")
     assert fetched.id == created.id
@@ -473,19 +505,21 @@ async def test_get_outcome_wrong_user(db_session, sample_candidate, sample_job, 
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                created = await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="hired",
-                        date_resolved="2026-08-01",
-                    ),
-                )
+            created = await outcome.execute_outcome(
+                db=db_session,
+                user_id="test-user-id",
+                payload=outcome.OutcomeCreate(
+                    application_id=sample_application.id,
+                    status="hired",
+                    date_resolved="2026-08-01",
+                ),
+            )
 
     with pytest.raises(NotFoundError):
         await outcome.get_outcome(db_session, created.id, "other-user-id")
@@ -497,21 +531,23 @@ async def test_list_outcomes(db_session, sample_candidate, sample_job, sample_ap
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                # Create 3 outcomes
-                for i in range(3):
-                    await outcome.execute_outcome(
-                        db=db_session,
-                        user_id="test-user-id",
-                        payload=outcome.OutcomeCreate(
-                            application_id=sample_application.id,
-                            status="hired" if i == 0 else "rejected",
-                            date_resolved="2026-08-01",
-                        ),
-                    )
+            # Create 3 outcomes
+            for i in range(3):
+                await outcome.execute_outcome(
+                    db=db_session,
+                    user_id="test-user-id",
+                    payload=outcome.OutcomeCreate(
+                        application_id=sample_application.id,
+                        status="hired" if i == 0 else "rejected",
+                        date_resolved="2026-08-01",
+                    ),
+                )
 
     outcomes = await outcome.list_outcomes(db_session, "test-user-id", limit=10)
     assert len(outcomes) == 3
@@ -523,21 +559,23 @@ async def test_list_tracker_rows(db_session, sample_candidate, sample_job, sampl
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=outcome._get_tracker_fieldnames())
         writer.writeheader()
-        writer.writerow({
-            "date": "2026-07-10",
-            "company": "TechCorp",
-            "sector": "Technology",
-            "role": "Senior Machine Learning Engineer",
-            "role_type": "full-time",
-            "channel": "linkedin",
-            "status": "hired",
-            "contact_person": "",
-            "fit_rating": "",
-            "notes": "Accepted offer",
-            "cv_file": "/tmp/cv.pdf",
-            "cover_letter_file": "/tmp/cover.pdf",
-            "source": "https://linkedin.com/jobs/123",
-        })
+        writer.writerow(
+            {
+                "date": "2026-07-10",
+                "company": "TechCorp",
+                "sector": "Technology",
+                "role": "Senior Machine Learning Engineer",
+                "role_type": "full-time",
+                "channel": "linkedin",
+                "status": "hired",
+                "contact_person": "",
+                "fit_rating": "",
+                "notes": "Accepted offer",
+                "cv_file": "/tmp/cv.pdf",
+                "cover_letter_file": "/tmp/cover.pdf",
+                "source": "https://linkedin.com/jobs/123",
+            }
+        )
         tracker_path = Path(f.name)
 
     with patch("app.services.outcome._get_tracker_path", return_value=tracker_path):
@@ -555,19 +593,21 @@ async def test_update_outcome(db_session, sample_candidate, sample_job, sample_a
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                created = await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="interview_invited",
-                        phone_screen_date="2026-07-15",
-                    ),
-                )
+            created = await outcome.execute_outcome(
+                db=db_session,
+                user_id="test-user-id",
+                payload=outcome.OutcomeCreate(
+                    application_id=sample_application.id,
+                    status="interview_invited",
+                    phone_screen_date="2026-07-15",
+                ),
+            )
 
     # Update the outcome
     updated = await outcome.update_outcome(
@@ -600,23 +640,27 @@ async def test_update_outcome_not_found(db_session):
 
 
 @pytest.mark.asyncio
-async def test_update_outcome_wrong_user(db_session, sample_candidate, sample_job, sample_application, sample_evaluation):
+async def test_update_outcome_wrong_user(
+    db_session, sample_candidate, sample_job, sample_application, sample_evaluation
+):
     """update_outcome raises NotFoundError when outcome belongs to another user."""
     with patch("app.services.outcome._get_tracker_path") as mock_tracker_path:
         mock_tracker_path.return_value = mock_tracker_csv()
 
-        with patch("app.services.outcome._get_applications_dir") as mock_apps_dir:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                mock_apps_dir.return_value = Path(tmpdir)
+        with (
+            patch("app.services.outcome._get_applications_dir") as mock_apps_dir,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            mock_apps_dir.return_value = Path(tmpdir)
 
-                created = await outcome.execute_outcome(
-                    db=db_session,
-                    user_id="test-user-id",
-                    payload=outcome.OutcomeCreate(
-                        application_id=sample_application.id,
-                        status="interview_invited",
-                    ),
-                    )
+            created = await outcome.execute_outcome(
+                db=db_session,
+                user_id="test-user-id",
+                payload=outcome.OutcomeCreate(
+                    application_id=sample_application.id,
+                    status="interview_invited",
+                ),
+            )
 
     with pytest.raises(NotFoundError):
         await outcome.update_outcome(
@@ -662,8 +706,18 @@ def test_tracker_fieldnames():
     """_get_tracker_fieldnames returns correct fieldnames."""
     fieldnames = outcome._get_tracker_fieldnames()
     expected = [
-        "date", "company", "sector", "role", "role_type", "channel",
-        "status", "contact_person", "fit_rating", "notes",
-        "cv_file", "cover_letter_file", "source",
+        "date",
+        "company",
+        "sector",
+        "role",
+        "role_type",
+        "channel",
+        "status",
+        "contact_person",
+        "fit_rating",
+        "notes",
+        "cv_file",
+        "cover_letter_file",
+        "source",
     ]
     assert fieldnames == expected

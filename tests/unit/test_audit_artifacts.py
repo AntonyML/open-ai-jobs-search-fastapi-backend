@@ -6,8 +6,6 @@ pure classification functions and the CLI defaults wiring (no DB required).
 
 from pathlib import Path
 
-import pytest
-
 from app.scripts import audit_artifacts
 
 
@@ -23,11 +21,11 @@ def _make_pdf(root: Path, rel: str) -> Path:
 
 def test_classify_cv_files_active_deleted_orphan_unexpected(tmp_path):
     root = tmp_path / "generated_cvs"
-    _make_pdf(root, "user-a/abc.pdf")           # active
-    _make_pdf(root, "user-a/def.pdf")           # deleted
-    _make_pdf(root, "user-b/zzz.pdf")           # orphan
+    _make_pdf(root, "user-a/abc.pdf")  # active
+    _make_pdf(root, "user-a/def.pdf")  # deleted
+    _make_pdf(root, "user-b/zzz.pdf")  # orphan
     _make_pdf(root, "nested/other/whatever.pdf")  # still a {user}/{id} layout → orphan
-    _make_pdf(root, "root.pdf")                 # single component → unexpected
+    _make_pdf(root, "root.pdf")  # single component → unexpected
 
     rows = {"abc": ("user-a", False), "def": ("user-a", True)}
 
@@ -43,9 +41,7 @@ def test_classify_cv_files_active_deleted_orphan_unexpected(tmp_path):
 
 
 def test_classify_cv_files_ignores_empty_root(tmp_path):
-    items, unexpected = audit_artifacts._classify_cv_files(
-        tmp_path / "missing", {}
-    )
+    items, unexpected = audit_artifacts._classify_cv_files(tmp_path / "missing", {})
     assert items == []
     assert unexpected == []
 

@@ -1,14 +1,13 @@
 """Authentication router — register, login, account deletion, and upgrade requests."""
+
 import logging
 import time
-from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
-
 from app.api.deps import get_current_user, get_db, get_locale
+from app.core.i18n.locale import t
 from app.schemas.auth import (
     DeleteAccountRequest,
     DonationRequest,
@@ -19,7 +18,8 @@ from app.schemas.auth import (
     UserRegister,
 )
 from app.services import auth
-from app.core.i18n.locale import t
+
+logger = logging.getLogger(__name__)
 
 # ── In-memory rate limiting for upgrade / donate ──
 _upgrade_cooldowns: dict[str, float] = {}
@@ -109,14 +109,14 @@ async def get_me(
 ):
     """Return the authenticated user's profile."""
     from sqlalchemy import select
+
     from app.db.models import CandidateProfile, User
+
     result = await db.execute(select(User).where(User.id == user["sub"]))
     db_user = result.scalar_one_or_none()
     if db_user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    profile_result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user["sub"]).limit(1)
-    )
+    profile_result = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user["sub"]).limit(1))
     has_profile = profile_result.scalar_one_or_none() is not None
     out = UserOut.model_validate(db_user)
     out.has_profile = has_profile
@@ -156,10 +156,11 @@ async def request_upgrade(
     """Request a plan upgrade. Sends an email notification to the admin."""
     _check_upgrade_rate_limit(user["sub"])
 
+    from sqlalchemy import select
+
     from app.core.settings import get_settings
     from app.db.models import User as UserModel
     from app.services.email import send_upgrade_request
-    from sqlalchemy import select
 
     settings = get_settings()
     result = await db.execute(select(UserModel).where(UserModel.id == user["sub"]))
@@ -192,10 +193,11 @@ async def donate(
     """Send a donation notification to the admin."""
     _check_upgrade_rate_limit(user["sub"])
 
+    from sqlalchemy import select
+
     from app.core.settings import get_settings
     from app.db.models import User as UserModel
     from app.services.email import send_donation_notification
-    from sqlalchemy import select
 
     settings = get_settings()
     result = await db.execute(select(UserModel).where(UserModel.id == user["sub"]))

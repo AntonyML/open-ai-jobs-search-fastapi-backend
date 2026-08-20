@@ -62,37 +62,27 @@ async def execute_job_data(
     deleted: dict[str, int] = {}
 
     # 2. Delete ExecutionJobs (orchestrator queue history)
-    exec_result = await db.execute(
-        delete(ExecutionJob).where(ExecutionJob.user_id == user_id)
-    )
+    exec_result = await db.execute(delete(ExecutionJob).where(ExecutionJob.user_id == user_id))
     deleted["execution_jobs"] = exec_result.rowcount
 
     # 3. Delete Upskill analyses
-    upskill_result = await db.execute(
-        delete(Upskill).where(Upskill.user_id == user_id)
-    )
+    upskill_result = await db.execute(delete(Upskill).where(Upskill.user_id == user_id))
     deleted["upskills"] = upskill_result.rowcount
 
     # 4. Delete CompetencyExpansions
-    comp_result = await db.execute(
-        delete(CompetencyExpansion).where(CompetencyExpansion.user_id == user_id)
-    )
+    comp_result = await db.execute(delete(CompetencyExpansion).where(CompetencyExpansion.user_id == user_id))
     deleted["competency_expansions"] = comp_result.rowcount
 
     # 5. Delete JobPostings — CASCADES to:
     #    RankEvaluation, Application, InterviewPrep, Outcome
     #    (all have ondelete="CASCADE" FK to job_postings or their children)
-    job_result = await db.execute(
-        delete(JobPosting).where(JobPosting.user_id == user_id)
-    )
+    job_result = await db.execute(delete(JobPosting).where(JobPosting.user_id == user_id))
     deleted["job_postings"] = job_result.rowcount
 
     # 6. (Removed: ScrapeRun table was deprecated with the migration to ingesta microservice)
 
     # 7. Delete UserSalaryData (uploaded salary benchmarks)
-    salary_result = await db.execute(
-        delete(UserSalaryData).where(UserSalaryData.user_id == user_id)
-    )
+    salary_result = await db.execute(delete(UserSalaryData).where(UserSalaryData.user_id == user_id))
     deleted["salary_data"] = salary_result.rowcount
 
     # 8. Reset ExecutionQueueState
@@ -113,6 +103,7 @@ async def execute_job_data(
     # 9. Delete job_search_tracker.csv (if it exists)
     try:
         from app.core.settings import get_settings
+
         tracker_path = Path(get_settings().tracker_path)
         if tracker_path.exists():
             tracker_path.unlink()
@@ -152,8 +143,6 @@ async def execute_job_data(
         "deleted": deleted,
         "total_deleted": total,
         "message": (
-            f"Job data reset complete. "
-            f"{', '.join(detail_parts)}. "
-            "Your providers, profile, and settings are unchanged."
+            f"Job data reset complete. {', '.join(detail_parts)}. Your providers, profile, and settings are unchanged."
         ),
     }

@@ -11,7 +11,6 @@ from app.db.models import Base, User
 from app.services import credits
 from app.services.credits import NotEnoughCreditsError
 from app.services.plans import get_active_plans, get_credit_costs, get_plan
-from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import (
     activate_subscription,
     can_use_feature,
@@ -20,6 +19,7 @@ from app.services.subscriptions import (
     get_user_access,
     process_expired_subscriptions,
 )
+from tests.unit.plan_helpers import seed_test_plans
 
 
 @pytest.fixture
@@ -130,9 +130,7 @@ async def test_free_weekly_refill_is_not_accumulative(db_session, user):
 
 
 async def test_pro_activation_sets_tier_and_credits(db_session, user):
-    sub = await activate_subscription(
-        db_session, user, "pro", billing_cycle="monthly", source="purchase"
-    )
+    sub = await activate_subscription(db_session, user, "pro", billing_cycle="monthly", source="purchase")
     await db_session.commit()
     assert user.tier == "pro"
     assert sub.correlation_id
@@ -144,7 +142,6 @@ async def test_pro_activation_sets_tier_and_credits(db_session, user):
 async def test_renewal_refills_credits_and_expires_leftover(db_session, user):
     """Credits must reset at each period boundary (renewal grants the new
     period allowance — leftover credits expire)."""
-    import datetime as dt
 
     # 1. First activation → 80 credits.
     await activate_subscription(db_session, user, "pro", billing_cycle="monthly")
@@ -169,9 +166,7 @@ async def test_auto_renew_process_grants_new_period_credits(db_session, user):
     period's credits become available (old balance replaced)."""
     import datetime as dt
 
-    sub = await activate_subscription(
-        db_session, user, "max", source="admin", auto_renew=True
-    )
+    sub = await activate_subscription(db_session, user, "max", source="admin", auto_renew=True)
     await db_session.commit()
     bal = await credits.get_balance(db_session, user.id)
     assert bal["balance"] == 350
@@ -179,7 +174,7 @@ async def test_auto_renew_process_grants_new_period_credits(db_session, user):
     # Use some credits and force the period to end.
     account = await credits.consume_credits(db_session, user.id, "cv_base", 200)
     assert account.balance == 150
-    sub.period_end = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
+    sub.period_end = dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)
     await db_session.flush()
 
     changed = await process_expired_subscriptions(db_session)
@@ -244,9 +239,7 @@ async def test_expired_subscription_downgrades_tier(db_session, user):
 
 
 async def test_process_expired_renews_auto_renew(db_session, user):
-    sub = await activate_subscription(
-        db_session, user, "max", source="admin", auto_renew=True
-    )
+    sub = await activate_subscription(db_session, user, "max", source="admin", auto_renew=True)
     await db_session.commit()
     # Force expiry.
     import datetime as dt

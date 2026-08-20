@@ -142,7 +142,8 @@ async def get_user_active_provider_config(
     else:
         # Fall back to settings if no credential stored
         from app.core.settings import get_settings
-        settings = get_settings()
+
+        get_settings()
 
         return {
             "provider": active_provider,
@@ -162,9 +163,7 @@ async def list_user_providers(db: AsyncSession, user_id: str) -> list[dict[str, 
     Returns:
         List of provider configs without API keys
     """
-    result = await db.execute(
-        select(ProviderCredential).where(ProviderCredential.user_id == user_id)
-    )
+    result = await db.execute(select(ProviderCredential).where(ProviderCredential.user_id == user_id))
     credentials = result.scalars().all()
 
     return [

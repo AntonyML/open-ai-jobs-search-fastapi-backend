@@ -17,7 +17,7 @@ Effective costs live in ``credit_cost_config`` (typed table: ``CHECK cost
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -115,9 +115,7 @@ async def get_catalog(db: AsyncSession) -> dict[str, Any]:
             {
                 "key": spec.key,
                 "group": spec.group,
-                "cost": stored[spec.key].cost
-                if spec.key in stored
-                else spec.default_cost,
+                "cost": stored[spec.key].cost if spec.key in stored else spec.default_cost,
                 "default_cost": spec.default_cost,
                 "feature_gate": spec.feature_gate,
                 "version": stored[spec.key].version if spec.key in stored else 1,
@@ -158,7 +156,7 @@ async def set_effective_costs(
 
     rows = (await db.execute(select(CreditCostConfig))).scalars().all()
     existing = {r.action: r for r in rows}
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for key, value in costs.items():
         row = existing.get(key)
@@ -167,13 +165,9 @@ async def set_effective_costs(
             if expected is not None:
                 # A missing row's baseline version is 1 (its value on insert);
                 # any other expectation means a concurrent edit/delete.
-                stale = (row is None and expected != 1) or (
-                    row is not None and row.version != expected
-                )
+                stale = (row is None and expected != 1) or (row is not None and row.version != expected)
                 if stale:
-                    raise CreditCostConflictError(
-                        f"Concurrent edit detected for '{key}': reload and retry."
-                    )
+                    raise CreditCostConflictError(f"Concurrent edit detected for '{key}': reload and retry.")
         cost = int(value)
         if row is None:
             db.add(

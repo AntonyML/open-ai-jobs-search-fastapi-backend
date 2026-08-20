@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,9 +29,7 @@ async def notify_admin(
     Returns ``True`` when an admin exists and the notification was created,
     ``False`` otherwise (no admin configured).
     """
-    result = await db.execute(
-        select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1)
-    )
+    result = await db.execute(select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1))
     admin = result.scalar_one_or_none()
     if admin is None:
         return False
@@ -55,9 +53,7 @@ async def get_notification_ttl_days(db: AsyncSession) -> int:
     ``NOTIFICATION_TTL_CONFIG_KEY``; falls back to ``NOTIFICATION_TTL_DAYS``
     when unset or invalid.
     """
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY)
-    )
+    result = await db.execute(select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY))
     row = result.scalar_one_or_none()
     stored = (row.value if row is not None else None) or {}
     days = stored.get("days")
@@ -73,9 +69,7 @@ async def set_notification_ttl_days(db: AsyncSession, days: int) -> int:
     Returns the effective value.
     """
     days = max(1, int(days))
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY)
-    )
+    result = await db.execute(select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY))
     row = result.scalar_one_or_none()
     if row is None:
         row = AppConfig(key=NOTIFICATION_TTL_CONFIG_KEY, value={"days": days})
@@ -100,10 +94,8 @@ async def purge_expired_notifications(
     """
     if max_age_days is None:
         max_age_days = await get_notification_ttl_days(db)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
-    result = await db.execute(
-        delete(AppNotification).where(AppNotification.created_at < cutoff)
-    )
+    cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
+    result = await db.execute(delete(AppNotification).where(AppNotification.created_at < cutoff))
     await db.flush()
     return max(result.rowcount or 0, 0)
 
@@ -136,27 +128,18 @@ async def mark_notifications_read(
     # Filter by payload in Python — JSONB path queries differ between
     # SQLite (tests) and PostgreSQL, and candidate sets are tiny.
     payloads = await db.execute(
-        select(AppNotification.id, AppNotification.payload).where(
-            AppNotification.id.in_(candidate_ids)
-        )
+        select(AppNotification.id, AppNotification.payload).where(AppNotification.id.in_(candidate_ids))
     )
     matched = [
         nid
         for nid, payload in payloads.all()
         if (payload or {}).get("user_id") == user_id
-        and (
-            correlation_id is None
-            or (payload or {}).get("correlation_id") == correlation_id
-        )
+        and (correlation_id is None or (payload or {}).get("correlation_id") == correlation_id)
     ]
     if not matched:
         return 0
 
-    await db.execute(
-        update(AppNotification)
-        .where(AppNotification.id.in_(matched))
-        .values(is_read=True)
-    )
+    await db.execute(update(AppNotification).where(AppNotification.id.in_(matched)).values(is_read=True))
     await db.flush()
     return len(matched)
 
@@ -183,9 +166,7 @@ async def mark_topup_requests_read(
 
     Called after the admin approves a top-up for ``user_id``.
     """
-    return await mark_notifications_read(
-        db, admin_id, user_id, "topup_request", correlation_id=correlation_id
-    )
+    return await mark_notifications_read(db, admin_id, user_id, "topup_request", correlation_id=correlation_id)
 
 
 async def mark_refund_requests_read(
@@ -198,9 +179,7 @@ async def mark_refund_requests_read(
 
     Called after the admin approves a refund for ``user_id``.
     """
-    return await mark_notifications_read(
-        db, admin_id, user_id, "refund_request", correlation_id=correlation_id
-    )
+    return await mark_notifications_read(db, admin_id, user_id, "refund_request", correlation_id=correlation_id)
 
 
 async def mark_upgrade_requests_read(
@@ -213,6 +192,4 @@ async def mark_upgrade_requests_read(
 
     Called after the admin activates the new plan for ``user_id``.
     """
-    return await mark_notifications_read(
-        db, admin_id, user_id, "upgrade_prorate", correlation_id=correlation_id
-    )
+    return await mark_notifications_read(db, admin_id, user_id, "upgrade_prorate", correlation_id=correlation_id)

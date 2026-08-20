@@ -10,12 +10,11 @@ The reviewer receives the JSON CV (serialised) + profile + job posting only
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
 from pydantic import ValidationError
 
-from app.core.logging import bind_context, get_logger
+from app.core.logging import get_logger
 from app.db.models import CandidateProfile, JobPosting, RankEvaluation
 from app.exceptions import LLMError, WebSearchUnavailableError
 from app.llm.adapter import (
@@ -24,7 +23,7 @@ from app.llm.adapter import (
     llm_completion_with_web_search,
 )
 from app.schemas.apply import ReviewFeedback
-from app.schemas.cv import CV, CoverLetter, CVAnalysis, CVMetadata, GenerateCVOutput
+from app.schemas.cv import CoverLetter, CVAnalysis, GenerateCVOutput
 from app.services.cv_linter import lint_cv
 from app.services.orchestrator.llm_response_sanitizer import (
     default_field_constraints,
@@ -140,20 +139,24 @@ def _build_candidate_summary(candidate: CandidateProfile) -> str:
         parts.append("\nSkills:")
         skills = candidate.skills
         if skills.get("programming_ml"):
-            parts.append("  Programming/ML: " + ", ".join(
-                f"{s.get('language', '')} ({s.get('proficiency', '')})"
-                for s in skills["programming_ml"][:5]
-            ))
+            parts.append(
+                "  Programming/ML: "
+                + ", ".join(
+                    f"{s.get('language', '')} ({s.get('proficiency', '')})" for s in skills["programming_ml"][:5]
+                )
+            )
         if skills.get("domain_expertise"):
             parts.append("  Domain: " + ", ".join(skills["domain_expertise"][:5]))
         if skills.get("software_tools"):
             parts.append("  Tools: " + ", ".join(skills["software_tools"][:5]))
 
     if candidate.languages:
-        parts.append("  Languages: " + ", ".join(
-            f"{l.get('language', '')} ({l.get('proficiency', '')})"
-            for l in candidate.languages[:3]
-        ))
+        parts.append(
+            "  Languages: "
+            + ", ".join(
+                f"{lang.get('language', '')} ({lang.get('proficiency', '')})" for lang in candidate.languages[:3]
+            )
+        )
 
     return "\n".join(parts)
 
@@ -182,7 +185,9 @@ def _build_rank_insights(evaluation: RankEvaluation | None) -> str:
     if evaluation.red_flags:
         parts.append("Red flags to address:\n" + "\n".join(f"  • {f}" for f in evaluation.red_flags[:5]))
     if evaluation.missing_keywords:
-        parts.append("Missing keywords to incorporate:\n" + "\n".join(f"  • {kw}" for kw in evaluation.missing_keywords[:10]))
+        parts.append(
+            "Missing keywords to incorporate:\n" + "\n".join(f"  • {kw}" for kw in evaluation.missing_keywords[:10])
+        )
     if evaluation.overall_score is not None:
         parts.append(f"Overall fit score: {evaluation.overall_score}/100")
     return "\n".join(parts)
@@ -201,7 +206,10 @@ def build_json_drafter_prompt(
     system = (
         "You are an expert CV writer. Generate a complete, tailored CV document "
         "in JSON format according to the provided schema.\n\n"
-        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + APPLY_GUARDRAIL
+        + "\n"
+        + XYZ_GUIDANCE
+        + "\n\n"
         + "Your output MUST have the following structure:\n"
         + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
     )
@@ -246,8 +254,7 @@ def build_json_cover_letter_prompt(
     system = (
         "You are an expert cover letter writer. Generate a tailored cover letter "
         "in JSON format.\n\n" + APPLY_GUARDRAIL + "\n\n"
-        "Your output must follow this schema:\n"
-        + json.dumps(CoverLetter.model_json_schema(), indent=2)
+        "Your output must follow this schema:\n" + json.dumps(CoverLetter.model_json_schema(), indent=2)
     )
 
     user = f"""
@@ -288,9 +295,13 @@ def build_json_review_prompt(
     candidate_summary = _build_candidate_summary(candidate)
     job_summary = _build_job_summary(job)
 
-    system = REVIEWER_GUARDRAIL + "\n\n" + (
-        "Your output must follow the ReviewFeedback schema:\n"
-        + json.dumps(ReviewFeedback.model_json_schema(), indent=2)
+    system = (
+        REVIEWER_GUARDRAIL
+        + "\n\n"
+        + (
+            "Your output must follow the ReviewFeedback schema:\n"
+            + json.dumps(ReviewFeedback.model_json_schema(), indent=2)
+        )
     )
 
     # Serialise the CV JSON (the reviewer reads the actual generated content)
@@ -323,7 +334,7 @@ Be critical — this is the quality gate.
 7. Is the cover letter (if present) tailored to the company?
 
 Output a ReviewFeedback JSON object.
-"""
+"""  # noqa: E501
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user.strip()},
@@ -340,9 +351,13 @@ def build_json_revise_prompt(
     candidate_summary = _build_candidate_summary(candidate)
     job_summary = _build_job_summary(job)
 
-    system = REVISE_GUARDRAIL + "\n\n" + (
-        "Your output must be a valid GenerateCVOutput JSON object:\n"
-        + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
+    system = (
+        REVISE_GUARDRAIL
+        + "\n\n"
+        + (
+            "Your output must be a valid GenerateCVOutput JSON object:\n"
+            + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
+        )
     )
 
     cv_text = json.dumps(old_cv, indent=2, ensure_ascii=False)
@@ -387,7 +402,12 @@ def build_base_cv_prompt(candidate: CandidateProfile) -> list[dict[str, str]]:
     system = (
         "You are an expert CV writer. Generate a complete, polished CV document "
         "in JSON format according to the provided schema.\n\n"
-        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n" + ATS_GUARDRAIL + "\n\n"
+        + APPLY_GUARDRAIL
+        + "\n"
+        + XYZ_GUIDANCE
+        + "\n"
+        + ATS_GUARDRAIL
+        + "\n\n"
         + "Your output MUST have the following structure:\n"
         + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
     )
@@ -427,8 +447,7 @@ def build_recruiter_analysis_prompt(
 
     system = (
         "You are a technical recruiter analyzing a candidate's profile against a "
-        "job description. Your output must follow this schema:\n"
-        + json.dumps(CVAnalysis.model_json_schema(), indent=2)
+        "job description. Your output must follow this schema:\n" + json.dumps(CVAnalysis.model_json_schema(), indent=2)
     )
 
     user = f"""
@@ -467,7 +486,10 @@ def build_personalize_drafter_prompt(
     system = (
         "You are an expert CV writer. Generate a complete, tailored CV document "
         "in JSON format according to the provided schema.\n\n"
-        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + APPLY_GUARDRAIL
+        + "\n"
+        + XYZ_GUIDANCE
+        + "\n\n"
         + "Your output MUST have the following structure:\n"
         + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
     )
@@ -533,12 +555,14 @@ def build_lint_retry_prompt(
 
     system = (
         "You are an expert CV writer. Your previous output had quality issues.\n\n"
-        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE
+        + APPLY_GUARDRAIL
+        + "\n"
+        + XYZ_GUIDANCE
     )
 
     user = f"""
 The previous CV output had quality issues. Fix ONLY the following:
-{''.join(f'- {issue}\n' for issue in issues)}
+{"".join(f"- {issue}\n" for issue in issues)}
 === CURRENT CV JSON (keep its structure) ===
 {cv_text}
 
@@ -566,9 +590,7 @@ async def _lint_and_directed_retry(
     if not issues:
         return output_dict
 
-    logger.warning(
-        "CVLinter flagged %d issue(s) — running directed retry", len(issues)
-    )
+    logger.warning("CVLinter flagged %d issue(s) — running directed retry", len(issues))
     try:
         corrected = await _llm_json(
             build_lint_retry_prompt(output_dict, issues),
@@ -639,7 +661,8 @@ async def _llm_json(
         # in prose. Ask for the complete JSON only, with a larger token budget.
         logger.warning(
             "LLM response unparseable for %s — retrying once. %s",
-            schema_type.__name__, str(first_exc)[:160],
+            schema_type.__name__,
+            str(first_exc)[:160],
         )
         retry_messages = [
             *messages,
@@ -664,17 +687,13 @@ async def _llm_json(
         try:
             cleaned = sanitize_llm_response(raw, schema_type.__name__, constraints)
         except ValueError as exc:
-            raise LLMError(
-                f"LLM response could not be parsed for {schema_type.__name__} (after retry): {exc}"
-            ) from exc
+            raise LLMError(f"LLM response could not be parsed for {schema_type.__name__} (after retry): {exc}") from exc
 
     try:
         schema_type.model_validate(cleaned)
         return cleaned
     except ValidationError as exc:
-        raise LLMError(
-            f"LLM response failed {schema_type.__name__} validation after sanitization: {exc}"
-        )
+        raise LLMError(f"LLM response failed {schema_type.__name__} validation after sanitization: {exc}") from exc
 
 
 async def generate_cv(
@@ -689,8 +708,12 @@ async def generate_cv(
     provider_config = provider_config or {}
     messages = build_json_drafter_prompt(candidate, job, evaluation)
     raw_dict = await _llm_json(
-        messages, GenerateCVOutput, provider_config,
-        temperature=temperature, max_tokens=8000, usage=usage,
+        messages,
+        GenerateCVOutput,
+        provider_config,
+        temperature=temperature,
+        max_tokens=8000,
+        usage=usage,
     )
     return GenerateCVOutput(**raw_dict)
 
@@ -707,8 +730,12 @@ async def generate_cover_letter(
     messages = build_json_cover_letter_prompt(candidate, job, evaluation)
     try:
         raw_dict = await _llm_json(
-            messages, CoverLetter, provider_config,
-            temperature=0.4, max_tokens=2000, usage=usage,
+            messages,
+            CoverLetter,
+            provider_config,
+            temperature=0.4,
+            max_tokens=2000,
+            usage=usage,
         )
         return CoverLetter(**raw_dict)
     except LLMError as exc:
@@ -728,8 +755,12 @@ async def generate_review(
     provider_config = provider_config or {}
     messages = build_json_review_prompt(cv_json, candidate, job, evaluation)
     raw_dict = await _llm_json(
-        messages, ReviewFeedback, provider_config,
-        temperature=0.0, max_tokens=4000, usage=usage,
+        messages,
+        ReviewFeedback,
+        provider_config,
+        temperature=0.0,
+        max_tokens=4000,
+        usage=usage,
     )
     return ReviewFeedback(**raw_dict)
 
@@ -746,11 +777,18 @@ async def generate_revision(
     """Revise the CV JSON based on reviewer feedback."""
     provider_config = provider_config or {}
     messages = build_json_revise_prompt(
-        old_cv, review_feedback, candidate, job,
+        old_cv,
+        review_feedback,
+        candidate,
+        job,
     )
     raw_dict = await _llm_json(
-        messages, GenerateCVOutput, provider_config,
-        temperature=temperature, max_tokens=8000, usage=usage,
+        messages,
+        GenerateCVOutput,
+        provider_config,
+        temperature=temperature,
+        max_tokens=8000,
+        usage=usage,
     )
     return GenerateCVOutput(**raw_dict)
 
@@ -767,8 +805,12 @@ async def generate_base_cv_llm(
     provider_config = provider_config or {}
     messages = build_base_cv_prompt(candidate)
     raw_dict = await _llm_json(
-        messages, GenerateCVOutput, provider_config,
-        temperature=0.3, max_tokens=8000, usage=usage,
+        messages,
+        GenerateCVOutput,
+        provider_config,
+        temperature=0.3,
+        max_tokens=8000,
+        usage=usage,
     )
     return await _lint_and_directed_retry(raw_dict, candidate, provider_config, usage=usage)
 
@@ -829,9 +871,7 @@ def _build_adapt_job_summary(job: JobPosting) -> str:
     if job.description:
         parts.append(f"\nDescription:\n{job.description[:4000]}")
     if job.requirements:
-        parts.append(
-            "\nRequirements:\n" + "\n".join(f"  • {r}" for r in job.requirements[:15])
-        )
+        parts.append("\nRequirements:\n" + "\n".join(f"  • {r}" for r in job.requirements[:15]))
     return "\n".join(parts)
 
 
@@ -847,8 +887,7 @@ def build_adapt_analysis_prompt(
 
     system = (
         "You are a technical recruiter analyzing a candidate's base CV against a "
-        "job posting. Your output must follow this schema:\n"
-        + json.dumps(CVAnalysis.model_json_schema(), indent=2)
+        "job posting. Your output must follow this schema:\n" + json.dumps(CVAnalysis.model_json_schema(), indent=2)
     )
 
     user = f"""
@@ -893,7 +932,10 @@ def build_adapt_drafter_prompt(
     system = (
         "You are an expert CV writer. Adapt a candidate's BASE CV to a specific "
         "job posting, outputting a new tailored CV document in JSON format.\n\n"
-        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + APPLY_GUARDRAIL
+        + "\n"
+        + XYZ_GUIDANCE
+        + "\n\n"
         + "Your output MUST have the following structure:\n"
         + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
     )
@@ -991,8 +1033,7 @@ def build_adapt_url_analysis_prompt(
 
     system = (
         "You are a technical recruiter analyzing a candidate's base CV against a "
-        "job posting. Your output must follow this schema:\n"
-        + json.dumps(CVAnalysis.model_json_schema(), indent=2)
+        "job posting. Your output must follow this schema:\n" + json.dumps(CVAnalysis.model_json_schema(), indent=2)
     )
 
     user = f"""
@@ -1042,7 +1083,10 @@ def build_adapt_url_drafter_prompt(
     system = (
         "You are an expert CV writer. Adapt a candidate's BASE CV to a specific "
         "job posting, outputting a new tailored CV document in JSON format.\n\n"
-        + APPLY_GUARDRAIL + "\n" + XYZ_GUIDANCE + "\n\n"
+        + APPLY_GUARDRAIL
+        + "\n"
+        + XYZ_GUIDANCE
+        + "\n\n"
         + "Your output MUST have the following structure:\n"
         + json.dumps(GenerateCVOutput.model_json_schema(), indent=2)
     )
@@ -1105,9 +1149,7 @@ async def adapt_cv_llm_with_url(
     Returns ``(analysis_dict, output_dict)``.
     """
     provider_config = provider_config or {}
-    model_ref = (
-        f"{provider_config.get('provider', '')}/{provider_config.get('model', '')}".strip("/")
-    )
+    model_ref = f"{provider_config.get('provider', '')}/{provider_config.get('model', '')}".strip("/")
     if not has_web_search_support(model_ref):
         raise WebSearchUnavailableError(
             "The configured AI model can't open links. Use a model with web "

@@ -6,10 +6,8 @@ Request/response shapes for ranking job postings against the candidate profile.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
-from pydantic import BaseModel, Field
-from pydantic import HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 
 from app.schemas.salary import SalaryBenchmark
 
@@ -55,18 +53,10 @@ class RankRequest(BaseModel):
     All fields are optional — defaults are sensible for a standard run.
     """
 
-    focus_area: str | None = Field(
-        None, description="Only rank jobs matching this focus area"
-    )
-    re_rank: bool = Field(
-        False, description="Re-rank already-ranked jobs (useful after profile update)"
-    )
-    top_n: int = Field(
-        5, description="Size of the shortlist to return", ge=1, le=50
-    )
-    job_ids: list[str] | None = Field(
-        None, description="Specific ingested_job IDs to rank (from search step)"
-    )
+    focus_area: str | None = Field(None, description="Only rank jobs matching this focus area")
+    re_rank: bool = Field(False, description="Re-rank already-ranked jobs (useful after profile update)")
+    top_n: int = Field(5, description="Size of the shortlist to return", ge=1, le=50)
+    job_ids: list[str] | None = Field(None, description="Specific ingested_job IDs to rank (from search step)")
 
 
 # ── Response schemas ────────────────────────────────────────────────
@@ -126,12 +116,12 @@ class RankedJobOut(BaseModel):
     salary data and the company is found in it.
     """
 
-    job: "JobPostingSummary"
+    job: JobPostingSummary
     evaluation: RankEvaluationOut | None = None
 
     # Salary benchmark (typed, only present when salary data is available
     # AND the company is found in the user's data)
-    salary: "SalaryBenchmark | None" = None
+    salary: SalaryBenchmark | None = None
 
     model_config = {"from_attributes": True}
 
@@ -171,6 +161,7 @@ class RankQualitativeOutput(BaseModel):
 
 class RankLLMOutput(BaseModel):
     """Legacy schema — kept for backward compat.  Use RankQualitativeOutput."""
+
     technical_score: int = Field(ge=0, le=100, default=0)
     experience_score: int = Field(ge=0, le=100, default=0)
     behavioral_score: int = Field(ge=0, le=100)

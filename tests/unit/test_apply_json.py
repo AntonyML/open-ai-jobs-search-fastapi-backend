@@ -12,15 +12,14 @@ gate that requires API credentials and is NOT tested here.
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import Base, CandidateProfile, JobPosting, RankEvaluation, User
 from app.schemas.apply import ReviewFeedback
-from app.schemas.cv import CV, CVMetadata, CoverLetter, GenerateCVOutput
-
+from app.schemas.cv import CV, CoverLetter, CVMetadata, GenerateCVOutput
 
 # ═══════════════════════════════════════════════════════════════════════
 # Fixtures
@@ -94,6 +93,7 @@ async def db_session():
 @pytest.fixture
 async def candidate(db_session) -> CandidateProfile:
     from sqlalchemy import select
+
     stmt = select(CandidateProfile).where(CandidateProfile.user_id == "test-user-id")
     c = (await db_session.execute(stmt)).scalar_one_or_none()
     return c
@@ -110,8 +110,14 @@ def job() -> JobPosting:
         company="TechCorp",
         description="We are looking for a Senior ML Engineer with NLP experience.",
         requirements=[
-            "Python", "PyTorch", "NLP", "Transformers", "Kubernetes",
-            "AWS", "Docker", "CI/CD",
+            "Python",
+            "PyTorch",
+            "NLP",
+            "Transformers",
+            "Kubernetes",
+            "AWS",
+            "Docker",
+            "CI/CD",
         ],
         language="en",
     )
@@ -344,9 +350,7 @@ class TestSanitizerIntegration:
 
     @patch("app.services.apply_json.sanitize_llm_response")
     @patch("app.services.apply_json.llm_completion")
-    async def test_sanitizer_is_called(
-        self, mock_llm, mock_sanitize, candidate, job
-    ):
+    async def test_sanitizer_is_called(self, mock_llm, mock_sanitize, candidate, job):
         from app.services.apply_json import generate_cv
 
         mock_llm.return_value = json.dumps(ENLATADO_OUTPUT_DICT)
@@ -387,21 +391,27 @@ class TestSanitizerArrayToScalar:
         from app.services.orchestrator.llm_response_sanitizer import sanitize_llm_response
 
         # Simulate the raw LLM output (must be a string)
-        dirty_json = json.dumps({
-            "cv": {
-                "education": [{
-                    "degree": "BS Computer Science",
-                    "institution": "UCR",
-                    "period": ["2015-2019"],  # array instead of string
-                    "date_range": None,
-                }],
-                "certifications": [{
-                    "name": "AWS Solutions Architect",
-                    "issuer": "Amazon",
-                    "year": ["2024"],  # array instead of string
-                }],
-            },
-        })
+        dirty_json = json.dumps(
+            {
+                "cv": {
+                    "education": [
+                        {
+                            "degree": "BS Computer Science",
+                            "institution": "UCR",
+                            "period": ["2015-2019"],  # array instead of string
+                            "date_range": None,
+                        }
+                    ],
+                    "certifications": [
+                        {
+                            "name": "AWS Solutions Architect",
+                            "issuer": "Amazon",
+                            "year": ["2024"],  # array instead of string
+                        }
+                    ],
+                },
+            }
+        )
 
         result = sanitize_llm_response(dirty_json, "GenerateCVOutput")
         cv = result["cv"]
@@ -412,16 +422,20 @@ class TestSanitizerArrayToScalar:
         """["Python", "Java"] in a string field → "Python, Java"."""
         from app.services.orchestrator.llm_response_sanitizer import sanitize_llm_response
 
-        dirty_json = json.dumps({
-            "cv": {
-                "education": [{
-                    "institution": ["University X", "Technical Institute Y"],
-                    "degree": "Dual Degree",
-                    "period": None,
-                    "date_range": None,
-                }],
-            },
-        })
+        dirty_json = json.dumps(
+            {
+                "cv": {
+                    "education": [
+                        {
+                            "institution": ["University X", "Technical Institute Y"],
+                            "degree": "Dual Degree",
+                            "period": None,
+                            "date_range": None,
+                        }
+                    ],
+                },
+            }
+        )
 
         result = sanitize_llm_response(dirty_json, "GenerateCVOutput")
         assert result["cv"]["education"][0]["institution"] == "University X, Technical Institute Y"
@@ -468,7 +482,10 @@ class TestGenerationFunctions:
         mock_llm.return_value = json.dumps(ENLATADO_OUTPUT_DICT)
 
         result = await generate_revision(
-            ENLATADO_CV_DICT, review, candidate, job,
+            ENLATADO_CV_DICT,
+            review,
+            candidate,
+            job,
             provider_config={"provider": "openai"},
         )
 
@@ -477,7 +494,6 @@ class TestGenerationFunctions:
 
     @patch("app.services.apply_json.llm_completion")
     async def test_cover_letter_round_trip(self, mock_llm, candidate, job):
-        from app.schemas.cv import CoverLetter
         from app.services.apply_json import generate_cover_letter
 
         cl_dict = {
@@ -588,9 +604,7 @@ class TestAdaptFlowPrompts:
     def test_recruiter_analysis_prompt_asks_exact_counts(self, candidate):
         from app.services.apply_json import build_recruiter_analysis_prompt
 
-        messages = build_recruiter_analysis_prompt(
-            candidate, "Senior ML Engineer role with NLP and Kubernetes."
-        )
+        messages = build_recruiter_analysis_prompt(candidate, "Senior ML Engineer role with NLP and Kubernetes.")
         user = messages[1]["content"]
         assert "EXACTLY 5" in user
         assert "EXACTLY 3" in user
@@ -598,9 +612,7 @@ class TestAdaptFlowPrompts:
     def test_adapt_analysis_prompt_asks_exact_counts(self, candidate, job):
         from app.services.apply_json import build_adapt_analysis_prompt
 
-        messages = build_adapt_analysis_prompt(
-            candidate, {"cv": {"first_name": "Test"}}, job
-        )
+        messages = build_adapt_analysis_prompt(candidate, {"cv": {"first_name": "Test"}}, job)
         user = messages[1]["content"]
         assert "EXACTLY 5" in user
         assert "EXACTLY 3" in user
@@ -608,9 +620,7 @@ class TestAdaptFlowPrompts:
     def test_adapt_url_analysis_prompt_asks_exact_counts(self, candidate):
         from app.services.apply_json import build_adapt_url_analysis_prompt
 
-        messages = build_adapt_url_analysis_prompt(
-            candidate, {"cv": {"first_name": "Test"}}, "https://example.com/job"
-        )
+        messages = build_adapt_url_analysis_prompt(candidate, {"cv": {"first_name": "Test"}}, "https://example.com/job")
         user = messages[1]["content"]
         assert "EXACTLY 5" in user
         assert "EXACTLY 3" in user
@@ -620,9 +630,7 @@ class TestAdaptFlowPrompts:
         from app.services.apply_json import build_personalize_drafter_prompt
 
         analysis = CVAnalysis(match_score=70, missing_keywords=["K8s"], red_flags=[])
-        messages = build_personalize_drafter_prompt(
-            candidate, "Senior ML Engineer role.", analysis
-        )
+        messages = build_personalize_drafter_prompt(candidate, "Senior ML Engineer role.", analysis)
         user = messages[1]["content"]
         assert "Do NOT include a cover letter" in user
         assert "Do NOT expand" in user
@@ -632,9 +640,7 @@ class TestAdaptFlowPrompts:
         from app.services.apply_json import build_adapt_drafter_prompt
 
         analysis = CVAnalysis(match_score=70, missing_keywords=["K8s"], red_flags=[])
-        messages = build_adapt_drafter_prompt(
-            candidate, {"cv": {"first_name": "Test"}}, job, analysis
-        )
+        messages = build_adapt_drafter_prompt(candidate, {"cv": {"first_name": "Test"}}, job, analysis)
         user = messages[1]["content"]
         assert "Do NOT include a cover letter" in user
         assert "PRESERVE the base CV" in user
@@ -656,11 +662,17 @@ class TestAdaptFlowPrompts:
         """Even if the LLM sneaks in a cover letter, it is stripped before return."""
         from app.services import apply_json
 
-        analysis = {"match_score": 70, "missing_keywords": [], "red_flags": [],
-                    "adapted_experience": []}
-        output = {"cv": {"first_name": "Test", "cover_letter": {
-            "opening_paragraph": "Hi", "body_paragraphs": ["x"], "closing_paragraph": "bye",
-        }}}
+        analysis = {"match_score": 70, "missing_keywords": [], "red_flags": [], "adapted_experience": []}
+        output = {
+            "cv": {
+                "first_name": "Test",
+                "cover_letter": {
+                    "opening_paragraph": "Hi",
+                    "body_paragraphs": ["x"],
+                    "closing_paragraph": "bye",
+                },
+            }
+        }
 
         async def fake_llm_json(messages, schema_type, provider_config, **kwargs):
             if schema_type.__name__ == "CVAnalysis":
@@ -668,19 +680,23 @@ class TestAdaptFlowPrompts:
             return output
 
         monkeypatch.setattr(apply_json, "_llm_json", fake_llm_json)
-        _, out = await apply_json.personalize_cv_llm(
-            candidate, "Senior ML Engineer role."
-        )
+        _, out = await apply_json.personalize_cv_llm(candidate, "Senior ML Engineer role.")
         assert out["cv"].get("cover_letter") is None
 
     async def test_adapt_cv_llm_drops_cover_letter(self, candidate, job, monkeypatch):
         from app.services import apply_json
 
-        analysis = {"match_score": 70, "missing_keywords": [], "red_flags": [],
-                    "adapted_experience": []}
-        output = {"cv": {"first_name": "Test", "cover_letter": {
-            "opening_paragraph": "Hi", "body_paragraphs": ["x"], "closing_paragraph": "bye",
-        }}}
+        analysis = {"match_score": 70, "missing_keywords": [], "red_flags": [], "adapted_experience": []}
+        output = {
+            "cv": {
+                "first_name": "Test",
+                "cover_letter": {
+                    "opening_paragraph": "Hi",
+                    "body_paragraphs": ["x"],
+                    "closing_paragraph": "bye",
+                },
+            }
+        }
 
         async def fake_llm_json(messages, schema_type, provider_config, **kwargs):
             if schema_type.__name__ == "CVAnalysis":
@@ -688,7 +704,5 @@ class TestAdaptFlowPrompts:
             return output
 
         monkeypatch.setattr(apply_json, "_llm_json", fake_llm_json)
-        _, out = await apply_json.adapt_cv_llm(
-            candidate, {"cv": {"first_name": "Test"}}, job
-        )
+        _, out = await apply_json.adapt_cv_llm(candidate, {"cv": {"first_name": "Test"}}, job)
         assert out["cv"].get("cover_letter") is None

@@ -12,18 +12,17 @@ Architecture decisions:
 - **Checkpoints**: Persists job progress. If backend restarts, continues from last
   unfinished job. Never restarts from zero.
 """
+
 from __future__ import annotations
 
-import json
-
 import time
-from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 import litellm
 from litellm import acompletion
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.db.session import async_session_factory
 from app.exceptions import LLMError, ProviderAuthError
@@ -33,18 +32,20 @@ from app.schemas.orchestrator import (
     ModelListOut,
     ProviderHealthOut,
     ProviderListOut,
-    QueueControlRequest,
     QueueControlResult,
     QueueStatusOut,
 )
 from app.services.orchestrator import execution_queue as eq
 from app.services.orchestrator import (
     llm_response_sanitizer as sanitizer,
+)
+from app.services.orchestrator import (
     model_manager as mm,
+)
+from app.services.orchestrator import (
     provider_manager as pm,
 )
 
-from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
@@ -119,9 +120,7 @@ class LLMOrchestrator:
         """
         async with async_session_factory() as db:
             # Step 1: Get user's provider configuration
-            provider_config = await self._resolve_provider_config(
-                db, user_id, provider, model
-            )
+            provider_config = await self._resolve_provider_config(db, user_id, provider, model)
 
             # Step 2: Enqueue the job
             schema_name = output_schema.__name__ if output_schema else None
@@ -139,20 +138,22 @@ class LLMOrchestrator:
 
             logger.info(
                 "Executing job %s | pipeline=%s provider=%s model=%s",
-                job_id, pipeline, provider_config["provider"], provider_config["model"],
+                job_id,
+                pipeline,
+                provider_config["provider"],
+                provider_config["model"],
             )
 
             # Step 3: Build the execution plan immediately (while we have the session)
-            execution_plan = await self._build_execution_plan(
-                db, user_id, provider_config
-            )
+            execution_plan = await self._build_execution_plan(db, user_id, provider_config)
 
             # Commit the enqueued job so other short-lived sessions can see it
             await db.commit()
 
             logger.info(
                 "Job %s plan built | %d attempts possible",
-                job_id, len(execution_plan),
+                job_id,
+                len(execution_plan),
             )
         # Session returned to pool — LLM call phase holds no DB connection
 
@@ -210,9 +211,7 @@ class LLMOrchestrator:
 
             # ── Phase 1: Start the job (short session) ──────────────
             async with async_session_factory() as session:
-                job = await self.queue.start_job(
-                    session, job_id, prov, mdl, attempt_tier
-                )
+                job = await self.queue.start_job(session, job_id, prov, mdl, attempt_tier)
                 if job is None:
                     continue
                 await session.commit()
@@ -248,7 +247,8 @@ class LLMOrchestrator:
                 # ── Phase 3: Record success (short session) ─────────
                 async with async_session_factory() as session:
                     await self.queue.complete_job(
-                        session, job_id,
+                        session,
+                        job_id,
                         result_data=result.model_dump() if hasattr(result, "model_dump") else None,
                         execution_time_ms=latency_ms,
                     )
@@ -256,7 +256,11 @@ class LLMOrchestrator:
 
                 logger.info(
                     "Job %s success | provider=%s model=%s latency=%dms tier=%d",
-                    job_id, prov, mdl, latency_ms, attempt_tier,
+                    job_id,
+                    prov,
+                    mdl,
+                    latency_ms,
+                    attempt_tier,
                 )
                 return result
 
@@ -269,20 +273,20 @@ class LLMOrchestrator:
                 elif isinstance(exc, LLMError):
                     error_code = self._classify_error(str(exc))
 
-                should_retry = (
-                    error_code in ("auth_error", "rate_limit", "timeout")
-                    or attempt_tier < len(execution_plan)
+                should_retry = error_code in ("auth_error", "rate_limit", "timeout") or attempt_tier < len(
+                    execution_plan
                 )
 
                 # ── Phase 4: Record failure (short session) ─────────
                 async with async_session_factory() as session:
                     if error_code == "rate_limit":
-                        await self.queue.rate_limit_job(
-                            session, job_id, cooldown_seconds=60
-                        )
+                        await self.queue.rate_limit_job(session, job_id, cooldown_seconds=60)
                     else:
                         await self.queue.fail_job(
-                            session, job_id, str(exc), error_code,
+                            session,
+                            job_id,
+                            str(exc),
+                            error_code,
                             should_retry=should_retry,
                         )
                     try:
@@ -292,13 +296,17 @@ class LLMOrchestrator:
 
                 logger.warning(
                     "Job %s %s | provider=%s model=%s → failover",
-                    job_id, error_code, prov, mdl,
+                    job_id,
+                    error_code,
+                    prov,
+                    mdl,
                 )
 
         # All attempts exhausted
         async with async_session_factory() as session:
             await self.queue.fail_job(
-                session, job_id,
+                session,
+                job_id,
                 str(last_error) if last_error else "All providers/models exhausted",
                 "exhausted",
                 should_retry=False,
@@ -309,8 +317,7 @@ class LLMOrchestrator:
                 await session.rollback()
 
         raise LLMError(
-            f"Job {job_id}: All providers/models failed after {len(attempted)} attempts. "
-            f"Last error: {last_error}"
+            f"Job {job_id}: All providers/models failed after {len(attempted)} attempts. Last error: {last_error}"
         ) from last_error
 
     async def _resolve_provider_config(
@@ -369,7 +376,7 @@ class LLMOrchestrator:
         from app.schemas.providers import KNOWN_PROVIDERS
 
         static = [p.static_models or [] for p in KNOWN_PROVIDERS if p.name == initial_provider]
-        for m in (static[0] if static else []):
+        for m in static[0] if static else []:
             if m != initial_model:
                 plan.append((initial_provider, m))
 
@@ -401,8 +408,8 @@ class LLMOrchestrator:
             api_key: API key from user config (passed through from _resolve_provider_config).
             api_base: Base URL from user config.
         """
-        from app.llm.adapter import _build_kwargs
         from app.core.logging.interceptors import LLMCallLogger
+        from app.llm.adapter import _build_kwargs
 
         # Resolution order: 1) parameter passed from config, 2) settings env var
         if api_key is None:
@@ -444,6 +451,7 @@ class LLMOrchestrator:
             async with llm_logger.track(provider=provider, model=model, purpose=self.__class__.__name__):
                 response = await acompletion(messages=messages, **kwargs)
             from app.llm.adapter import _record_usage
+
             _record_usage(response, usage)
             message = response.choices[0].message
             content = message.content or getattr(message, "reasoning_content", None)
@@ -479,9 +487,7 @@ class LLMOrchestrator:
 
     # ── Queue management API ──────────────────────────────────────────
 
-    async def get_queue_status(
-        self, db: AsyncSession, user_id: str
-    ) -> QueueStatusOut:
+    async def get_queue_status(self, db: AsyncSession, user_id: str) -> QueueStatusOut:
         """Get the current queue status for a user."""
         status = await self.queue.get_queue_status(db, user_id)
 
@@ -508,14 +514,13 @@ class LLMOrchestrator:
         """Handle queue control actions: pause, resume, cancel, retry_failed."""
         if action == "pause":
             await self.queue.pause_queue(db, user_id)
-            return QueueControlResult(
-                action="pause", affected_jobs=0, message="Queue paused"
-            )
+            return QueueControlResult(action="pause", affected_jobs=0, message="Queue paused")
 
         elif action == "resume":
             count = await self.queue.resume_queue(db, user_id)
             return QueueControlResult(
-                action="resume", affected_jobs=count,
+                action="resume",
+                affected_jobs=count,
                 message=f"Queue resumed, {count} jobs moved to queued",
             )
 
@@ -523,20 +528,20 @@ class LLMOrchestrator:
             if job_id:
                 success = await self.queue.cancel_job(db, job_id)
                 return QueueControlResult(
-                    action="cancel", affected_jobs=1 if success else 0,
+                    action="cancel",
+                    affected_jobs=1 if success else 0,
                     message="Job cancelled" if success else "Job not found or already completed",
                 )
             # Cancel all non-terminal jobs (includes pending jobs when queue is paused)
-            jobs = await self.queue.get_jobs_by_status(
-                db, user_id, eq.ACTIVE_STATES | {eq.STATUS_PENDING}, limit=100
-            )
+            jobs = await self.queue.get_jobs_by_status(db, user_id, eq.ACTIVE_STATES | {eq.STATUS_PENDING}, limit=100)
             count = 0
             for j in jobs:
                 if await self.queue.cancel_job(db, j.id):
                     count += 1
             await db.commit()
             return QueueControlResult(
-                action="cancel", affected_jobs=count,
+                action="cancel",
+                affected_jobs=count,
                 message=f"Cancelled {count} active jobs",
             )
 
@@ -544,7 +549,8 @@ class LLMOrchestrator:
             count = await self.queue.retry_failed_jobs(db, user_id, job_id)
             await db.commit()
             return QueueControlResult(
-                action="retry_failed", affected_jobs=count,
+                action="retry_failed",
+                affected_jobs=count,
                 message=f"Retrying {count} failed jobs",
             )
 
@@ -552,9 +558,7 @@ class LLMOrchestrator:
 
     # ── Provider health API ─────────────────────────────────────────
 
-    async def get_provider_health(
-        self, db: AsyncSession, user_id: str
-    ) -> ProviderListOut:
+    async def get_provider_health(self, db: AsyncSession, user_id: str) -> ProviderListOut:
         """Get health status for all providers."""
         providers = await pm.get_provider_health_status(db, user_id)
         return ProviderListOut(
@@ -579,9 +583,7 @@ class LLMOrchestrator:
             ]
         )
 
-    async def get_model_health(
-        self, db: AsyncSession, user_id: str, provider: str | None = None
-    ) -> ModelListOut:
+    async def get_model_health(self, db: AsyncSession, user_id: str, provider: str | None = None) -> ModelListOut:
         """Get health status for all models, optionally filtered by provider."""
         models = await mm.get_model_health_status(db, user_id, provider)
         return ModelListOut(
@@ -602,12 +604,10 @@ class LLMOrchestrator:
                     last_error_code=m.last_error_code,
                 )
                 for m in models
-            ]
+            ],
         )
 
-    async def get_job(
-        self, db: AsyncSession, job_id: str, user_id: str | None = None
-    ) -> ExecutionJobOut | None:
+    async def get_job(self, db: AsyncSession, job_id: str, user_id: str | None = None) -> ExecutionJobOut | None:
         """Get an execution job by ID, optionally scoped to a user."""
         job = await self.queue.get_job(db, job_id)
         if job is None:

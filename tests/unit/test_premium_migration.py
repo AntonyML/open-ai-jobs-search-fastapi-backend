@@ -13,9 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import Base, User, UserSubscription
-from tests.unit.plan_helpers import seed_test_plans
 from app.services.premium_migration import DEFAULT_TARGET_PLAN, migrate_premium_tier
 from app.services.subscriptions import activate_subscription
+from tests.unit.plan_helpers import seed_test_plans
 
 
 @pytest.fixture
@@ -42,9 +42,7 @@ async def _make_user(db: AsyncSession, email: str, tier: str) -> User:
 
 
 async def _count_subs(db: AsyncSession, user_id: str) -> int:
-    rows = await db.execute(
-        select(UserSubscription).where(UserSubscription.user_id == user_id)
-    )
+    rows = await db.execute(select(UserSubscription).where(UserSubscription.user_id == user_id))
     return len(list(rows.scalars().all()))
 
 
@@ -85,8 +83,8 @@ async def test_migrates_premium_user_and_creates_subscription(db_session):
     assert user.tier == DEFAULT_TARGET_PLAN
 
     subs = (
-        await db_session.execute(select(UserSubscription).where(UserSubscription.user_id == user.id))
-    ).scalars().all()
+        (await db_session.execute(select(UserSubscription).where(UserSubscription.user_id == user.id))).scalars().all()
+    )
     assert len(subs) == 1
     assert subs[0].plan_key == DEFAULT_TARGET_PLAN
     assert subs[0].status == "active"
@@ -140,8 +138,8 @@ async def test_custom_target_plan(db_session):
     assert result.found == 1 and result.subscriptions_created == 1
     assert user.tier == "pro"
     subs = (
-        await db_session.execute(select(UserSubscription).where(UserSubscription.user_id == user.id))
-    ).scalars().all()
+        (await db_session.execute(select(UserSubscription).where(UserSubscription.user_id == user.id))).scalars().all()
+    )
     assert len(subs) == 1 and subs[0].plan_key == "pro"
 
 

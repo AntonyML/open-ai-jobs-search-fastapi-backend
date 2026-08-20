@@ -3,12 +3,7 @@
 Todos los tests son deterministas — no requieren DB ni LLM.
 """
 
-import json
-
-import pytest
-
 from app.services.rank_extractor import (
-    SKILL_CATEGORIES,
     SKILL_SYNONYMS,
     build_evidence,
     check_hard_rejects,
@@ -23,10 +18,10 @@ from app.services.rank_extractor import (
     normalize_skill,
 )
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # 4.1 — Capa A: Extracción y normalización
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestCleanHtml:
     def test_strips_tags(self):
@@ -77,9 +72,7 @@ class TestNormalizeSkill:
 
 class TestExtractStructuredRequirements:
     def test_extracts_skills(self):
-        result = extract_structured_requirements(
-            "We need Python, PyTorch, and Docker skills"
-        )
+        result = extract_structured_requirements("We need Python, PyTorch, and Docker skills")
         assert "python" in result["skills"]
         assert "pytorch" in result["skills"]
         assert "docker" in result["skills"]
@@ -217,6 +210,7 @@ class TestDetectWorkAuthorization:
 # 4.2 — Capa B: Hard Rejects
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestCheckHardRejects:
     def test_excluded_company(self):
         reason = check_hard_rejects(
@@ -263,6 +257,7 @@ class TestCheckHardRejects:
 # 4.3 — Capa C: Matching
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestMatchSkillsControlled:
     def test_exact_match(self):
         match = match_skills_controlled(
@@ -306,6 +301,7 @@ class TestMatchSkillsControlled:
 # 4.3 — Capa D/E: DimensionScore construction (via evidence)
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TestBuildEvidence:
     def test_returns_all_dimensions(self):
         ev = build_evidence(
@@ -328,7 +324,12 @@ class TestBuildEvidence:
 
     def test_experience_gap_mentions_shortfall(self):
         ev = build_evidence(
-            match_result={"exact_matches": set(), "category_matches": [], "semantic_signals": [], "unmatched_job_skills": set()},
+            match_result={
+                "exact_matches": set(),
+                "category_matches": [],
+                "semantic_signals": [],
+                "unmatched_job_skills": set(),
+            },
             extracted_job={"years_experience": 5, "structured_location": {}, "location_status": "FLAG"},
             candidate_skills=set(),
             candidate_years=1,
@@ -340,6 +341,7 @@ class TestBuildEvidence:
 # ═══════════════════════════════════════════════════════════════════════
 # Versionamiento de reglas (mismo input → mismo output)
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class TestDeterminism:
     def test_normalize_skill_deterministic(self):

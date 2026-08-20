@@ -13,9 +13,9 @@ This is the LAST line of defense — prompts should already constrain output.
 from __future__ import annotations
 
 import json
-
 import re
 from typing import Any
+
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -114,8 +114,7 @@ def _extract_json(raw_text: str, schema_name: str) -> dict[str, Any]:
             pass
 
     raise ValueError(
-        f"Could not extract valid JSON from LLM response for {schema_name}. "
-        f"Response preview: {text[:200]}"
+        f"Could not extract valid JSON from LLM response for {schema_name}. Response preview: {text[:200]}"
     )
 
 
@@ -135,10 +134,25 @@ def _fix_single_quotes(text: str) -> str:
 # The LLM sometimes returns a single-element array (e.g. ["2024"]) where
 # a plain string is expected.  We detect and unwrap them here.
 _STRING_FIELDS: set[str] = {
-    "period", "year", "url", "degree", "institution", "company",
-    "title", "name", "location", "salary", "description",
-    "start", "end", "label", "proficiency",
-    "issuer", "journal", "doi", "authors", "degree",
+    "period",
+    "year",
+    "url",
+    "degree",
+    "institution",
+    "company",
+    "title",
+    "name",
+    "location",
+    "salary",
+    "description",
+    "start",
+    "end",
+    "label",
+    "proficiency",
+    "issuer",
+    "journal",
+    "doi",
+    "authors",
 }
 
 
@@ -185,7 +199,7 @@ def _sanitize_values(
             sanitized[key] = _sanitize_string_value(key, value)
 
         # Integer values
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, int | float):
             sanitized[key] = value
 
         # List values (truncate to max_length + recurse into dict items)
@@ -194,13 +208,16 @@ def _sanitize_values(
             if max_len and len(value) > max_len:
                 logger.warning(
                     "Truncating field '%s' from %d items to %d",
-                    key, len(value), max_len,
+                    key,
+                    len(value),
+                    max_len,
                 )
                 value = value[:max_len]
             sanitized[key] = [
                 _sanitize_values(item, constraints)
                 if isinstance(item, dict)
-                else str(item).strip() if isinstance(item, str)
+                else str(item).strip()
+                if isinstance(item, str)
                 else item
                 for item in value
             ]

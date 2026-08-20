@@ -60,12 +60,14 @@ async def get_credit_costs(db: AsyncSession) -> dict[str, int]:
 
 async def get_whatsapp_number() -> str:
     import os
+
     return os.getenv("WHATSAPP_NUMBER", "").strip()
 
 
 async def build_catalog(db: AsyncSession) -> dict[str, Any]:
     """Build the catalog exclusively from active database rows."""
     from app.services.topups import get_topup_packs
+
     plans = await get_active_plans(db)
     if not plans:
         raise NoPlansConfiguredError("No active plans configured. Apply the plans bootstrap migration.")

@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import contextvars
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Generator
+from typing import Any
 
 
 @dataclass
@@ -47,13 +48,14 @@ class LogContext:
         return {k: v for k, v in d.items() if v}
 
 
-_log_context: contextvars.ContextVar[LogContext] = contextvars.ContextVar(
-    "log_context", default=LogContext()
-)
+_log_context: contextvars.ContextVar[LogContext | None] = contextvars.ContextVar("log_context", default=None)
 
 
 def get_context() -> LogContext:
-    return _log_context.get()
+    ctx = _log_context.get()
+    if ctx is None:
+        return LogContext()
+    return ctx
 
 
 def set_context(ctx: LogContext) -> contextvars.Token[LogContext]:
@@ -72,7 +74,7 @@ def bind_context(**kwargs: Any) -> Generator[None, None, None]:
         async with bind_context(stage="apply", job_id=j.id):
             await drafter.generate(...)
     """
-    current = _log_context.get()
+    current = get_context()
     new_ctx = LogContext(
         request_id=current.request_id,
         user_id=current.user_id,
@@ -83,9 +85,10 @@ def bind_context(**kwargs: Any) -> Generator[None, None, None]:
         provider=kwargs.get("provider", current.provider),
         model=kwargs.get("model", current.model),
         worker_id=kwargs.get("worker_id", current.worker_id),
-        extra={**current.extra, **{k: v for k, v in kwargs.items()
-                                   if k not in ("stage", "job_id",
-                                                "provider", "model", "worker_id")}},
+        extra={
+            **current.extra,
+            **{k: v for k, v in kwargs.items() if k not in ("stage", "job_id", "provider", "model", "worker_id")},
+        },
     )
     token = _log_context.set(new_ctx)
     try:

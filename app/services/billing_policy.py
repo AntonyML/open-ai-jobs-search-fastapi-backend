@@ -44,9 +44,7 @@ def _non_negative_int(value: Any) -> int | None:
 
 async def get_billing_policy(db: AsyncSession) -> dict[str, Any]:
     """Return the effective billing policy (validated over the defaults)."""
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == BILLING_POLICY_CONFIG_KEY)
-    )
+    result = await db.execute(select(AppConfig).where(AppConfig.key == BILLING_POLICY_CONFIG_KEY))
     row = result.scalar_one_or_none()
     stored = (row.value if row is not None else None) or {}
     policy = dict(DEFAULT_BILLING_POLICY)
@@ -71,16 +69,12 @@ async def set_billing_policy(db: AsyncSession, policy: dict[str, Any]) -> dict[s
     threshold = _non_negative_int(policy.get("refund_credit_threshold"))
     cooling = _non_negative_int(policy.get("annual_cooling_days"))
     if threshold is None or cooling is None:
-        raise ValueError(
-            "billing_policy needs refund_credit_threshold >= 0 and annual_cooling_days >= 0"
-        )
+        raise ValueError("billing_policy needs refund_credit_threshold >= 0 and annual_cooling_days >= 0")
     cleaned = {
         "refund_credit_threshold": threshold,
         "annual_cooling_days": cooling,
     }
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == BILLING_POLICY_CONFIG_KEY)
-    )
+    result = await db.execute(select(AppConfig).where(AppConfig.key == BILLING_POLICY_CONFIG_KEY))
     row = result.scalar_one_or_none()
     if row is None:
         row = AppConfig(key=BILLING_POLICY_CONFIG_KEY, value=cleaned)
@@ -110,9 +104,7 @@ def billing_cycle_for(sub: UserSubscription) -> str:
     return "monthly"
 
 
-async def compute_usage_in_period(
-    db: AsyncSession, sub: UserSubscription
-) -> int:
+async def compute_usage_in_period(db: AsyncSession, sub: UserSubscription) -> int:
     """Credits consumed **within the current billing period**, from the ledger.
 
     Sums the negative ``credits_delta`` rows of ``CreditTransaction`` with

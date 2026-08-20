@@ -8,6 +8,12 @@ read, strict validation on write.
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.api.v1.admin import (
+    get_admin_billing_policy,
+    get_admin_topup_packs,
+    put_admin_billing_policy,
+    put_admin_topup_packs,
+)
 from app.db.models import AppConfig, Base
 from app.services.billing_policy import (
     BILLING_POLICY_CONFIG_KEY,
@@ -20,12 +26,6 @@ from app.services.topups import (
     TOPUP_PACKS_CONFIG_KEY,
     get_topup_packs,
     set_topup_packs,
-)
-from app.api.v1.admin import (
-    get_admin_billing_policy,
-    get_admin_topup_packs,
-    put_admin_billing_policy,
-    put_admin_topup_packs,
 )
 
 
@@ -104,9 +104,7 @@ async def test_set_billing_policy_roundtrip(db_session):
 
 async def test_set_billing_policy_rejects_invalid(db_session):
     with pytest.raises(ValueError, match="refund_credit_threshold"):
-        await set_billing_policy(
-            db_session, {"refund_credit_threshold": -1, "annual_cooling_days": 14}
-        )
+        await set_billing_policy(db_session, {"refund_credit_threshold": -1, "annual_cooling_days": 14})
     with pytest.raises(ValueError, match="refund_credit_threshold"):
         await set_billing_policy(db_session, {"annual_cooling_days": 14})
 
@@ -138,9 +136,7 @@ async def test_admin_topup_packs_rejects_bad_payload(db_session):
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as exc:
-        await put_admin_topup_packs(
-            payload={"packs": [DEFAULT_TOPUP_PACKS[0]]}, admin=_admin_ctx(), db=db_session
-        )
+        await put_admin_topup_packs(payload={"packs": [DEFAULT_TOPUP_PACKS[0]]}, admin=_admin_ctx(), db=db_session)
     assert exc.value.status_code == 422
 
     with pytest.raises(HTTPException) as exc:
@@ -202,9 +198,7 @@ async def test_admin_credit_costs_put_strict_422_on_unknown_key(db_session):
     # nothing persisted
     from app.services.credit_costs import get_catalog
 
-    entry = next(
-        a for a in (await get_catalog(db_session))["actions"] if a["key"] == "cv_base"
-    )
+    entry = next(a for a in (await get_catalog(db_session))["actions"] if a["key"] == "cv_base")
     assert entry["cost"] == 1 and entry["version"] == 1
 
 
@@ -214,14 +208,10 @@ async def test_admin_credit_costs_put_409_on_stale_version(db_session):
     from app.api.v1.admin import put_admin_credit_costs
     from app.schemas.billing import CreditCostsUpdate
 
-    await put_admin_credit_costs(
-        payload=CreditCostsUpdate(costs={"cv_base": 3}), admin=_admin_ctx(), db=db_session
-    )
+    await put_admin_credit_costs(payload=CreditCostsUpdate(costs={"cv_base": 3}), admin=_admin_ctx(), db=db_session)
     with pytest.raises(HTTPException) as exc:
         await put_admin_credit_costs(
-            payload=CreditCostsUpdate(
-                costs={"cv_base": 5}, expected_versions={"cv_base": 99}
-            ),
+            payload=CreditCostsUpdate(costs={"cv_base": 5}, expected_versions={"cv_base": 99}),
             admin=_admin_ctx(),
             db=db_session,
         )

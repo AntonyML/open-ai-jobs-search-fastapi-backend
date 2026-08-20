@@ -117,7 +117,7 @@ class PlanUpsert(BaseModel):
     sort_order: int = 10
 
     @model_validator(mode="after")
-    def validate_business_rules(self) -> "PlanUpsert":
+    def validate_business_rules(self) -> PlanUpsert:
         if self.refill_cadence not in {"period", "weekly"}:
             raise ValueError("refill_cadence must be 'period' or 'weekly'")
         if self.credits_per_period > 0 and self.price_monthly_usd == 0 and self.price_yearly_usd == 0:
@@ -307,9 +307,7 @@ class AdminTopupApprove(BaseModel):
 
     user_id: str
     pack_credits: int = Field(..., gt=0)
-    price_paid: float = Field(
-        ..., gt=0, description="Amount the user actually paid (USD)"
-    )
+    price_paid: float = Field(..., gt=0, description="Amount the user actually paid (USD)")
     correlation_id: str | None = None
 
 

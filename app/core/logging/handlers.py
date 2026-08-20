@@ -38,9 +38,7 @@ def build_file_handler(
         encoding="utf-8",
     )
     handler.setLevel(getattr(logging, level.upper()))
-    handler.setFormatter(
-        JsonFormatter() if config.is_production else FileFormatter()
-    )
+    handler.setFormatter(JsonFormatter() if config.is_production else FileFormatter())
     handler.addFilter(PIIFilter())
     if domain:
         handler.addFilter(DomainFilter(domain))
@@ -58,16 +56,25 @@ def build_all_handlers(config: LoggingConfig) -> list[logging.Handler]:
     handlers.append(build_file_handler(config, "app.log", "INFO"))
 
     # 3. error.log — only ERROR+
-    handlers.append(build_file_handler(
-        config, "error.log", "ERROR",
-        backup_count=config.error_backup_count,
-    ))
+    handlers.append(
+        build_file_handler(
+            config,
+            "error.log",
+            "ERROR",
+            backup_count=config.error_backup_count,
+        )
+    )
 
     # 4. Domain-specific logs
     for domain, filename in config.domain_logs.items():
-        handlers.append(build_file_handler(
-            config, filename, "DEBUG", domain=domain,
-        ))
+        handlers.append(
+            build_file_handler(
+                config,
+                filename,
+                "DEBUG",
+                domain=domain,
+            )
+        )
 
     # 5. access.log with healthcheck filter
     access_handler = build_file_handler(config, "access.log", "INFO", domain="access")

@@ -22,7 +22,8 @@ from app.schemas.ats_check import ATSResult
 if TYPE_CHECKING:
     from app.db.models import CandidateProfile, JobPosting
 
-from app.core.logging import get_logger, bind_context
+from app.core.logging import bind_context, get_logger
+
 logger = get_logger(__name__)
 
 # ── Regular expressions ─────────────────────────────────────────────
@@ -31,18 +32,13 @@ logger = get_logger(__name__)
 _EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 # Phone patterns covering international formats
-_PHONE_PATTERN = re.compile(
-    r"(\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}"
-)
+_PHONE_PATTERN = re.compile(r"(\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}")
 
 # CID marker pattern — indicates fonts not embedded correctly
 _CID_PATTERN = re.compile(r"\(cid:\d+\)")
 
 # Minimum keyword coverage threshold (fraction of required keywords found)
 _KEYWORD_COVERAGE_THRESHOLD = 0.7
-
-
-
 
 
 # ── Check functions ─────────────────────────────────────────────────
@@ -112,9 +108,7 @@ def _check_candidate_name(text: str, candidate_name: str | None) -> bool:
     return candidate_name.lower() in text.lower()
 
 
-def _check_keywords(
-    text: str, job_posting: JobPosting
-) -> tuple[float, list[str], list[str]]:
+def _check_keywords(text: str, job_posting: JobPosting) -> tuple[float, list[str], list[str]]:
     """Check keyword coverage against the job posting requirements.
 
     Extracts keywords from the job posting (description + requirements)
@@ -131,10 +125,35 @@ def _check_keywords(
 
     # Common stop words to exclude from ALL keyword sources
     stop_words = {
-        "the", "and", "for", "with", "this", "that", "from", "have",
-        "will", "your", "what", "about", "which", "their", "would",
-        "could", "should", "been", "were", "also", "than", "into",
-        "over", "such", "only", "other", "more", "very", "just",
+        "the",
+        "and",
+        "for",
+        "with",
+        "this",
+        "that",
+        "from",
+        "have",
+        "will",
+        "your",
+        "what",
+        "about",
+        "which",
+        "their",
+        "would",
+        "could",
+        "should",
+        "been",
+        "were",
+        "also",
+        "than",
+        "into",
+        "over",
+        "such",
+        "only",
+        "other",
+        "more",
+        "very",
+        "just",
     }
 
     if job_posting.requirements:
@@ -210,19 +229,15 @@ def _detect_column_scramble(text: str) -> bool:
         if is_long:
             long_count += 1
 
-        if i > 0 and is_short != prev_short:
-            # Only count transitions between meaningful states
-            if is_short or prev_short:
-                transitions += 1
+        # Only count transitions between meaningful states
+        if i > 0 and is_short != prev_short and (is_short or prev_short):
+            transitions += 1
 
         prev_short = is_short
 
     # If we see frequent short↔long transitions, suspect column scramble
     sample_size = max(len(lines) // 5, 1)
-    if transitions > sample_size * 0.4 and short_count > 0 and long_count > 0:
-        return True
-
-    return False
+    return bool(transitions > sample_size * 0.4 and short_count > 0 and long_count > 0)
 
 
 # ── Legacy PDF-based check (DEPRECATED — use check_ats_from_json) ──
@@ -275,8 +290,14 @@ def extract_text_from_cv_json(cv_json: dict) -> str:
 
     # Header fields
     for field in [
-        "first_name", "last_name", "email", "phone",
-        "location", "linkedin", "github", "portfolio_url",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "location",
+        "linkedin",
+        "github",
+        "portfolio_url",
     ]:
         if cv.get(field):
             parts.append(str(cv[field]))
@@ -289,7 +310,7 @@ def extract_text_from_cv_json(cv_json: dict) -> str:
     parts.extend(cv.get("core_competencies") or [])
 
     # Skills
-    for group in (cv.get("skills") or []):
+    for group in cv.get("skills") or []:
         if isinstance(group, dict):
             parts.append(group.get("label", ""))
             parts.extend(group.get("skills", []))
@@ -297,40 +318,40 @@ def extract_text_from_cv_json(cv_json: dict) -> str:
             parts.append(group)
 
     # Experience
-    for exp in (cv.get("experience") or []):
+    for exp in cv.get("experience") or []:
         parts.append(exp.get("title", ""))
         parts.append(exp.get("company", ""))
         parts.append(exp.get("location", ""))
         parts.extend(exp.get("bullets") or [])
 
     # Projects
-    for proj in (cv.get("projects") or []):
+    for proj in cv.get("projects") or []:
         parts.append(proj.get("name", ""))
         parts.append(proj.get("description", ""))
 
     # Education
-    for edu in (cv.get("education") or []):
+    for edu in cv.get("education") or []:
         parts.append(edu.get("degree", ""))
         parts.append(edu.get("institution", ""))
         parts.append(edu.get("key_topics", ""))
 
     # Certifications
-    for cert in (cv.get("certifications") or []):
+    for cert in cv.get("certifications") or []:
         parts.append(cert.get("name", ""))
         parts.append(cert.get("issuer", ""))
 
     # Publications
-    for pub in (cv.get("publications") or []):
+    for pub in cv.get("publications") or []:
         parts.append(pub.get("title", ""))
         parts.append(pub.get("journal", ""))
 
     # Awards
-    for award in (cv.get("awards") or []):
+    for award in cv.get("awards") or []:
         parts.append(award.get("award", ""))
         parts.append(award.get("event", ""))
 
     # References
-    for ref in (cv.get("references") or []):
+    for ref in cv.get("references") or []:
         parts.append(ref.get("name", ""))
         parts.append(ref.get("title", ""))
         parts.append(ref.get("company", ""))

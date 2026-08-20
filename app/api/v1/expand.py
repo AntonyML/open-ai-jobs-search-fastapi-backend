@@ -1,11 +1,10 @@
 """Expand router — endpoints for competency expansion from documents and online presence."""
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_max_or_admin
-from app.core.i18n.locale import t
 from app.db.models import CandidateProfile, CompetencyExpansion
 from app.db.session import get_db as _get_db
 from app.exceptions import ProfileIncompleteError
@@ -42,9 +41,7 @@ async def trigger_expand(
     """
 
     # 1. Get candidate profile
-    candidate_result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user["sub"])
-    )
+    candidate_result = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user["sub"]))
     candidate = candidate_result.scalar_one_or_none()
     if candidate is None:
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
@@ -73,9 +70,7 @@ async def trigger_expand(
     await db.refresh(expansion)
 
     # 3. Add background task
-    background_tasks.add_task(
-        expand._execute_expand_background, expansion.id, correlation_id
-    )
+    background_tasks.add_task(expand._execute_expand_background, expansion.id, correlation_id)
 
     return expansion
 

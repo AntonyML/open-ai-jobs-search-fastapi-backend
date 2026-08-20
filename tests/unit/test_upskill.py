@@ -4,7 +4,7 @@ Uses an in-memory SQLite database and mocks the LLM calls.
 Never calls the real LLM.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -32,7 +32,6 @@ from app.schemas.upskill import (
     UpskillSummaryOut,
 )
 from app.services import upskill
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -69,7 +68,11 @@ async def sample_candidate(db_session):
         email="jane@example.com",
         skills={
             "programming_ml": [
-                {"language": "Python", "proficiency": "Expert", "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"]},
+                {
+                    "language": "Python",
+                    "proficiency": "Expert",
+                    "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"],
+                },
                 {"language": "SQL", "proficiency": "Advanced", "frameworks": []},
             ],
             "domain_expertise": ["Machine Learning", "NLP"],
@@ -85,9 +88,7 @@ async def sample_candidate(db_session):
                 "bullets": ["Built ML pipelines"],
             }
         ],
-        education=[
-            {"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020", "key_topics": "ML"}
-        ],
+        education=[{"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020", "key_topics": "ML"}],
     )
     db_session.add(candidate)
     await db_session.commit()
@@ -116,7 +117,7 @@ async def sample_job(db_session, sample_candidate):
         status="ranked",
         rank_score=82.0,
         rank_verdict="Strong Fit",
-        rank_date=datetime.now(timezone.utc),
+        rank_date=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.commit()
@@ -152,8 +153,12 @@ async def sample_evaluation(db_session, sample_job):
 def _mock_pass1():
     return HardSkillGapsLLMOutput(
         gaps=[
-            HardSkillGapOut(skill="Kubernetes", priority="Critical", source_jobs=["job-1"], frequency=3, fit_weight=2.5),
-            HardSkillGapOut(skill="CI/CD", priority="High", source_jobs=["job-1", "job-2"], frequency=2, fit_weight=1.8),
+            HardSkillGapOut(
+                skill="Kubernetes", priority="Critical", source_jobs=["job-1"], frequency=3, fit_weight=2.5
+            ),
+            HardSkillGapOut(
+                skill="CI/CD", priority="High", source_jobs=["job-1", "job-2"], frequency=2, fit_weight=1.8
+            ),
         ]
     )
 
@@ -161,8 +166,12 @@ def _mock_pass1():
 def _mock_pass2():
     return SynthesizedGapsLLMOutput(
         gaps=[
-            SynthesizedGapOut(skill="MLOps", type="tooling", priority="Critical", evidence="Kubernetes + CI/CD imply MLOps gap"),
-            SynthesizedGapOut(skill="Cloud Architecture", type="domain", priority="High", evidence="AWS required in jobs"),
+            SynthesizedGapOut(
+                skill="MLOps", type="tooling", priority="Critical", evidence="Kubernetes + CI/CD imply MLOps gap"
+            ),
+            SynthesizedGapOut(
+                skill="Cloud Architecture", type="domain", priority="High", evidence="AWS required in jobs"
+            ),
         ]
     )
 
@@ -173,7 +182,9 @@ def _mock_heatmap():
             GapHeatmapOut(skill="Kubernetes", type="hard", priority="Critical", gap_source="Pass 1: 3/3 jobs"),
             GapHeatmapOut(skill="CI/CD", type="hard", priority="High", gap_source="Pass 1: 2/3 jobs"),
             GapHeatmapOut(skill="MLOps", type="tooling", priority="Critical", gap_source="Pass 2: LLM synthesis"),
-            GapHeatmapOut(skill="Cloud Architecture", type="domain", priority="High", gap_source="Pass 2: LLM synthesis"),
+            GapHeatmapOut(
+                skill="Cloud Architecture", type="domain", priority="High", gap_source="Pass 2: LLM synthesis"
+            ),
         ]
     )
 
@@ -186,7 +197,14 @@ def _mock_learning_plan():
                 type="hard",
                 priority="Critical",
                 resources=[
-                    LearningResourceOut(title="K8s Docs", url="https://kubernetes.io/docs", format="article", duration_hours=10, cost="free", quality_score=9),
+                    LearningResourceOut(
+                        title="K8s Docs",
+                        url="https://kubernetes.io/docs",
+                        format="article",
+                        duration_hours=10,
+                        cost="free",
+                        quality_score=9,
+                    ),
                 ],
                 study_order=1,
                 prerequisites=["Docker"],
@@ -197,7 +215,14 @@ def _mock_learning_plan():
                 type="tooling",
                 priority="Critical",
                 resources=[
-                    LearningResourceOut(title="MLOps Fundamentals", url="https://coursera.org/mlops", format="course", duration_hours=15, cost="free", quality_score=8),
+                    LearningResourceOut(
+                        title="MLOps Fundamentals",
+                        url="https://coursera.org/mlops",
+                        format="course",
+                        duration_hours=15,
+                        cost="free",
+                        quality_score=8,
+                    ),
                 ],
                 study_order=2,
                 prerequisites=["Kubernetes"],
@@ -300,12 +325,15 @@ async def test_execute_upskill_targeted_job_not_found(db_session, sample_candida
 @pytest.mark.asyncio
 async def test_execute_upskill_pass1_llm_error(db_session, sample_candidate, sample_job, sample_evaluation):
     """execute_upskill wraps LLM failure as LLMError and marks status=failed."""
-    with patch("app.services.upskill.llm_completion_structured", side_effect=Exception("timeout")):
-        with pytest.raises(LLMError):
-            await upskill.execute_upskill(db=db_session, user_id="test-user-id", mode="aggregate")
+    with (
+        patch("app.services.upskill.llm_completion_structured", side_effect=Exception("timeout")),
+        pytest.raises(LLMError),
+    ):
+        await upskill.execute_upskill(db=db_session, user_id="test-user-id", mode="aggregate")
 
     # Verify the DB record was marked failed
     from sqlalchemy import select
+
     result = await db_session.execute(select(Upskill).where(Upskill.user_id == "test-user-id"))
     record = result.scalar_one_or_none()
     assert record is not None
@@ -360,8 +388,22 @@ def test_upskill_summary_gaps_found():
         mode="aggregate",
         status="completed",
         hard_skill_gaps=[
-            {"skill": "K8s", "type": "hard", "priority": "Critical", "source_jobs": [], "frequency": 2, "fit_weight": 1.5},
-            {"skill": "CI/CD", "type": "hard", "priority": "High", "source_jobs": [], "frequency": 1, "fit_weight": 0.8},
+            {
+                "skill": "K8s",
+                "type": "hard",
+                "priority": "Critical",
+                "source_jobs": [],
+                "frequency": 2,
+                "fit_weight": 1.5,
+            },
+            {
+                "skill": "CI/CD",
+                "type": "hard",
+                "priority": "High",
+                "source_jobs": [],
+                "frequency": 1,
+                "fit_weight": 0.8,
+            },
         ],
         synthesized_gaps=[
             {"skill": "MLOps", "type": "tooling", "priority": "Critical", "source": "LLM synthesis", "evidence": "..."},
@@ -372,11 +414,27 @@ def test_upskill_summary_gaps_found():
             {"skill": "MLOps", "type": "tooling", "priority": "Critical", "gap_source": "Pass 2"},
         ],
         learning_plan=[
-            {"skill": "K8s", "type": "hard", "priority": "Critical", "resources": [], "study_order": 1, "prerequisites": [], "estimated_weeks": 3},
-            {"skill": "MLOps", "type": "tooling", "priority": "Critical", "resources": [], "study_order": 2, "prerequisites": [], "estimated_weeks": 3},
+            {
+                "skill": "K8s",
+                "type": "hard",
+                "priority": "Critical",
+                "resources": [],
+                "study_order": 1,
+                "prerequisites": [],
+                "estimated_weeks": 3,
+            },
+            {
+                "skill": "MLOps",
+                "type": "tooling",
+                "priority": "Critical",
+                "resources": [],
+                "study_order": 2,
+                "prerequisites": [],
+                "estimated_weeks": 3,
+            },
         ],
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
 
     summary = UpskillSummaryOut(
@@ -399,7 +457,10 @@ def test_upskill_summary_gaps_found():
 
 @pytest.mark.asyncio
 async def test_execute_upskill_records_llm_usage(
-    db_session, sample_candidate, sample_job, sample_evaluation,
+    db_session,
+    sample_candidate,
+    sample_job,
+    sample_evaluation,
 ):
     """execute_upskill calls credits.record_llm_usage with the correlation_id when one is passed."""
     from unittest.mock import AsyncMock
@@ -426,7 +487,10 @@ async def test_execute_upskill_records_llm_usage(
 
 @pytest.mark.asyncio
 async def test_execute_upskill_without_correlation_id_skips_usage(
-    db_session, sample_candidate, sample_job, sample_evaluation,
+    db_session,
+    sample_candidate,
+    sample_job,
+    sample_evaluation,
 ):
     """No correlation_id (e.g. admin bypass) → record_llm_usage is never called."""
     from unittest.mock import AsyncMock
@@ -435,9 +499,7 @@ async def test_execute_upskill_without_correlation_id_skips_usage(
         patch("app.services.upskill.llm_completion_structured", side_effect=_all_4_passes()),
         patch("app.services.upskill.credits.record_llm_usage", new=AsyncMock()) as mock_record,
     ):
-        result = await upskill.execute_upskill(
-            db=db_session, user_id="test-user-id", mode="aggregate"
-        )
+        result = await upskill.execute_upskill(db=db_session, user_id="test-user-id", mode="aggregate")
 
     assert result.status == "completed"
     mock_record.assert_not_awaited()
@@ -445,7 +507,10 @@ async def test_execute_upskill_without_correlation_id_skips_usage(
 
 @pytest.mark.asyncio
 async def test_upskill_threads_usage_sink_to_all_llm_passes(
-    db_session, sample_candidate, sample_job, sample_evaluation,
+    db_session,
+    sample_candidate,
+    sample_job,
+    sample_evaluation,
 ):
     """The same usage sink dict flows into every llm_completion_structured call."""
     from unittest.mock import AsyncMock
@@ -468,7 +533,10 @@ async def test_upskill_threads_usage_sink_to_all_llm_passes(
 
 @pytest.mark.asyncio
 async def test_background_task_records_usage(
-    db_session, sample_candidate, sample_job, sample_evaluation,
+    db_session,
+    sample_candidate,
+    sample_job,
+    sample_evaluation,
 ):
     """_execute_upskill_background records LLM usage on its own session with the correlation_id."""
     from unittest.mock import AsyncMock
@@ -507,6 +575,7 @@ async def test_background_task_records_usage(
 
     # The record completed on its own session.
     from sqlalchemy import select
+
     result = await db_session.execute(select(Upskill).where(Upskill.id == record.id))
     refreshed = result.scalar_one_or_none()
     assert refreshed is not None

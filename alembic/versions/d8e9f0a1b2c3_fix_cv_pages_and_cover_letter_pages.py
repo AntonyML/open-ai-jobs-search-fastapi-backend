@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "d8e9f0a1b2c3"

@@ -6,7 +6,6 @@ Tests that verify the "not configured" path patch _r2_configured directly.
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,8 +48,10 @@ class TestUploadPdf:
     """Test upload_pdf()."""
 
     def test_upload_success(self):
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
             mock_client.return_value = MagicMock()
 
@@ -64,15 +65,19 @@ class TestUploadPdf:
             assert call_kwargs["ContentType"] == "application/pdf"
 
     def test_upload_raises_when_not_configured(self):
-        with patch("app.services.r2_storage._r2_configured", return_value=False):
-            with pytest.raises(RuntimeError, match="R2 is not configured"):
-                r2_storage.upload_pdf("test/file.pdf", b"data")
+        with (
+            patch("app.services.r2_storage._r2_configured", return_value=False),
+            pytest.raises(RuntimeError, match="R2 is not configured"),
+        ):
+            r2_storage.upload_pdf("test/file.pdf", b"data")
 
     def test_upload_raises_on_client_error(self):
         from botocore.exceptions import ClientError
 
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
             mock_client.return_value.put_object.side_effect = ClientError(
                 {"Error": {"Code": "500", "Message": "Internal"}},
@@ -87,14 +92,12 @@ class TestGenerateSignedUrl:
     """Test generate_signed_url()."""
 
     def test_generates_url(self):
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
-            mock_settings.return_value = MagicMock(
-                r2_bucket_name="test-bucket", r2_signed_url_ttl=3600
-            )
-            mock_client.return_value.generate_presigned_url.return_value = (
-                "https://r2.example.com/signed?token=abc"
-            )
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
+            mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket", r2_signed_url_ttl=3600)
+            mock_client.return_value.generate_presigned_url.return_value = "https://r2.example.com/signed?token=abc"
 
             url = r2_storage.generate_signed_url("test/file.pdf")
 
@@ -106,11 +109,11 @@ class TestGenerateSignedUrl:
             )
 
     def test_custom_expires_in(self):
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
-            mock_settings.return_value = MagicMock(
-                r2_bucket_name="test-bucket", r2_signed_url_ttl=3600
-            )
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
+            mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket", r2_signed_url_ttl=3600)
             mock_client.return_value.generate_presigned_url.return_value = "url"
 
             r2_storage.generate_signed_url("key", expires_in=7200)
@@ -119,26 +122,28 @@ class TestGenerateSignedUrl:
             assert call_kwargs["ExpiresIn"] == 7200
 
     def test_raises_when_not_configured(self):
-        with patch("app.services.r2_storage._r2_configured", return_value=False):
-            with pytest.raises(RuntimeError, match="R2 is not configured"):
-                r2_storage.generate_signed_url("key")
+        with (
+            patch("app.services.r2_storage._r2_configured", return_value=False),
+            pytest.raises(RuntimeError, match="R2 is not configured"),
+        ):
+            r2_storage.generate_signed_url("key")
 
 
 class TestDeletePdf:
     """Test delete_pdf()."""
 
     def test_delete_success(self):
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
             mock_client.return_value = MagicMock()
 
             result = r2_storage.delete_pdf("test/file.pdf")
 
             assert result is True
-            mock_client.return_value.delete_object.assert_called_once_with(
-                Bucket="test-bucket", Key="test/file.pdf"
-            )
+            mock_client.return_value.delete_object.assert_called_once_with(Bucket="test-bucket", Key="test/file.pdf")
 
     def test_delete_returns_false_when_not_configured(self):
         with patch("app.services.r2_storage._r2_configured", return_value=False):
@@ -147,8 +152,10 @@ class TestDeletePdf:
     def test_delete_returns_false_on_error(self):
         from botocore.exceptions import ClientError
 
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
             mock_client.return_value.delete_object.side_effect = ClientError(
                 {"Error": {"Code": "500", "Message": "err"}}, "DeleteObject"
@@ -166,8 +173,10 @@ class TestDeleteUserPrefix:
             assert r2_storage.delete_user_prefix("user-1") == 0
 
     def test_deletes_objects_in_cv_scope(self):
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
             mock_client_obj = MagicMock()
             mock_client.return_value = mock_client_obj
@@ -194,8 +203,10 @@ class TestObjectExists:
     """Test object_exists()."""
 
     def test_returns_true_when_exists(self):
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
             mock_client.return_value.head_object.return_value = {}
 
@@ -204,8 +215,10 @@ class TestObjectExists:
     def test_returns_false_when_not_exists(self):
         from botocore.exceptions import ClientError
 
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
             mock_client.return_value.head_object.side_effect = ClientError(
                 {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
@@ -228,12 +241,12 @@ class TestDownloadToTemp:
     def test_returns_none_on_error(self):
         from botocore.exceptions import ClientError
 
-        with patch("app.services.r2_storage.get_settings") as mock_settings, \
-             patch("app.services.r2_storage._get_client") as mock_client:
+        with (
+            patch("app.services.r2_storage.get_settings") as mock_settings,
+            patch("app.services.r2_storage._get_client") as mock_client,
+        ):
             mock_settings.return_value = MagicMock(r2_bucket_name="test-bucket")
-            mock_client.return_value.download_file.side_effect = ClientError(
-                {"Error": {"Code": "404"}}, "GetObject"
-            )
+            mock_client.return_value.download_file.side_effect = ClientError({"Error": {"Code": "404"}}, "GetObject")
 
             result = r2_storage.download_to_temp("missing.pdf")
             assert result is None

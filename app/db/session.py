@@ -14,11 +14,11 @@ settings = get_settings()
 engine = create_async_engine(
     settings.database_url,
     echo=False,  # controlled via logging levels, not echo
-    pool_size=5,        # Leave room for worker + other clients (Supabase caps at 15)
-    max_overflow=2,     # 5+2=7 max for API, worker has its own pool of 2+1=3 → total ≤10
+    pool_size=5,  # Leave room for worker + other clients (Supabase caps at 15)
+    max_overflow=2,  # 5+2=7 max for API, worker has its own pool of 2+1=3 → total ≤10
     pool_pre_ping=True,
     pool_recycle=1800,  # Recycle connections every 30 min
-    pool_timeout=30,    # Wait up to 30s for a connection before raising TimeoutError
+    pool_timeout=30,  # Wait up to 30s for a connection before raising TimeoutError
     # If using Transaction Pooler, uncomment:
     # connect_args={"statement_cache_size": 0},
 )

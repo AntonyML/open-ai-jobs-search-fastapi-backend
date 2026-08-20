@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.security import encrypt_api_key
 from app.db.models import (
-    Base,
     GLOBAL_PROVIDER_CONFIG_ID,
+    Base,
     GlobalProviderConfig,
     User,
     UserModelSelection,
@@ -17,9 +17,11 @@ from app.exceptions import LLMError, NotFoundError, ProviderAuthError
 from app.schemas.providers import ModelInfo, ModelListOut
 from app.services.provider_models import (
     _static_models_for,
-    get_user_model_selection as get_user_model_selection_svc,
     list_provider_models,
     set_user_model_selection,
+)
+from app.services.provider_models import (
+    get_user_model_selection as get_user_model_selection_svc,
 )
 
 
@@ -89,7 +91,7 @@ class TestListProviderModels:
         db_session.add(_make_global_config("openai"))
         await db_session.commit()
         mock_models = [ModelInfo(id="gpt-4o", object="model", owned_by="openai", source="live")]
-        from unittest.mock import patch, AsyncMock
+        from unittest.mock import AsyncMock, patch
 
         with patch(
             "app.services.provider_models._list_openai_compatible",
@@ -105,15 +107,17 @@ class TestListProviderModels:
     async def test_openai_http_error(self, db_session):
         db_session.add(_make_global_config("openai"))
         await db_session.commit()
-        from unittest.mock import patch, AsyncMock
+        from unittest.mock import AsyncMock, patch
 
-        with patch(
-            "app.services.provider_models._list_openai_compatible",
-            new_callable=AsyncMock,
-            side_effect=LLMError("HTTP 401"),
+        with (
+            patch(
+                "app.services.provider_models._list_openai_compatible",
+                new_callable=AsyncMock,
+                side_effect=LLMError("HTTP 401"),
+            ),
+            pytest.raises(LLMError, match="HTTP 401"),
         ):
-            with pytest.raises(LLMError, match="HTTP 401"):
-                await list_provider_models(db_session, "openai")
+            await list_provider_models(db_session, "openai")
 
     @pytest.mark.asyncio
     async def test_lm_studio_no_api_base_raises(self, db_session):
@@ -127,7 +131,7 @@ class TestListProviderModels:
         db_session.add(_make_global_config("lm_studio", api_base="http://localhost:1234/v1"))
         await db_session.commit()
         mock_models = [ModelInfo(id="local-model", object="model", owned_by="lmstudio", source="live")]
-        from unittest.mock import patch, AsyncMock
+        from unittest.mock import AsyncMock, patch
 
         with patch(
             "app.services.provider_models._list_openai_compatible",
@@ -150,7 +154,7 @@ class TestListProviderModels:
         db_session.add(_make_global_config("ollama", api_base="http://localhost:11434"))
         await db_session.commit()
         mock_models = [ModelInfo(id="llama3.2:3b", object="model", owned_by="llama", source="live")]
-        from unittest.mock import patch, AsyncMock
+        from unittest.mock import AsyncMock, patch
 
         with patch(
             "app.services.provider_models._list_ollama",

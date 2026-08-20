@@ -12,7 +12,6 @@ aggregation queries and simple statistics.
 
 from __future__ import annotations
 
-
 from collections import Counter
 from typing import Any
 
@@ -20,7 +19,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Application, JobPosting, Outcome, RankEvaluation
+from app.core.logging import bind_context, get_logger
+from app.db.models import Application, JobPosting, Outcome
 from app.exceptions import NotFoundError
 from app.schemas.outcome import (
     CalibrationInsight,
@@ -29,7 +29,6 @@ from app.schemas.outcome import (
     FunnelMetrics,
 )
 
-from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 # ── Status classification ───────────────────────────────────────────
@@ -111,12 +110,14 @@ async def _load_outcomes_with_relations(
         job = app.job_posting if app else None
         evaluation = app.rank_evaluation if app else None
 
-        enriched.append({
-            "outcome": o,
-            "application": app,
-            "job": job,
-            "evaluation": evaluation,
-        })
+        enriched.append(
+            {
+                "outcome": o,
+                "application": app,
+                "job": job,
+                "evaluation": evaluation,
+            }
+        )
     return enriched
 
 
@@ -144,21 +145,14 @@ def _compute_funnel(
     statuses = list(app_statuses.values())
 
     interviewed = sum(
-        1 for s in statuses
-        if s in PROGRESS_STATUSES or s in POSITIVE_RESOLUTIONS or s == "interview_only"
+        1 for s in statuses if s in PROGRESS_STATUSES or s in POSITIVE_RESOLUTIONS or s == "interview_only"
     )
-    offered = sum(
-        1 for s in statuses
-        if s in {"offer_received", "hired", "offer_declined"}
-    )
+    offered = sum(1 for s in statuses if s in {"offer_received", "hired", "offer_declined"})
     hired = sum(1 for s in statuses if s == "hired")
     rejected = sum(1 for s in statuses if s in NEGATIVE_RESOLUTIONS)
     no_response = sum(1 for s in statuses if s == "no_response")
     withdrawn = sum(1 for s in statuses if s == "withdrawn")
-    in_progress = sum(
-        1 for s in statuses
-        if s in PROGRESS_STATUSES and s not in {"offer_received"}
-    )
+    in_progress = sum(1 for s in statuses if s in PROGRESS_STATUSES and s not in {"offer_received"})
 
     funnel = FunnelMetrics(
         total_applications=total,
@@ -225,12 +219,14 @@ def _analyze_keywords(
         for kw in keywords:
             if kw not in keyword_data:
                 keyword_data[kw] = []
-            keyword_data[kw].append({
-                "interview": had_interview,
-                "offer": had_offer,
-                "hire": had_hire,
-                "score": score,
-            })
+            keyword_data[kw].append(
+                {
+                    "interview": had_interview,
+                    "offer": had_offer,
+                    "hire": had_hire,
+                    "score": score,
+                }
+            )
 
     if not keyword_data:
         return [], []
@@ -257,14 +253,16 @@ def _analyze_keywords(
         elif interview_rate < 20 and hire_rate < 5:
             correlation = "negative"
 
-        keywords_analyzed.append(CalibrationKeyword(
-            keyword=kw,
-            present_in_count=total,
-            interview_rate=interview_rate,
-            hire_rate=hire_rate,
-            avg_score=round(avg_score, 1),
-            correlation=correlation,
-        ))
+        keywords_analyzed.append(
+            CalibrationKeyword(
+                keyword=kw,
+                present_in_count=total,
+                interview_rate=interview_rate,
+                hire_rate=hire_rate,
+                avg_score=round(avg_score, 1),
+                correlation=correlation,
+            )
+        )
 
     # Sort by correlation strength (positive first, then by interview rate desc)
     positive = sorted(
@@ -310,8 +308,9 @@ def _extract_job_keywords(job: JobPosting) -> set[str]:
 
     # Find capitalized multi-word terms (likely company names, frameworks, etc.)
     import re
+
     # Match phrases like "Kubernetes", "Machine Learning", "PyTorch", "AWS"
-    capitalized = re.findall(r'\b[A-Z][a-zA-Z0-9+#.]*(?:\s[A-Z][a-zA-Z0-9+#.]*)*\b', text)
+    capitalized = re.findall(r"\b[A-Z][a-zA-Z0-9+#.]*(?:\s[A-Z][a-zA-Z0-9+#.]*)*\b", text)
     for term in capitalized:
         term_lower = term.lower()
         if len(term) > 2 and term_lower not in _STOP_WORDS:
@@ -321,33 +320,140 @@ def _extract_job_keywords(job: JobPosting) -> set[str]:
 
 
 _STOP_WORDS = {
-    "the", "and", "for", "are", "but", "not", "you", "all", "can", "has",
-    "was", "had", "per", "its", "our", "your", "their", "with", "from",
-    "this", "that", "they", "will", "have", "been", "also",
-    "more", "than", "some", "such", "each", "what", "when", "where",
-    "which", "who", "whom", "how", "why", "about", "into", "through",
-    "during", "before", "after", "above", "below", "between", "under",
-    "again", "further", "then", "once", "here", "there", "because",
-    "while", "only", "very", "just", "much", "many", "most", "other",
-    "some", "every", "own", "same", "new", "first", "last",
-    "able", "any", "every", "both", "each", "few", "more", "most",
-    "other", "some", "such", "no", "nor", "not", "only", "own", "same",
-    "so", "than", "too", "very", "just", "because", "as", "until",
-    "while", "of", "at", "by", "for", "with", "about", "against",
-    "between", "into", "through", "during", "before", "after", "above",
-    "below", "to", "from", "up", "down", "in", "out", "on", "off",
-    "over", "under", "again", "further", "then", "once", "here",
-    "there", "when", "where", "why", "how", "all", "each", "every",
-    "both", "few", "more", "most", "other", "some", "such", "no", "nor",
-    "not", "only", "own", "same", "so", "than", "too", "also",
-    "well", "even", "still", "already", "yet", "please",
-    "may", "might", "must", "shall", "should", "would", "could",
-    "need", "dare", "ought", "used", "always", "never", "sometimes",
-    "often", "usually", "generally", "finally", "eventually", "currently",
-    "previously", "recently", "typically", "ideally", "preferably",
-    "including", "various", "related", "relevant",
-    "specific", "particular", "additional", "multiple", "minimum",
-    "based", "located",
+    "the",
+    "and",
+    "for",
+    "are",
+    "but",
+    "not",
+    "you",
+    "all",
+    "can",
+    "has",
+    "was",
+    "had",
+    "per",
+    "its",
+    "our",
+    "your",
+    "their",
+    "with",
+    "from",
+    "this",
+    "that",
+    "they",
+    "will",
+    "have",
+    "been",
+    "also",
+    "more",
+    "than",
+    "some",
+    "such",
+    "each",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "whom",
+    "how",
+    "why",
+    "about",
+    "into",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "between",
+    "under",
+    "again",
+    "further",
+    "then",
+    "once",
+    "here",
+    "there",
+    "because",
+    "while",
+    "only",
+    "very",
+    "just",
+    "much",
+    "many",
+    "most",
+    "other",
+    "every",
+    "own",
+    "same",
+    "new",
+    "first",
+    "last",
+    "able",
+    "any",
+    "both",
+    "few",
+    "no",
+    "nor",
+    "so",
+    "too",
+    "as",
+    "until",
+    "of",
+    "at",
+    "by",
+    "against",
+    "to",
+    "up",
+    "down",
+    "in",
+    "out",
+    "on",
+    "off",
+    "over",
+    "well",
+    "even",
+    "still",
+    "already",
+    "yet",
+    "please",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "should",
+    "would",
+    "could",
+    "need",
+    "dare",
+    "ought",
+    "used",
+    "always",
+    "never",
+    "sometimes",
+    "often",
+    "usually",
+    "generally",
+    "finally",
+    "eventually",
+    "currently",
+    "previously",
+    "recently",
+    "typically",
+    "ideally",
+    "preferably",
+    "including",
+    "various",
+    "related",
+    "relevant",
+    "specific",
+    "particular",
+    "additional",
+    "multiple",
+    "minimum",
+    "based",
+    "located",
 }
 
 
@@ -369,74 +475,90 @@ def _generate_insights(
 
     # 1. Funnel-based insights
     if funnel.total_applications == 0:
-        insights.append(CalibrationInsight(
-            category="general",
-            insight="No applications tracked yet. Start recording outcomes after applying.",
-            recommendation="Use the Outcome page to log each application's status after you hear back.",
-            impact="medium",
-        ))
+        insights.append(
+            CalibrationInsight(
+                category="general",
+                insight="No applications tracked yet. Start recording outcomes after applying.",
+                recommendation="Use the Outcome page to log each application's status after you hear back.",
+                impact="medium",
+            )
+        )
         return insights
 
     if funnel.total_applications < 5:
-        insights.append(CalibrationInsight(
-            category="general",
-            insight=f"Only {funnel.total_applications} applications tracked. More data needed for meaningful calibration.",
-            recommendation="Continue tracking outcomes as they come in. The calibration improves with more data points.",
-            impact="low",
-        ))
+        insights.append(
+            CalibrationInsight(
+                category="general",
+                insight=f"Only {funnel.total_applications} applications tracked. More data needed for meaningful calibration.",  # noqa: E501
+                recommendation="Continue tracking outcomes as they come in. The calibration improves with more data points.",  # noqa: E501
+                impact="low",
+            )
+        )
     else:
         # Application → Interview rate
         if funnel.application_to_interview_pct < 20 and funnel.total_applications >= 5:
-            insights.append(CalibrationInsight(
-                category="funnel",
-                insight=f"Low interview rate ({funnel.application_to_interview_pct}%). Only {funnel.interviews} interviews from {funnel.total_applications} applications.",
-                recommendation="Consider improving CV tailoring, targeting jobs more closely aligned with your profile, or adding missing keywords from job postings.",
-                impact="high",
-            ))
+            insights.append(
+                CalibrationInsight(
+                    category="funnel",
+                    insight=f"Low interview rate ({funnel.application_to_interview_pct}%). Only {funnel.interviews} interviews from {funnel.total_applications} applications.",  # noqa: E501
+                    recommendation="Consider improving CV tailoring, targeting jobs more closely aligned with your profile, or adding missing keywords from job postings.",  # noqa: E501
+                    impact="high",
+                )
+            )
         elif funnel.application_to_interview_pct >= 40:
-            insights.append(CalibrationInsight(
-                category="funnel",
-                insight=f"Strong interview rate ({funnel.application_to_interview_pct}%). Your CV is resonating with recruiters.",
-                recommendation="Focus on improving interview performance to convert more interviews into offers.",
-                impact="medium",
-            ))
+            insights.append(
+                CalibrationInsight(
+                    category="funnel",
+                    insight=f"Strong interview rate ({funnel.application_to_interview_pct}%). Your CV is resonating with recruiters.",  # noqa: E501
+                    recommendation="Focus on improving interview performance to convert more interviews into offers.",
+                    impact="medium",
+                )
+            )
 
         # Interview → Offer rate
         if funnel.interview_to_offer_pct < 25 and funnel.interviews >= 3:
-            insights.append(CalibrationInsight(
-                category="funnel",
-                insight=f"Low offer conversion ({funnel.interview_to_offer_pct}% of interviews → offers). This suggests interview preparation may need attention.",
-                recommendation="Use the Interview Prep feature to prepare STAR examples and practice common questions for each application.",
-                impact="high",
-            ))
+            insights.append(
+                CalibrationInsight(
+                    category="funnel",
+                    insight=f"Low offer conversion ({funnel.interview_to_offer_pct}% of interviews → offers). This suggests interview preparation may need attention.",  # noqa: E501
+                    recommendation="Use the Interview Prep feature to prepare STAR examples and practice common questions for each application.",  # noqa: E501
+                    impact="high",
+                )
+            )
 
         # Overall success
         if funnel.overall_success_pct >= 20:
-            insights.append(CalibrationInsight(
-                category="funnel",
-                insight=f"Overall success rate: {funnel.overall_success_pct}% hired from total applications. Excellent conversion!",
-                recommendation="Your job search strategy is working well. Keep refining your process and sharing what works.",
-                impact="medium",
-            ))
+            insights.append(
+                CalibrationInsight(
+                    category="funnel",
+                    insight=f"Overall success rate: {funnel.overall_success_pct}% hired from total applications. Excellent conversion!",  # noqa: E501
+                    recommendation="Your job search strategy is working well. Keep refining your process and sharing what works.",  # noqa: E501
+                    impact="medium",
+                )
+            )
 
     # 2. Keyword-based insights
     if top_keywords:
         top_3 = [k.keyword for k in top_keywords[:3]]
-        insights.append(CalibrationInsight(
-            category="keyword",
-            insight=f"Top correlated keywords: {', '.join(top_3)}. These skills appear in jobs that lead to interviews.",
-            recommendation=f"Ensure these keywords are prominently featured in your CV and LinkedIn profile: {', '.join(top_3)}",
-            impact="high",
-        ))
+        insights.append(
+            CalibrationInsight(
+                category="keyword",
+                insight=f"Top correlated keywords: {', '.join(top_3)}. These skills appear in jobs that lead to interviews.",  # noqa: E501
+                recommendation=f"Ensure these keywords are prominently featured in your CV and LinkedIn profile: {', '.join(top_3)}",  # noqa: E501
+                impact="high",
+            )
+        )
 
     if bottom_keywords:
         bottom_3 = [k.keyword for k in bottom_keywords[:3]]
-        insights.append(CalibrationInsight(
-            category="keyword",
-            insight=f"Low-correlation keywords: {', '.join(bottom_3)}. Jobs mentioning these have lower success rates.",
-            recommendation=f"Consider whether investing in these skills is worth the effort, or whether to focus on higher-yield areas.",
-            impact="medium",
-        ))
+        insights.append(
+            CalibrationInsight(
+                category="keyword",
+                insight=f"Low-correlation keywords: {', '.join(bottom_3)}. Jobs mentioning these have lower success rates.",  # noqa: E501
+                recommendation="Consider whether investing in these skills is worth the effort, or whether to focus on higher-yield areas.",  # noqa: E501
+                impact="medium",
+            )
+        )
 
     # 3. Company/role insights
     companies = Counter()
@@ -452,38 +574,46 @@ def _generate_insights(
     if companies:
         top_company = companies.most_common(1)[0]
         if top_company[1] >= 2:
-            insights.append(CalibrationInsight(
-                category="company",
-                insight=f"You've applied to {top_company[0]} {top_company[1]} times. Multiple applications to the same company.",
-                recommendation="If you're not getting interviews at companies you applied to multiple times, consider whether your targeting or application approach needs adjustment.",
-                impact="medium",
-            ))
+            insights.append(
+                CalibrationInsight(
+                    category="company",
+                    insight=f"You've applied to {top_company[0]} {top_company[1]} times. Multiple applications to the same company.",  # noqa: E501
+                    recommendation="If you're not getting interviews at companies you applied to multiple times, consider whether your targeting or application approach needs adjustment.",  # noqa: E501
+                    impact="medium",
+                )
+            )
 
     # 4. Progress-based insights
     if funnel.in_progress > 0:
-        insights.append(CalibrationInsight(
-            category="progress",
-            insight=f"You have {funnel.in_progress} applications in progress (interviews or offers pending).",
-            recommendation="Use the Interview Prep feature for each in-progress application to maximize your chances.",
-            impact="high",
-        ))
+        insights.append(
+            CalibrationInsight(
+                category="progress",
+                insight=f"You have {funnel.in_progress} applications in progress (interviews or offers pending).",
+                recommendation="Use the Interview Prep feature for each in-progress application to maximize your chances.",  # noqa: E501
+                impact="high",
+            )
+        )
 
     # 5. Rejection pattern insights
     if funnel.rejected >= 5 and funnel.interviews == 0:
-        insights.append(CalibrationInsight(
-            category="pattern",
-            insight=f"{funnel.rejected} rejections with 0 interviews. Your applications may not be reaching the interview stage.",
-            recommendation="Try the Verification Checklist (POST /apply/{id}/verify) to check your CV for ATS compatibility issues before applying.",
-            impact="high",
-        ))
+        insights.append(
+            CalibrationInsight(
+                category="pattern",
+                insight=f"{funnel.rejected} rejections with 0 interviews. Your applications may not be reaching the interview stage.",  # noqa: E501
+                recommendation="Try the Verification Checklist (POST /apply/{id}/verify) to check your CV for ATS compatibility issues before applying.",  # noqa: E501
+                impact="high",
+            )
+        )
 
     # 6. Withdrawn pattern
     if funnel.withdrawn >= 3:
-        insights.append(CalibrationInsight(
-            category="pattern",
-            insight=f"You've withdrawn from {funnel.withdrawn} applications. Consider whether your job criteria are well-defined.",
-            recommendation="Use the Rank page to evaluate jobs more carefully before applying to avoid wasting effort on misaligned opportunities.",
-            impact="low",
-        ))
+        insights.append(
+            CalibrationInsight(
+                category="pattern",
+                insight=f"You've withdrawn from {funnel.withdrawn} applications. Consider whether your job criteria are well-defined.",  # noqa: E501
+                recommendation="Use the Rank page to evaluate jobs more carefully before applying to avoid wasting effort on misaligned opportunities.",  # noqa: E501
+                impact="low",
+            )
+        )
 
     return insights

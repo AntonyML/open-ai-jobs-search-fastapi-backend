@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import bind_context, get_logger
 from app.core.settings import get_settings
 from app.db.models import (
     CandidateProfile,
@@ -22,7 +23,6 @@ from app.db.models import (
     Upskill,
 )
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
-from app.core.logging import get_logger, bind_context
 from app.llm.adapter import llm_completion_structured
 from app.schemas.upskill import (
     GapHeatmapLLMOutput,
@@ -32,6 +32,7 @@ from app.schemas.upskill import (
     UpskillSummaryOut,
 )
 from app.services import credits
+
 
 # Sink shape used to accumulate real token/cost usage across the LLM passes.
 def _new_usage_sink() -> dict[str, Any]:
@@ -61,6 +62,7 @@ async def _record_usage_best_effort(
         await db.commit()
     except Exception:
         logger.warning("Failed to record LLM usage for upskill %s", correlation_id, exc_info=True)
+
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -138,7 +140,7 @@ def build_pass1_prompt(
 
     jobs_text = ""
     for i, job in enumerate(job_requirements):
-        jobs_text += f"\nJob {i+1} ({job['company']} - {job['title']}):\n"
+        jobs_text += f"\nJob {i + 1} ({job['company']} - {job['title']}):\n"
         jobs_text += f"  Requirements: {', '.join(job['requirements'])}\n"
         jobs_text += f"  Fit rating: {job.get('fit_rating', 'N/A')}/100\n"
 
@@ -168,7 +170,7 @@ Return JSON with "gaps" array, each item:
 - source_jobs: list of job IDs mentioning this skill
 - frequency: number of jobs mentioning it
 - fit_weight: the calculated gap score (float)
-"""
+"""  # noqa: E501
 
     user_prompt = "Analyze the hard skill gaps. Return only the JSON."
 
@@ -185,7 +187,9 @@ def build_pass2_prompt(
 ) -> list[dict[str, str]]:
     """Build prompt for Pass 2: LLM synthesis of domain/soft/tooling/credential gaps."""
     candidate_skills_text = ", ".join(sorted(candidate_skills)) if candidate_skills else "None"
-    hard_gaps_text = "\n".join(f"- {g['skill']} (freq: {g['frequency']}, weight: {g['fit_weight']:.1f})" for g in hard_gaps)
+    hard_gaps_text = "\n".join(
+        f"- {g['skill']} (freq: {g['frequency']}, weight: {g['fit_weight']:.1f})" for g in hard_gaps
+    )
 
     system_prompt = f"""{UPSKILL_GUARDRAIL}
 
@@ -230,7 +234,9 @@ def build_heatmap_prompt(
     synthesized_gaps: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
     """Build prompt for combining Pass 1 + Pass 2 into unified heatmap."""
-    hard_text = "\n".join(f"- {g['skill']} (hard, freq: {g['frequency']}, weight: {g['fit_weight']:.1f})" for g in hard_gaps)
+    hard_text = "\n".join(
+        f"- {g['skill']} (hard, freq: {g['frequency']}, weight: {g['fit_weight']:.1f})" for g in hard_gaps
+    )
     synth_text = "\n".join(f"- {g['skill']} ({g['type']}, priority: {g['priority']})" for g in synthesized_gaps)
 
     system_prompt = f"""{UPSKILL_GUARDRAIL}
@@ -249,7 +255,7 @@ Assign priority: Critical (weight >= 3 or Critical synthesis), High (weight >= 2
 Include gap_source describing where it came from.
 
 Return JSON with "heatmap" array.
-"""
+"""  # noqa: E501
 
     user_prompt = "Create the unified gap heatmap. Return only the JSON."
 
@@ -265,16 +271,13 @@ def build_learning_plan_prompt(
 ) -> list[dict[str, str]]:
     """Build prompt for generating a learning plan with web-searched resources."""
     candidate_summary = f"""
-Name: {candidate.full_name or 'N/A'}
-Current skills: {', '.join(sorted(_extract_skills_from_profile(candidate))) if candidate.skills else 'None'}
+Name: {candidate.full_name or "N/A"}
+Current skills: {", ".join(sorted(_extract_skills_from_profile(candidate))) if candidate.skills else "None"}
 Experience: {len(candidate.experience or [])} roles
 Education: {len(candidate.education or [])} degrees
 """
 
-    heatmap_text = "\n".join(
-        f"- {g['skill']} ({g['type']}, {g['priority']}): {g['gap_source']}"
-        for g in heatmap
-    )
+    heatmap_text = "\n".join(f"- {g['skill']} ({g['type']}, {g['priority']}): {g['gap_source']}" for g in heatmap)
 
     system_prompt = f"""{UPSKILL_GUARDRAIL}
 
@@ -294,7 +297,7 @@ Order the plan by priority (Critical first) and prerequisites.
 Estimate total weeks per skill.
 
 Return JSON with "plan" array.
-"""
+"""  # noqa: E501
 
     user_prompt = "Generate the learning plan. Return only the JSON."
 
@@ -308,13 +311,13 @@ Return JSON with "plan" array.
 
 
 async def execute_upskill(
-        db: AsyncSession,
-        user_id: str,
-        mode: str = "aggregate",
-        target_job_url: str | None = None,
-        target_job_posting_id: str | None = None,
-        usage: dict[str, Any] | None = None,
-        correlation_id: str | None = None,
+    db: AsyncSession,
+    user_id: str,
+    mode: str = "aggregate",
+    target_job_url: str | None = None,
+    target_job_posting_id: str | None = None,
+    usage: dict[str, Any] | None = None,
+    correlation_id: str | None = None,
 ) -> Upskill:
     """Execute a full upskill analysis run.
 
@@ -332,9 +335,7 @@ async def execute_upskill(
         usage = usage if usage is not None else _new_usage_sink()
 
         # 1. Get candidate profile
-        candidate_result = await db.execute(
-            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-        )
+        candidate_result = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user_id))
         candidate = candidate_result.scalar_one_or_none()
         if candidate is None:
             raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
@@ -382,28 +383,34 @@ async def execute_upskill(
             # 5. Pass 1: Hard skill diff
             job_requirements = []
             for job in jobs:
-                eval_result = await db.execute(
-                    select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
-                )
+                eval_result = await db.execute(select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id))
                 evaluation = eval_result.scalar_one_or_none()
                 fit_rating = evaluation.overall_score if evaluation else 50
 
-                job_requirements.append({
-                    "id": job.id,
-                    "company": job.company,
-                    "title": job.title,
-                    "requirements": _extract_requirements_from_job(job),
-                    "fit_rating": fit_rating,
-                })
+                job_requirements.append(
+                    {
+                        "id": job.id,
+                        "company": job.company,
+                        "title": job.title,
+                        "requirements": _extract_requirements_from_job(job),
+                        "fit_rating": fit_rating,
+                    }
+                )
 
             hard_gaps = await _run_pass1(db, candidate_skills, job_requirements, usage=usage)
             upskill.hard_skill_gaps = hard_gaps
             await db.flush()
 
             # 6. Pass 2: LLM synthesis
-            job_context = "\n".join(f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements)
+            job_context = "\n".join(
+                f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements
+            )
             synthesized_gaps = await _run_pass2(
-                db, candidate_skills, hard_gaps, job_context, usage=usage,
+                db,
+                candidate_skills,
+                hard_gaps,
+                job_context,
+                usage=usage,
             )
             upskill.synthesized_gaps = synthesized_gaps
             await db.flush()
@@ -541,9 +548,7 @@ async def _execute_upskill_background(
     async with async_session_factory() as db:
         try:
             # Get the upskill record
-            result = await db.execute(
-                select(Upskill).where(Upskill.id == upskill_id)
-            )
+            result = await db.execute(select(Upskill).where(Upskill.id == upskill_id))
             upskill = result.scalar_one_or_none()
             if upskill is None:
                 return
@@ -598,28 +603,34 @@ async def _execute_upskill_background(
             # 5. Pass 1: Hard skill diff
             job_requirements = []
             for job in jobs:
-                eval_result = await db.execute(
-                    select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
-                )
+                eval_result = await db.execute(select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id))
                 evaluation = eval_result.scalar_one_or_none()
                 fit_rating = evaluation.overall_score if evaluation else 50
 
-                job_requirements.append({
-                    "id": job.id,
-                    "company": job.company,
-                    "title": job.title,
-                    "requirements": _extract_requirements_from_job(job),
-                    "fit_rating": fit_rating,
-                })
+                job_requirements.append(
+                    {
+                        "id": job.id,
+                        "company": job.company,
+                        "title": job.title,
+                        "requirements": _extract_requirements_from_job(job),
+                        "fit_rating": fit_rating,
+                    }
+                )
 
             hard_gaps = await _run_pass1(db, candidate_skills, job_requirements, usage=usage)
             upskill.hard_skill_gaps = hard_gaps
             await db.flush()
 
             # 6. Pass 2: LLM synthesis
-            job_context = "\n".join(f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements)
+            job_context = "\n".join(
+                f"- {j['company']} - {j['title']}: {', '.join(j['requirements'][:5])}" for j in job_requirements
+            )
             synthesized_gaps = await _run_pass2(
-                db, candidate_skills, hard_gaps, job_context, usage=usage,
+                db,
+                candidate_skills,
+                hard_gaps,
+                job_context,
+                usage=usage,
             )
             upskill.synthesized_gaps = synthesized_gaps
             await db.flush()
@@ -646,15 +657,9 @@ async def _execute_upskill_background(
 # ── Query helpers ───────────────────────────────────────────────────
 
 
-async def get_upskill(
-    db: AsyncSession, upskill_id: str, user_id: str
-) -> Upskill:
+async def get_upskill(db: AsyncSession, upskill_id: str, user_id: str) -> Upskill:
     """Get an upskill by ID, verifying ownership."""
-    result = await db.execute(
-        select(Upskill)
-        .where(Upskill.id == upskill_id)
-        .where(Upskill.user_id == user_id)
-    )
+    result = await db.execute(select(Upskill).where(Upskill.id == upskill_id).where(Upskill.user_id == user_id))
     upskill = result.scalar_one_or_none()
     if upskill is None:
         raise NotFoundError("Upskill analysis not found.")

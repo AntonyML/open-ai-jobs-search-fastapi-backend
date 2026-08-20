@@ -3,13 +3,10 @@
 Uses an in-memory SQLite database and mocks the LLM calls and LaTeX compilation.
 """
 
-import asyncio
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import (
@@ -23,7 +20,6 @@ from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
 from app.schemas.apply import CoverLetterLLMOutput, TailoredExperienceLLMOutput
 from app.services import apply
 
-
 # ── Fixtures ────────────────────────────────────────────────────────
 
 
@@ -33,6 +29,7 @@ async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with engine.begin() as conn:
         from app.db.models import Base
+
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -65,7 +62,12 @@ async def sample_candidate(db_session):
         employment_status="Employed",
         constraints="No relocation",
         education=[
-            {"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020", "key_topics": "ML, Distributed Systems"}
+            {
+                "degree": "MSc Computer Science",
+                "institution": "DTU",
+                "period": "2018-2020",
+                "key_topics": "ML, Distributed Systems",
+            }
         ],
         experience=[
             {
@@ -92,26 +94,30 @@ async def sample_candidate(db_session):
                 ],
             },
         ],
-        projects=[
-            {"name": "Open Source ML Library", "description": "Contributor to popular ML library"}
-        ],
+        projects=[{"name": "Open Source ML Library", "description": "Contributor to popular ML library"}],
         skills={
             "programming_ml": [
-                {"language": "Python", "proficiency": "Expert", "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"]},
+                {
+                    "language": "Python",
+                    "proficiency": "Expert",
+                    "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"],
+                },
                 {"language": "SQL", "proficiency": "Advanced", "frameworks": []},
             ],
             "domain_expertise": ["Machine Learning", "NLP", "Recommendation Systems"],
             "software_tools": ["Docker", "Kubernetes", "AWS", "Git"],
         },
         publications=[
-            {"authors": "Doe, J.", "year": "2021", "title": "Efficient Transformers", "journal": "NeurIPS", "doi": "10.xxxx/xxxx"}
+            {
+                "authors": "Doe, J.",
+                "year": "2021",
+                "title": "Efficient Transformers",
+                "journal": "NeurIPS",
+                "doi": "10.xxxx/xxxx",
+            }
         ],
-        awards=[
-            {"award": "Best Paper Award", "event": "ICML", "year": "2020"}
-        ],
-        references=[
-            {"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}
-        ],
+        awards=[{"award": "Best Paper Award", "event": "ICML", "year": "2020"}],
+        references=[{"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}],
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
@@ -133,7 +139,7 @@ async def sample_job(db_session, sample_candidate):
         url="https://linkedin.com/jobs/123",
         posting_date="2026-07-10",
         deadline="2026-08-10",
-        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",
+        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",  # noqa: E501
         requirements=[
             "5+ years ML engineering experience",
             "Expert in Python and PyTorch",
@@ -146,7 +152,7 @@ async def sample_job(db_session, sample_candidate):
         status="ranked",
         rank_score=83.0,
         rank_verdict="Strong Fit",
-        rank_date=datetime.now(timezone.utc),
+        rank_date=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.commit()
@@ -220,9 +226,9 @@ def mock_tailored_experience():
                 end_date="Present",
                 location="Copenhagen",
                 bullets=[
-                    "Accomplished 40% reduction in model inference latency (X), as measured by p99 latency (Y), by implementing TensorRT optimization and batching (Z)",
-                    "Achieved processing of 1M+ events/day (X), measured by throughput metrics (Y), by building scalable ML pipeline with PyTorch and Kubernetes on AWS (Z)",
-                    "Led team of 5 engineers (Z) to deliver real-time fraud detection system (X) processing 10K transactions/sec with <50ms latency (Y)",
+                    "Accomplished 40% reduction in model inference latency (X), as measured by p99 latency (Y), by implementing TensorRT optimization and batching (Z)",  # noqa: E501
+                    "Achieved processing of 1M+ events/day (X), measured by throughput metrics (Y), by building scalable ML pipeline with PyTorch and Kubernetes on AWS (Z)",  # noqa: E501
+                    "Led team of 5 engineers (Z) to deliver real-time fraud detection system (X) processing 10K transactions/sec with <50ms latency (Y)",  # noqa: E501
                 ],
             ),
             apply.TailoredExperienceEntry(
@@ -232,8 +238,8 @@ def mock_tailored_experience():
                 end_date="2019-12",
                 location="Aarhus",
                 bullets=[
-                    "Increased recommendation click-through rate by 15% (X), measured via A/B test (Y), by adding collaborative filtering signals to ranking model (Z)",
-                    "Published 2 papers at top conferences (X), demonstrating research impact (Y), by conducting novel NLP research (Z)",
+                    "Increased recommendation click-through rate by 15% (X), measured via A/B test (Y), by adding collaborative filtering signals to ranking model (Z)",  # noqa: E501
+                    "Published 2 papers at top conferences (X), demonstrating research impact (Y), by conducting novel NLP research (Z)",  # noqa: E501
                 ],
             ),
         ]
@@ -243,23 +249,20 @@ def mock_tailored_experience():
 def mock_cover_letter():
     """Mock cover letter output from LLM."""
     return CoverLetterLLMOutput(
-        opening_paragraph="I am writing to apply for the Senior Machine Learning Engineer position at TechCorp. With 5+ years of experience building production ML systems at scale, including leading a team of 5 engineers at Acme Corp, I am confident I can contribute immediately to your ML infrastructure.",
+        opening_paragraph="I am writing to apply for the Senior Machine Learning Engineer position at TechCorp. With 5+ years of experience building production ML systems at scale, including leading a team of 5 engineers at Acme Corp, I am confident I can contribute immediately to your ML infrastructure.",  # noqa: E501
         body_paragraphs=[
             "My most relevant experience includes:",
-            "• Accomplished 40% reduction in model inference latency, as measured by p99 latency, by implementing TensorRT optimization and batching",
-            "• Achieved processing of 1M+ events/day, measured by throughput metrics, by building scalable ML pipeline with PyTorch and Kubernetes",
-            "• Led team of 5 engineers to deliver real-time fraud detection system processing 10K transactions/sec with <50ms latency",
+            "• Accomplished 40% reduction in model inference latency, as measured by p99 latency, by implementing TensorRT optimization and batching",  # noqa: E501
+            "• Achieved processing of 1M+ events/day, measured by throughput metrics, by building scalable ML pipeline with PyTorch and Kubernetes",  # noqa: E501
+            "• Led team of 5 engineers to deliver real-time fraud detection system processing 10K transactions/sec with <50ms latency",  # noqa: E501
         ],
-        company_connection_paragraph="I have followed TechCorp's work on scalable ML infrastructure and was particularly impressed by your recent blog post on Kubernetes-native ML pipelines. Your commitment to open-source tooling aligns with my experience contributing to open-source ML libraries.",
-        personal_fit_paragraph="As an analytical driver who thrives in autonomous environments, I bring both technical depth and collaborative leadership. My experience mentoring junior engineers and driving cross-functional ML projects would enable me to contribute to your team culture from day one.",
-        closing_paragraph="I look forward to discussing how my experience building production ML systems at scale can contribute to TechCorp's mission.",
+        company_connection_paragraph="I have followed TechCorp's work on scalable ML infrastructure and was particularly impressed by your recent blog post on Kubernetes-native ML pipelines. Your commitment to open-source tooling aligns with my experience contributing to open-source ML libraries.",  # noqa: E501
+        personal_fit_paragraph="As an analytical driver who thrives in autonomous environments, I bring both technical depth and collaborative leadership. My experience mentoring junior engineers and driving cross-functional ML projects would enable me to contribute to your team culture from day one.",  # noqa: E501
+        closing_paragraph="I look forward to discussing how my experience building production ML systems at scale can contribute to TechCorp's mission.",  # noqa: E501
     )
 
 
 # ── Tests ───────────────────────────────────────────────────────────
-
-
-
 
 
 @pytest.mark.asyncio
@@ -314,7 +317,7 @@ async def test_execute_apply_profile_incomplete(db_session):
         status="ranked",
         rank_score=80.0,
         rank_verdict="Strong Fit",
-        rank_date=datetime.now(timezone.utc),
+        rank_date=datetime.now(UTC),
     )
     db_session.add(job)
     await db_session.commit()
@@ -343,14 +346,13 @@ async def test_execute_apply_profile_incomplete(db_session):
     await db_session.commit()
     await db_session.refresh(evaluation)
 
-    with patch("app.llm.adapter.llm_completion"):
-        with pytest.raises(ProfileIncompleteError):
-            await apply.execute_apply(
-                db=db_session,
-                user_id="user-no-profile",
-                job_posting_id=job.id,
-                rank_evaluation_id=evaluation.id,
-            )
+    with patch("app.llm.adapter.llm_completion"), pytest.raises(ProfileIncompleteError):
+        await apply.execute_apply(
+            db=db_session,
+            user_id="user-no-profile",
+            job_posting_id=job.id,
+            rank_evaluation_id=evaluation.id,
+        )
 
 
 @pytest.mark.asyncio
@@ -372,9 +374,6 @@ async def test_execute_apply_llm_error(db_session, sample_candidate, sample_job,
                 job_posting_id=sample_job.id,
                 rank_evaluation_id=sample_evaluation.id,
             )
-
-
-
 
 
 @pytest.mark.asyncio
@@ -515,8 +514,3 @@ async def test_extract_addressed_red_flags():
 
     # Should find flags that have keywords in the tailored experience
     assert len(addressed) >= 0  # May or may not find depending on text matching
-
-
-
-
-

@@ -4,10 +4,8 @@ Request/response shapes for generating tailored CV and cover letter.
 """
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ── Request schemas ─────────────────────────────────────────────────
 
@@ -17,9 +15,7 @@ class ApplyRequest(BaseModel):
 
     job_posting_id: str = Field(..., description="The job posting to apply to")
     # Optional: override the rank evaluation to use
-    rank_evaluation_id: str | None = Field(
-        None, description="Specific rank evaluation to use (defaults to latest)"
-    )
+    rank_evaluation_id: str | None = Field(None, description="Specific rank evaluation to use (defaults to latest)")
     # Optional: custom template names
     cv_template: str | None = Field("moderncv-banking", description="CV template to use")
     cover_letter_template: str | None = Field("cover-cls", description="Cover letter template to use")
@@ -147,7 +143,7 @@ class ReviewIssue(BaseModel):
 
     type: str = Field(
         ...,
-        description="One of: missing_keyword, generic_bullet, fabricated_claim, weak_framing, inconsistency, factual_error, formatting",
+        description="One of: missing_keyword, generic_bullet, fabricated_claim, weak_framing, inconsistency, factual_error, formatting",  # noqa: E501
     )
     description: str = Field(..., description="Clear description of the issue")
     severity: str = Field(..., description="high, medium, or low")

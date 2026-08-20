@@ -1,4 +1,4 @@
-name: CI
+name: Backend Validation
 
 on:
   push:
@@ -6,33 +6,30 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: backend-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PYTHON_VERSION: "3.11"
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install -e ".[dev]"
-      - run: ruff check .
-
   test:
+    name: Tests (unit + smoke)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest tests/unit/ -v --tb=short
         env:
           APP_ENV: testing
 
   docker:
+    name: Docker build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -60,9 +60,7 @@ async def db_session():
 class TestListUsersPagination:
     @pytest.mark.asyncio
     async def test_default_page_returns_paged_result(self, db_session):
-        result = await list_users(
-            admin={"role": "admin"}, db=db_session
-        )
+        result = await list_users(admin={"role": "admin"}, db=db_session)
         assert result.total == 4
         assert result.page == 1
         assert result.page_size == 5
@@ -78,17 +76,13 @@ class TestListUsersPagination:
 
     @pytest.mark.asyncio
     async def test_second_page_returns_remaining(self, db_session):
-        result = await list_users(
-            admin={"role": "admin"}, db=db_session, page_size=3, page=2
-        )
+        result = await list_users(admin={"role": "admin"}, db=db_session, page_size=3, page=2)
         assert len(result.items) == 1
         assert result.total == 4
 
     @pytest.mark.asyncio
     async def test_page_size_clamped_to_max(self, db_session):
-        result = await list_users(
-            admin={"role": "admin"}, db=db_session, page_size=500
-        )
+        result = await list_users(admin={"role": "admin"}, db=db_session, page_size=500)
         assert result.page_size == 100
 
     @pytest.mark.asyncio
@@ -125,25 +119,19 @@ class TestListUsersFilters:
 class TestListUsersSorting:
     @pytest.mark.asyncio
     async def test_sort_ascending(self, db_session):
-        result = await list_users(
-            admin={"role": "admin"}, db=db_session, sort="email", order="asc"
-        )
+        result = await list_users(admin={"role": "admin"}, db=db_session, sort="email", order="asc")
         emails = [u.email for u in result.items]
         assert emails == sorted(emails)
 
     @pytest.mark.asyncio
     async def test_sort_descending_default(self, db_session):
-        result = await list_users(
-            admin={"role": "admin"}, db=db_session, sort="email"
-        )
+        result = await list_users(admin={"role": "admin"}, db=db_session, sort="email")
         emails = [u.email for u in result.items]
         assert emails == sorted(emails, reverse=True)
 
     @pytest.mark.asyncio
     async def test_invalid_sort_falls_back_to_created_at(self, db_session):
-        result = await list_users(
-            admin={"role": "admin"}, db=db_session, sort="not_a_column"
-        )
+        result = await list_users(admin={"role": "admin"}, db=db_session, sort="not_a_column")
         assert result.total == 4
 
 
@@ -151,14 +139,16 @@ class TestListUsersStats:
     @pytest.mark.asyncio
     async def test_active_subs_counts_users_with_active_subscription(self, db_session):
         """active_subs = distinct users with status == 'active' (not rows)."""
-        db_session.add_all([
-            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
-            UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
-            # A cancelled sub must NOT count, nor a second active row for the
-            # same user (distinct user_id).
-            UserSubscription(user_id="u-carol", plan_key="pro", status="cancelled", source="admin"),
-            UserSubscription(user_id="u-bob", plan_key="pro", status="active", source="admin"),
-        ])
+        db_session.add_all(
+            [
+                UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+                UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
+                # A cancelled sub must NOT count, nor a second active row for the
+                # same user (distinct user_id).
+                UserSubscription(user_id="u-carol", plan_key="pro", status="cancelled", source="admin"),
+                UserSubscription(user_id="u-bob", plan_key="pro", status="active", source="admin"),
+            ]
+        )
         await db_session.commit()
 
         result = await list_users(admin={"role": "admin"}, db=db_session)
@@ -168,25 +158,27 @@ class TestListUsersStats:
 class TestListSubscriptions:
     @pytest.mark.asyncio
     async def test_filter_by_user_id(self, db_session):
-        db_session.add_all([
-            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
-            UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
-        ])
+        db_session.add_all(
+            [
+                UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+                UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
+            ]
+        )
         await db_session.commit()
 
-        result = await list_subscriptions(
-            admin={"role": "admin"}, db=db_session, user_id="u-alice"
-        )
+        result = await list_subscriptions(admin={"role": "admin"}, db=db_session, user_id="u-alice")
         assert len(result) == 1
         assert result[0].user_id == "u-alice"
         assert result[0].plan_key == "pro"
 
     @pytest.mark.asyncio
     async def test_user_id_filter_combines_with_status(self, db_session):
-        db_session.add_all([
-            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
-            UserSubscription(user_id="u-alice", plan_key="max", status="cancelled", source="admin"),
-        ])
+        db_session.add_all(
+            [
+                UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+                UserSubscription(user_id="u-alice", plan_key="max", status="cancelled", source="admin"),
+            ]
+        )
         await db_session.commit()
 
         result = await list_subscriptions(
@@ -200,10 +192,12 @@ class TestListSubscriptions:
 
     @pytest.mark.asyncio
     async def test_no_user_id_returns_all(self, db_session):
-        db_session.add_all([
-            UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
-            UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
-        ])
+        db_session.add_all(
+            [
+                UserSubscription(user_id="u-alice", plan_key="pro", status="active", source="admin"),
+                UserSubscription(user_id="u-bob", plan_key="max", status="active", source="admin"),
+            ]
+        )
         await db_session.commit()
 
         result = await list_subscriptions(admin={"role": "admin"}, db=db_session)

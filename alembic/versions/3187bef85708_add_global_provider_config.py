@@ -5,19 +5,19 @@ Revises: c1d2e3f4a5b6
 Create Date: 2026-08-11 22:47:46.515711
 
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 
+from alembic import op
 from app.db.models import GLOBAL_PROVIDER_CONFIG_ID
 
-
 # revision identifiers, used by Alembic.
-revision: str = '3187bef85708'
-down_revision: Union[str, None] = 'c1d2e3f4a5b6'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "3187bef85708"
+down_revision: str | None = "c1d2e3f4a5b6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -41,11 +41,10 @@ def upgrade() -> None:
     )
     op.execute(
         sa.text(
-            "INSERT INTO global_provider_config (id, provider) "
-            "VALUES (:id, NULL) ON CONFLICT (id) DO NOTHING"
+            "INSERT INTO global_provider_config (id, provider) VALUES (:id, NULL) ON CONFLICT (id) DO NOTHING"
         ).bindparams(id=GLOBAL_PROVIDER_CONFIG_ID)
     )
 
 
 def downgrade() -> None:
-    op.drop_table('global_provider_config')
+    op.drop_table("global_provider_config")

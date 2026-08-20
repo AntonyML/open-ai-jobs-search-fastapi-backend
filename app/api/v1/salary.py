@@ -7,20 +7,18 @@ GET  /api/v1/rank/jobs/{job_id}/salary  — Get salary benchmark for a specific 
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db as _get_db
 from app.schemas.salary import (
-    SalaryBenchmark,
     SalaryCompanyEntry,
     SalaryDataStatus,
     SalaryDataUpload,
     SalaryUploadResponse,
 )
 from app.services.salary import service as salary_service
-from app.services.salary.salary_lookup import search_company
 
 router = APIRouter(prefix="/profile", tags=["salary"])
 
@@ -70,12 +68,11 @@ async def get_salary_data_status(
 
     Returns whether data exists, how many companies, and the upload date.
     """
-    from app.db.models import UserSalaryData
     from sqlalchemy import select
 
-    result = await db.execute(
-        select(UserSalaryData).where(UserSalaryData.user_id == user["sub"])
-    )
+    from app.db.models import UserSalaryData
+
+    result = await db.execute(select(UserSalaryData).where(UserSalaryData.user_id == user["sub"]))
     record = result.scalar_one_or_none()
 
     if record is None:
@@ -96,11 +93,10 @@ async def delete_salary_data(
     db: AsyncSession = Depends(_get_db),
 ):
     """Delete the user's salary data."""
-    from app.db.models import UserSalaryData
     from sqlalchemy import delete
 
-    await db.execute(
-        delete(UserSalaryData).where(UserSalaryData.user_id == user["sub"])
-    )
+    from app.db.models import UserSalaryData
+
+    await db.execute(delete(UserSalaryData).where(UserSalaryData.user_id == user["sub"]))
     await db.commit()
     return {"status": "deleted"}

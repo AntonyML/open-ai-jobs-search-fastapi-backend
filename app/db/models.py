@@ -5,10 +5,22 @@ for nested profile data (education, experience, skills, etc.).
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -27,13 +39,13 @@ class TimestampMixin:
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
 
@@ -87,9 +99,7 @@ class User(Base, TimestampMixin):
     )
 
     # Billing — active subscription + credit account (both optional)
-    subscriptions: Mapped[list["UserSubscription"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
+    subscriptions: Mapped[list["UserSubscription"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     credit_account: Mapped["CreditAccount | None"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
@@ -106,9 +116,7 @@ class ProviderCredential(Base, TimestampMixin):
     __tablename__ = "provider_credentials"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)  # anthropic, openai, nvidia_nim, lm_studio
     api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     api_base: Mapped[str | None] = mapped_column(String(500))  # For self-hosted providers
@@ -126,17 +134,13 @@ class UserModelSelection(Base, TimestampMixin):
     __tablename__ = "user_model_selection"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="model_selections")
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "provider", name="uq_user_model_selection_user_provider"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_user_model_selection_user_provider"),)
 
 
 class GlobalProviderConfig(Base, TimestampMixin):
@@ -152,9 +156,7 @@ class GlobalProviderConfig(Base, TimestampMixin):
     __tablename__ = "global_provider_config"
 
     # Fixed singleton id — one row, upserted on this id.
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: GLOBAL_PROVIDER_CONFIG_ID
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: GLOBAL_PROVIDER_CONFIG_ID)
 
     provider: Mapped[str | None] = mapped_column(String(50))
     model: Mapped[str | None] = mapped_column(String(100))
@@ -259,9 +261,7 @@ class UserSubscription(Base, TimestampMixin):
     plan_key: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
 
     # Correlation ID — every plan/credit can be tracked end-to-end
-    correlation_id: Mapped[str] = mapped_column(
-        String(36), unique=True, nullable=False, default=new_uuid, index=True
-    )
+    correlation_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, default=new_uuid, index=True)
 
     # ── Period ─────────────────────────────────────────────────
     period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -281,7 +281,7 @@ class UserSubscription(Base, TimestampMixin):
     def is_expired(self) -> bool:
         if self.period_end is None:
             return False
-        return datetime.now(timezone.utc) > self.period_end
+        return datetime.now(UTC) > self.period_end
 
 
 class CreditAccount(Base, TimestampMixin):
@@ -382,9 +382,7 @@ class CreditCostConfig(Base, TimestampMixin):
 
     action: Mapped[str] = mapped_column(String(50), primary_key=True)
     cost: Mapped[int] = mapped_column(Integer, nullable=False)
-    updated_by: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    updated_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
@@ -483,7 +481,9 @@ class CandidateProfile(Base, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(50))
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
     github_url: Mapped[str | None] = mapped_column(String(500))
-    languages: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)  # [{"language": "...", "proficiency": "..."}]
+    languages: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        FlexJSON
+    )  # [{"language": "...", "proficiency": "..."}]
     employment_status: Mapped[str | None] = mapped_column(String(100))
     constraints: Mapped[str | None] = mapped_column(Text)
 
@@ -631,9 +631,7 @@ class JobPosting(Base, TimestampMixin):
     __tablename__ = "job_postings"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     # ── Source ────────────────────────────────────────────────
     portal: Mapped[str] = mapped_column(String(50), nullable=False)  # linkedin, jobindex, freehire, ...
@@ -665,9 +663,8 @@ class JobPosting(Base, TimestampMixin):
     # ── Raw scraper output (for debugging / re-parsing) ──────
     raw_data: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
 
-    __table_args__ = (
-        UniqueConstraint("portal", "external_id", name="uq_job_postings_portal_external_id"),
-    )
+    __table_args__ = (UniqueConstraint("portal", "external_id", name="uq_job_postings_portal_external_id"),)
+
 
 class ScrapeRun(Base, TimestampMixin):
     """History of scraper executions (manual or scheduled).
@@ -679,9 +676,7 @@ class ScrapeRun(Base, TimestampMixin):
     __tablename__ = "scrape_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     # ── Run metadata ─────────────────────────────────────────
     triggered_by: Mapped[str] = mapped_column(String(20), nullable=False)  # "manual" or "scheduler"
@@ -702,7 +697,9 @@ class ScrapeRun(Base, TimestampMixin):
     external_results: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Status ────────────────────────────────────────────────
-    status: Mapped[str] = mapped_column(String(30), default="running")  # running, completed, completed_with_errors, failed
+    status: Mapped[str] = mapped_column(
+        String(30), default="running"
+    )  # running, completed, completed_with_errors, failed
     error_message: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -726,9 +723,7 @@ class RankEvaluation(Base, TimestampMixin):
     job_posting_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     # ── Dimension scores (0-100) ──────────────────────────────
     technical_score: Mapped[int] = mapped_column(default=0)
@@ -769,9 +764,7 @@ class RankEvaluation(Base, TimestampMixin):
     # ── Relationships ─────────────────────────────────────────
     job_posting: Mapped["JobPosting"] = relationship(backref="rank_evaluation")
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "job_posting_id", name="uq_eval_per_user_job"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "job_posting_id", name="uq_eval_per_user_job"),)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -789,9 +782,7 @@ class Application(Base, TimestampMixin):
     __tablename__ = "applications"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     job_posting_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
     )
@@ -819,7 +810,8 @@ class Application(Base, TimestampMixin):
 
     # ── Pipeline stage tracking ────────────────────────────────
     stage: Mapped[str] = mapped_column(
-        String(20), default="draft",
+        String(20),
+        default="draft",
         comment="draft → reviewed → revised → compiled → verified",
     )
     # Final structured CV JSON (post-revision) — source of truth for verification
@@ -836,9 +828,13 @@ class Application(Base, TimestampMixin):
     verification_result: Mapped[dict[str, Any] | None] = mapped_column(
         FlexJSON, comment="FASE 2 — VerificationResult JSON from POST /apply/{id}/verify"
     )
-    ats_missing_keywords: Mapped[list[str] | None] = mapped_column(FlexJSON, comment="Job keywords not found in PDF text")
+    ats_missing_keywords: Mapped[list[str] | None] = mapped_column(
+        FlexJSON, comment="Job keywords not found in PDF text"
+    )
     ats_pass: Mapped[bool | None] = mapped_column(comment="Overall ATS compatibility verdict")
-    ats_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="When ATS check was performed")
+    ats_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="When ATS check was performed"
+    )
 
     # ── Metadata ──────────────────────────────────────────────
     cv_template: Mapped[str] = mapped_column(String(100), default="moderncv-banking")
@@ -866,9 +862,7 @@ class InterviewPrep(Base, TimestampMixin):
     __tablename__ = "interview_preps"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     application_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
     )
@@ -937,9 +931,7 @@ class Outcome(Base, TimestampMixin):
     __tablename__ = "outcomes"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     application_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
     )
@@ -999,9 +991,7 @@ class CompetencyExpansion(Base, TimestampMixin):
     __tablename__ = "competency_expansions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     candidate_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("candidate_profiles.id", ondelete="CASCADE"), nullable=False
     )
@@ -1106,9 +1096,7 @@ class Upskill(Base, TimestampMixin):
     __tablename__ = "upskills"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     candidate_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("candidate_profiles.id", ondelete="CASCADE"), nullable=False
     )
@@ -1176,9 +1164,7 @@ class ExecutionJob(Base, TimestampMixin):
     __tablename__ = "execution_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     # ── Job identity ──────────────────────────────────────────
     pipeline: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
@@ -1216,9 +1202,7 @@ class ExecutionJob(Base, TimestampMixin):
     worker_id: Mapped[str | None] = mapped_column(String(50))
 
     # ── Idempotency (Fase 6) ───────────────────────────────────
-    idempotency_key: Mapped[str | None] = mapped_column(
-        String(100), unique=True, index=True
-    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
 
     __table_args__ = (
         # Composite index for the orchestrator's hot path: "find next X job for pipeline Y"
@@ -1227,7 +1211,8 @@ class ExecutionJob(Base, TimestampMixin):
         # Prevent concurrent rank runs per user (only one active at a time)
         Index(
             "uq_active_rank_per_user",
-            "user_id", "pipeline",
+            "user_id",
+            "pipeline",
             postgresql_where=("status IN ('queued', 'running')"),
             unique=True,
         ),
@@ -1244,9 +1229,7 @@ class ProviderHealth(Base, TimestampMixin):
     __tablename__ = "provider_health"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # ── Priority tier (lower = higher priority, 1 = highest) ──
@@ -1270,9 +1253,7 @@ class ProviderHealth(Base, TimestampMixin):
     # ── Health score (0.0 = dead, 1.0 = perfect) ─────────────
     health_score: Mapped[float] = mapped_column(default=1.0)
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "provider", name="uq_provider_health_user_provider"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_provider_health_user_provider"),)
 
 
 class ModelHealth(Base, TimestampMixin):
@@ -1285,9 +1266,7 @@ class ModelHealth(Base, TimestampMixin):
     __tablename__ = "model_health"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model_name: Mapped[str] = mapped_column(String(100), nullable=False)
 
@@ -1311,7 +1290,9 @@ class ModelHealth(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "provider", "model_name",
+            "user_id",
+            "provider",
+            "model_name",
             name="uq_model_health_user_provider_model",
         ),
     )
@@ -1365,14 +1346,10 @@ class ExecutionJobItem(Base, TimestampMixin):
     job_posting_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     # ── Lifecycle ─────────────────────────────────────────────
-    status: Mapped[str] = mapped_column(
-        String(20), default="queued", index=True
-    )
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
     worker_id: Mapped[str | None] = mapped_column(String(50))
 
     # ── Lease / concurrency ───────────────────────────────────
@@ -1390,7 +1367,11 @@ class ExecutionJobItem(Base, TimestampMixin):
 
     __table_args__ = (
         Index("ix_items_claimable", "status", "created_at", postgresql_where=("status = 'queued'")),
-        Index("ix_items_expired_lease", "locked_until", postgresql_where=("status = 'running' AND locked_until IS NOT NULL")),
+        Index(
+            "ix_items_expired_lease",
+            "locked_until",
+            postgresql_where=("status = 'running' AND locked_until IS NOT NULL"),
+        ),
     )
 
 
@@ -1414,9 +1395,7 @@ class RankEvaluationVersion(Base, TimestampMixin):
     evaluation_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("rank_evaluations.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     job_posting_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("job_postings.id", ondelete="CASCADE"), nullable=False
     )
@@ -1460,12 +1439,8 @@ class IngestedJob(Base):
     source_message_id: Mapped[int] = mapped_column(Integer, nullable=False)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     dedup_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
-    ingested_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IngestJob(Base):
@@ -1480,12 +1455,8 @@ class IngestJob(Base):
     status: Mapped[str] = mapped_column(String(20), default="queued")
     result_count: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1507,12 +1478,8 @@ class GeneratedCV(Base, TimestampMixin):
     __table_args__ = {"extend_existing": True}
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String(36), nullable=False, index=True
-    )
-    cv_type: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="base", index=True
-    )
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    cv_type: Mapped[str] = mapped_column(String(20), nullable=False, default="base", index=True)
     # Lifecycle of base CVs (NULL for personalized CVs):
     #   "active"   → the current base CV (the one adapts / downloads use)
     #   "obsolete" → a replaced base CV kept in "Mis CV" for recovery
@@ -1525,15 +1492,11 @@ class GeneratedCV(Base, TimestampMixin):
     cv_json: Mapped[dict[str, Any]] = mapped_column(FlexJSON, nullable=False)
     pdf_path: Mapped[str | None] = mapped_column(String(1000))
     analysis: Mapped[dict[str, Any] | None] = mapped_column(FlexJSON)
-    is_deleted: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=func.false()
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None
-    )
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=func.false())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
         index=True,
     )

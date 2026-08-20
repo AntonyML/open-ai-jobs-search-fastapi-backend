@@ -13,15 +13,15 @@ Revises: 79905e25e8c5
 Create Date: 2026-07-22 01:15:00.000000
 
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 from alembic import op
 
-
 revision: str = "f6a7b8c9d0e1"
-down_revision: Union[str, None] = "79905e25e8c5"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "79905e25e8c5"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 IDX = "CREATE INDEX IF NOT EXISTS {name} ON {table} ({cols})"
 DROP = "DROP INDEX IF EXISTS {name}"
@@ -60,11 +60,6 @@ _IDX_SPEC: list[tuple[str, str, str]] = [
 def upgrade() -> None:
     for name, table, cols in _IDX_SPEC:
         op.execute(IDX.format(name=name, table=table, cols=cols))
-
-
-def downgrade() -> None:
-    for name, table, cols in reversed(_IDX_SPEC):
-        op.execute(DROP.format(name=name))
 
 
 def downgrade() -> None:

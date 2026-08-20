@@ -11,7 +11,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ── Upload / Storage schemas ────────────────────────────────────────
 
 
@@ -37,9 +36,7 @@ class SalaryMetadata(BaseModel):
 class SalaryDataUpload(BaseModel):
     """Payload for uploading salary data (JSON format)."""
 
-    companies: list[SalaryCompanyEntry] = Field(
-        ..., description="Array of company salary entries"
-    )
+    companies: list[SalaryCompanyEntry] = Field(..., description="Array of company salary entries")
     metadata: SalaryMetadata = Field(
         default_factory=SalaryMetadata,
         description="Metadata about the salary data source",
@@ -66,21 +63,13 @@ class SalaryBenchmark(BaseModel):
     """
 
     company_name: str
-    match_confidence: int = Field(
-        ge=0, le=100, description="Fuzzy match score 0-100"
-    )
+    match_confidence: int = Field(ge=0, le=100, description="Fuzzy match score 0-100")
     city: str | None = None
 
     # Salary estimate from the user's data
-    salary_estimate: float | None = Field(
-        None, description="Estimated salary for this role/company"
-    )
-    market_median: float | None = Field(
-        None, description="Market median for this role/location"
-    )
-    salary_delta_pct: float | None = Field(
-        None, description="(salary_estimate - market_median) / market_median * 100"
-    )
+    salary_estimate: float | None = Field(None, description="Estimated salary for this role/company")
+    market_median: float | None = Field(None, description="Market median for this role/location")
+    salary_delta_pct: float | None = Field(None, description="(salary_estimate - market_median) / market_median * 100")
     index_value: float | None = Field(
         None, description="Index value from salary data (e.g. 105.5 = 5.5% above baseline)"
     )

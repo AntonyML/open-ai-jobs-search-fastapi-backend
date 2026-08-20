@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 
 from app.core.logging.config import LoggingConfig
+from app.core.logging.context import bind_context as bind_context
 from app.core.logging.handlers import build_all_handlers
-from app.core.logging.context import bind_context
 
 _config: LoggingConfig | None = None
 
@@ -40,11 +40,14 @@ def setup_logging(config: LoggingConfig | None = None) -> None:
     # Sentry (production only)
     if _config.sentry_dsn and _config.is_production:
         from app.core.logging.sentry import init_sentry
+
         init_sentry(_config)
 
     logging.getLogger("app").info(
         "Logging initialized │ env=%s level=%s log_dir=%s",
-        _config.env.value, _config.level, _config.log_dir,
+        _config.env.value,
+        _config.level,
+        _config.log_dir,
     )
 
 

@@ -7,13 +7,13 @@ directly if you need to invoke it programmatically.
 """
 
 from app.services.salary.tools.convert_salary_excel import (  # noqa: F401
-    parse_sheet,
+    CITY_PATTERNS,
+    COMPANY_PATTERNS,
+    COMPOUND_PATTERNS,
+    COUNT_PATTERNS,
+    INDEX_PATTERNS,
     detect_column_type,
     header_matches,
+    parse_sheet,
     strip_type_patterns,
-    INDEX_PATTERNS,
-    COUNT_PATTERNS,
-    COMPANY_PATTERNS,
-    CITY_PATTERNS,
-    COMPOUND_PATTERNS,
 )

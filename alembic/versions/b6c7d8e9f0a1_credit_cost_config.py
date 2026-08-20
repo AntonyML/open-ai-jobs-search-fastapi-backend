@@ -13,18 +13,19 @@ Plan.md §8.2 — single source of truth for credit costs.  Sequence:
 
 downgrade restores the JSON blob from the table so no data is lost.
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 
+from alembic import op
 from app.services.credit_costs import compute_backfill
 
 # revision identifiers, used by Alembic.
 revision: str = "b6c7d8e9f0a1"
-down_revision: Union[str, None] = "a4b5c6d7e8f9"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "a4b5c6d7e8f9"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 LEGACY_KEY = "credit_costs"
 
@@ -55,9 +56,7 @@ def upgrade() -> None:
 
     # 1. Read the legacy JSON blob (may not exist on fresh installs).
     legacy = {}
-    row = conn.execute(
-        sa.text("SELECT value FROM app_config WHERE key = :k"), {"k": LEGACY_KEY}
-    ).first()
+    row = conn.execute(sa.text("SELECT value FROM app_config WHERE key = :k"), {"k": LEGACY_KEY}).first()
     if row is not None and isinstance(row[0], dict):
         legacy = row[0]
 
@@ -75,9 +74,7 @@ def upgrade() -> None:
 
     # 3. Verify every row matches the backfill values — raise (full rollback)
     #    on any mismatch.
-    rows = conn.execute(
-        sa.text("SELECT action, cost FROM credit_cost_config")
-    ).fetchall()
+    rows = conn.execute(sa.text("SELECT action, cost FROM credit_cost_config")).fetchall()
     got = {r[0]: r[1] for r in rows}
     for key, expected in backfill.items():
         if got.get(key) != expected:
@@ -93,9 +90,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
-    rows = conn.execute(
-        sa.text("SELECT action, cost FROM credit_cost_config")
-    ).fetchall()
+    rows = conn.execute(sa.text("SELECT action, cost FROM credit_cost_config")).fetchall()
     if rows:
         import json
 

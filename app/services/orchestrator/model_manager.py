@@ -9,17 +9,13 @@ Responsibilities:
 
 from __future__ import annotations
 
-
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import timedelta
-
-from app.db.models import ModelHealth as ModelHealthModel
 from app.core.logging import get_logger
+from app.db.models import ModelHealth as ModelHealthModel
 
 logger = get_logger(__name__)
 
@@ -124,19 +120,13 @@ async def mark_model_completed(
         if health.average_latency_ms is None:
             health.average_latency_ms = float(latency_ms)
         else:
-            health.average_latency_ms = (
-                0.9 * health.average_latency_ms + 0.1 * latency_ms
-            )
+            health.average_latency_ms = 0.9 * health.average_latency_ms + 0.1 * latency_ms
 
     # Update success rate (exponential moving average)
     if success:
-        health.average_success_rate = min(
-            1.0, health.average_success_rate + 0.05
-        )
+        health.average_success_rate = min(1.0, health.average_success_rate + 0.05)
     else:
-        health.average_success_rate = max(
-            0.0, health.average_success_rate - 0.1
-        )
+        health.average_success_rate = max(0.0, health.average_success_rate - 0.1)
 
     await db.flush()
 
@@ -152,9 +142,7 @@ async def mark_model_failed(
     """Mark a model as COOLDOWN or DISABLED after a failure."""
     health = await get_or_create_model_health(db, user_id, provider, model_name)
     health.state = STATE_COOLDOWN
-    health.cooldown_until = datetime.now(timezone.utc).replace(
-        microsecond=0
-    ) + timedelta(seconds=MODEL_COOLDOWN_SECONDS)
+    health.cooldown_until = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=MODEL_COOLDOWN_SECONDS)
     health.last_error = error_message[:500]
     health.last_error_code = error_code
     health.total_calls += 1
@@ -177,12 +165,14 @@ async def get_available_models(
     Returns:
         List of ModelHealth rows in READY state, sorted by priority.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await db.execute(
-        select(ModelHealthModel).where(
+        select(ModelHealthModel)
+        .where(
             ModelHealthModel.user_id == user_id,
             ModelHealthModel.provider == provider,
-        ).order_by(ModelHealthModel.priority)
+        )
+        .order_by(ModelHealthModel.priority)
     )
     all_models = list(result.scalars().all())
 

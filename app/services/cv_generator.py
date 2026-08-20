@@ -40,16 +40,16 @@ from app.exceptions import (
     ProviderAuthError,
     WebSearchUnavailableError,
 )
+from app.services import r2_storage
 from app.services.apply_json import (
     adapt_cv_llm,
     adapt_cv_llm_with_url,
     generate_base_cv_llm,
     personalize_cv_llm,
 )
+from app.services.artifact_store import new_output_path, remove_file, resolve_existing
 from app.services.notifications import notify_admin
 from app.services.pdf_compiler_typst import compile_cv
-from app.services import r2_storage
-from app.services.artifact_store import new_output_path, remove_file, resolve_existing
 from app.services.provider_config import get_active_provider_config
 from app.services.setup import get_profile
 
@@ -67,27 +67,21 @@ async def _load_profile_or_raise(db: AsyncSession, user_id: str) -> CandidatePro
     try:
         return await get_profile(db, user_id)
     except NotFoundError:
-        raise ProfileIncompleteError(
-            "Complete your profile setup first (POST /setup)."
-        ) from None
+        raise ProfileIncompleteError("Complete your profile setup first (POST /setup).") from None
 
 
 async def _resolve_provider_or_raise(db: AsyncSession, user_id: str) -> dict[str, Any]:
     """Return the global provider config, or a 400 if none is configured."""
     config = await get_active_provider_config(db)
     if not config or config.get("provider") is None:
-        raise ProviderAuthError(
-            "No LLM provider configured. An admin must configure the global provider first."
-        )
+        raise ProviderAuthError("No LLM provider configured. An admin must configure the global provider first.")
     return config
 
 
 # ── Generation ───────────────────────────────────────────────────────
 
 
-async def generate_base_cv(
-    db: AsyncSession, user_id: str, usage: dict | None = None
-) -> GeneratedCV:
+async def generate_base_cv(db: AsyncSession, user_id: str, usage: dict | None = None) -> GeneratedCV:
     """Generate a generic base CV (no job context) and persist it.
 
     Enforces the max-2 base CV invariant: the current active base is demoted
@@ -105,7 +99,8 @@ async def generate_base_cv(
     await _demote_previous_bases(db, user_id)
 
     return await _persist_and_compile(
-        db, user_id,
+        db,
+        user_id,
         cv_type="base",
         output_dict=output_dict,
         analysis_dict=None,
@@ -124,10 +119,14 @@ async def personalize_cv(
     provider_config = await _resolve_provider_or_raise(db, user_id)
 
     analysis_dict, output_dict = await personalize_cv_llm(
-        profile, job_description_text, provider_config, usage=usage,
+        profile,
+        job_description_text,
+        provider_config,
+        usage=usage,
     )
     return await _persist_and_compile(
-        db, user_id,
+        db,
+        user_id,
         cv_type="personalized",
         output_dict=output_dict,
         analysis_dict=analysis_dict,
@@ -163,19 +162,22 @@ async def adapt_cv(
     )
     base_cv = result.scalar_one_or_none()
     if base_cv is None or base_cv.cv_type != "base" or base_cv.base_status != "active":
-        raise PreconditionError(
-            "Generate a base CV first before adapting it to a job offer."
-        )
+        raise PreconditionError("Generate a base CV first before adapting it to a job offer.")
 
     job = await db.get(JobPosting, job_posting_id)
     if job is None or job.user_id != user_id:
         raise NotFoundError("Job posting not found.")
 
     analysis_dict, output_dict = await adapt_cv_llm(
-        profile, base_cv.cv_json, job, provider_config, usage=usage,
+        profile,
+        base_cv.cv_json,
+        job,
+        provider_config,
+        usage=usage,
     )
     return await _persist_and_compile(
-        db, user_id,
+        db,
+        user_id,
         cv_type="personalized",
         output_dict=output_dict,
         analysis_dict=analysis_dict,
@@ -215,16 +217,18 @@ async def adapt_cv_from_url(
     )
     base_cv = result.scalar_one_or_none()
     if base_cv is None or base_cv.cv_type != "base" or base_cv.base_status != "active":
-        raise PreconditionError(
-            "Generate a base CV first before adapting it to a job offer."
-        )
+        raise PreconditionError("Generate a base CV first before adapting it to a job offer.")
 
     # The model reads the URL (provider web_search). If the configured model
     # can't open links, this raises WebSearchUnavailableError before any LLM
     # call — the admin is notified so the config issue gets fixed.
     try:
         analysis_dict, output_dict = await adapt_cv_llm_with_url(
-            profile, base_cv.cv_json, url, provider_config, usage=usage,
+            profile,
+            base_cv.cv_json,
+            url,
+            provider_config,
+            usage=usage,
         )
     except WebSearchUnavailableError:
         await notify_admin(
@@ -247,7 +251,8 @@ async def adapt_cv_from_url(
         raise
 
     return await _persist_and_compile(
-        db, user_id,
+        db,
+        user_id,
         cv_type="personalized",
         output_dict=output_dict,
         analysis_dict=analysis_dict,
@@ -329,10 +334,7 @@ async def compile_cv_in_background(
                     db,
                     "cv_pdf_compile_failed",
                     "PDF compile failed",
-                    (
-                        f"CV {record_id} could not be rendered to PDF. "
-                        "The structured JSON is still available."
-                    ),
+                    (f"CV {record_id} could not be rendered to PDF. The structured JSON is still available."),
                 )
                 await db.commit()
         except Exception:

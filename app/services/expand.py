@@ -9,23 +9,20 @@ Implements the /expand workflow:
 from __future__ import annotations
 
 import json
-import os
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.logging import get_logger, bind_context
+from app.core.logging import bind_context, get_logger
 from app.core.settings import get_settings
 from app.db.models import (
     CandidateProfile,
     CompetencyExpansion,
-    User,
 )
-from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
+from app.exceptions import NotFoundError, ProfileIncompleteError
 from app.schemas.expand import (
     EnrichedCompetenciesLLMOutput,
     ExpandRequest,  # noqa: F401 — re-export for tests/callers
@@ -104,9 +101,7 @@ async def execute_expand(
             usage = {}
 
         if candidate is None:
-            result = await db.execute(
-                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-            )
+            result = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user_id))
             candidate = result.scalar_one_or_none()
 
         if candidate is None:
@@ -232,9 +227,7 @@ async def _execute_expand_background(
     from app.db.session import async_session_factory
 
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(CompetencyExpansion).where(CompetencyExpansion.id == expansion_id)
-        )
+        result = await db.execute(select(CompetencyExpansion).where(CompetencyExpansion.id == expansion_id))
         expansion = result.scalar_one_or_none()
         if expansion is None:
             logger.error("Expansion %s not found for background task", expansion_id)
@@ -274,15 +267,17 @@ def _scan_cv_folder() -> list[dict[str, Any]]:
         lines = text.split("\n")
         title = lines[0].strip() if lines else pdf_path.stem
 
-        items.append({
-            "id": f"cv_{len(items)}",
-            "source": "cv",
-            "type": "job_bullet",
-            "title": title,
-            "description": text[:500],
-            "date": "",
-            "source_file": pdf_path.name,
-        })
+        items.append(
+            {
+                "id": f"cv_{len(items)}",
+                "source": "cv",
+                "type": "job_bullet",
+                "title": title,
+                "description": text[:500],
+                "date": "",
+                "source_file": pdf_path.name,
+            }
+        )
 
     return items
 
@@ -303,27 +298,31 @@ def _scan_linkedin_folder() -> list[dict[str, Any]]:
 
         positions = data.get("positions", [])
         for pos in positions:
-            items.append({
-                "id": f"li_{len(items)}",
-                "source": "linkedin",
-                "type": "job_bullet",
-                "title": pos.get("title", "Unknown"),
-                "description": pos.get("description", ""),
-                "date": pos.get("start_date", ""),
-                "source_file": json_path.name,
-            })
+            items.append(
+                {
+                    "id": f"li_{len(items)}",
+                    "source": "linkedin",
+                    "type": "job_bullet",
+                    "title": pos.get("title", "Unknown"),
+                    "description": pos.get("description", ""),
+                    "date": pos.get("start_date", ""),
+                    "source_file": json_path.name,
+                }
+            )
 
         certifications = data.get("certifications", [])
         for cert in certifications:
-            items.append({
-                "id": f"li_{len(items)}",
-                "source": "linkedin",
-                "type": "certification",
-                "title": cert.get("name", "Unknown"),
-                "description": cert.get("authority", ""),
-                "date": cert.get("date", ""),
-                "source_file": json_path.name,
-            })
+            items.append(
+                {
+                    "id": f"li_{len(items)}",
+                    "source": "linkedin",
+                    "type": "certification",
+                    "title": cert.get("name", "Unknown"),
+                    "description": cert.get("authority", ""),
+                    "date": cert.get("date", ""),
+                    "source_file": json_path.name,
+                }
+            )
 
     return items
 
@@ -340,15 +339,17 @@ def _scan_diplomas_folder() -> list[dict[str, Any]]:
         if not text:
             continue
 
-        items.append({
-            "id": f"dip_{len(items)}",
-            "source": "diplomas",
-            "type": "course",
-            "title": pdf_path.stem,
-            "description": text[:500],
-            "date": "",
-            "source_file": pdf_path.name,
-        })
+        items.append(
+            {
+                "id": f"dip_{len(items)}",
+                "source": "diplomas",
+                "type": "course",
+                "title": pdf_path.stem,
+                "description": text[:500],
+                "date": "",
+                "source_file": pdf_path.name,
+            }
+        )
 
     return items
 
@@ -365,15 +366,17 @@ def _scan_references_folder() -> list[dict[str, Any]]:
         if not text:
             continue
 
-        items.append({
-            "id": f"ref_{len(items)}",
-            "source": "references",
-            "type": "volunteer",
-            "title": pdf_path.stem,
-            "description": text[:500],
-            "date": "",
-            "source_file": pdf_path.name,
-        })
+        items.append(
+            {
+                "id": f"ref_{len(items)}",
+                "source": "references",
+                "type": "volunteer",
+                "title": pdf_path.stem,
+                "description": text[:500],
+                "date": "",
+                "source_file": pdf_path.name,
+            }
+        )
 
     return items
 
@@ -399,14 +402,16 @@ def fetch_github_repos(github_url: str) -> list[dict[str, Any]]:
         response = httpx.get(api_url, timeout=10)
         if response.status_code == 200:
             for repo in response.json():
-                repos.append({
-                    "name": repo.get("name", ""),
-                    "description": repo.get("description") or "",
-                    "language": repo.get("language") or "",
-                    "topics": repo.get("topics", []),
-                    "stars": repo.get("stargazers_count", 0),
-                    "url": repo.get("html_url", ""),
-                })
+                repos.append(
+                    {
+                        "name": repo.get("name", ""),
+                        "description": repo.get("description") or "",
+                        "language": repo.get("language") or "",
+                        "topics": repo.get("topics", []),
+                        "stars": repo.get("stargazers_count", 0),
+                        "url": repo.get("html_url", ""),
+                    }
+                )
     except Exception as exc:
         logger.warning("Failed to fetch GitHub repos for %s: %s", github_url, exc)
 
@@ -417,19 +422,21 @@ def _make_github_items(repos: list[dict[str, Any]], base_url: str) -> list[dict[
     """Convert GitHub repo data to experience items."""
     items: list[dict[str, Any]] = []
     for repo in repos:
-        items.append({
-            "id": f"gh_{len(items)}",
-            "source": "github",
-            "type": "repo",
-            "title": repo.get("name", "Unknown"),
-            "description": repo.get("description", ""),
-            "date": "",
-            "source_file": base_url,
-            "language": repo.get("language", ""),
-            "topics": repo.get("topics", []),
-            "stars": repo.get("stars", 0),
-            "url": repo.get("url", ""),
-        })
+        items.append(
+            {
+                "id": f"gh_{len(items)}",
+                "source": "github",
+                "type": "repo",
+                "title": repo.get("name", "Unknown"),
+                "description": repo.get("description", ""),
+                "date": "",
+                "source_file": base_url,
+                "language": repo.get("language", ""),
+                "topics": repo.get("topics", []),
+                "stars": repo.get("stars", 0),
+                "url": repo.get("url", ""),
+            }
+        )
     return items
 
 
@@ -444,15 +451,17 @@ def _scan_other_urls(candidate: CandidateProfile) -> list[dict[str, Any]]:
         urls.append(candidate.github_url)
 
     for url in urls:
-        items.append({
-            "id": f"url_{len(items)}",
-            "source": "other_url",
-            "type": "project",
-            "title": url,
-            "description": "",
-            "date": "",
-            "source_file": url,
-        })
+        items.append(
+            {
+                "id": f"url_{len(items)}",
+                "source": "other_url",
+                "type": "project",
+                "title": url,
+                "description": "",
+                "date": "",
+                "source_file": url,
+            }
+        )
 
     return items
 
@@ -499,7 +508,7 @@ Return your response as a JSON object with an "enrichments" array where each ele
 Experience items to analyze:
 {items_text}
 
-Be specific and technical. Extract 2-5 competencies per item."""
+Be specific and technical. Extract 2-5 competencies per item."""  # noqa: E501
 
     return [
         {"role": "system", "content": system_prompt},
@@ -516,10 +525,7 @@ def build_proposed_additions_prompt(
     if candidate.skills:
         profile_summary += f"\nCurrent skills: {json.dumps(candidate.skills, ensure_ascii=False, indent=2)[:1000]}"
 
-    enriched_text = "\n".join(
-        f"- Item {e.experience_item_id}: {', '.join(e.competencies[:5])}"
-        for e in enriched
-    )
+    enriched_text = "\n".join(f"- Item {e.experience_item_id}: {', '.join(e.competencies[:5])}" for e in enriched)
 
     system_prompt = f"""You are a career profile enhancement assistant. Given a candidate's current profile and a list of enriched competencies (discovered from documents, LinkedIn, GitHub, etc.), propose additions to the candidate's profile.
 
@@ -538,7 +544,7 @@ Return a JSON object with an "additions" array where each element has:
 - item: a dict or string value to add
 - reason: why this addition is supported by the evidence
 
-Propose 2-5 high-confidence additions only."""
+Propose 2-5 high-confidence additions only."""  # noqa: E501
 
     return [
         {"role": "system", "content": system_prompt},

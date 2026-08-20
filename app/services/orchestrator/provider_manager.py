@@ -10,16 +10,13 @@ Responsibilities:
 
 from __future__ import annotations
 
-
-import time
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ProviderHealth as ProviderHealthModel
 from app.core.logging import get_logger
+from app.db.models import ProviderHealth as ProviderHealthModel
 
 logger = get_logger(__name__)
 
@@ -37,19 +34,19 @@ DEFAULT_PROVIDER_PRIORITIES: dict[str, int] = {
 }
 
 # Cooldown durations (in seconds) based on error type
-COOLDOWN_RATE_LIMIT: int = 60       # 1 minute for 429s
-COOLDOWN_TIMEOUT: int = 30          # 30 seconds for timeouts
-COOLDOWN_SERVER_ERROR: int = 120    # 2 minutes for 5xx
-COOLDOWN_AUTH_ERROR: int = 600      # 10 minutes for auth failures
+COOLDOWN_RATE_LIMIT: int = 60  # 1 minute for 429s
+COOLDOWN_TIMEOUT: int = 30  # 30 seconds for timeouts
+COOLDOWN_SERVER_ERROR: int = 120  # 2 minutes for 5xx
+COOLDOWN_AUTH_ERROR: int = 600  # 10 minutes for auth failures
 COOLDOWN_CONSECUTIVE_FLOOR: int = 10  # Minimum cooldown per consecutive failure
 
 # Health score decay
-HEALTH_SCORE_DECAY: float = 0.1     # How much each failure impacts the score
-HEALTH_SCORE_RECOVERY: float = 0.02 # How much each success restores the score
+HEALTH_SCORE_DECAY: float = 0.1  # How much each failure impacts the score
+HEALTH_SCORE_RECOVERY: float = 0.02  # How much each success restores the score
 HEALTH_SCORE_MIN: float = 0.0
 HEALTH_SCORE_MAX: float = 1.0
 HEALTH_SCORE_DEGRADED_THRESHOLD: float = 0.5  # Below this = degraded
-HEALTH_SCORE_DISABLE_THRESHOLD: float = 0.1   # Below this = disabled
+HEALTH_SCORE_DISABLE_THRESHOLD: float = 0.1  # Below this = disabled
 
 # Max consecutive failures before auto-disabling
 MAX_CONSECUTIVE_FAILURES: int = 5
@@ -144,19 +141,16 @@ async def record_failure(
     )
 
     # Determine cooldown
-    cooldown_seconds = _calculate_cooldown(
-        error_code, health.consecutive_failures
-    )
-    health.cooldown_until = datetime.now(timezone.utc) + timedelta(
-        seconds=cooldown_seconds
-    )
+    cooldown_seconds = _calculate_cooldown(error_code, health.consecutive_failures)
+    health.cooldown_until = datetime.now(UTC) + timedelta(seconds=cooldown_seconds)
 
     # Auto-disable if too many consecutive failures
     if health.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
         health.status = "disabled"
         logger.warning(
             "Provider %s disabled after %d consecutive failures",
-            provider, health.consecutive_failures,
+            provider,
+            health.consecutive_failures,
         )
     elif health.health_score < HEALTH_SCORE_DISABLE_THRESHOLD:
         health.status = "disabled"
@@ -167,8 +161,11 @@ async def record_failure(
 
     logger.info(
         "Provider %s status=%s health_score=%.2f cooldown=%ds consecutive=%d",
-        provider, health.status, health.health_score,
-        cooldown_seconds, health.consecutive_failures,
+        provider,
+        health.status,
+        health.health_score,
+        cooldown_seconds,
+        health.consecutive_failures,
     )
 
     await db.flush()
@@ -212,14 +209,12 @@ async def get_available_providers(
     )
 
     if provider_whitelist:
-        query = query.where(
-            ProviderHealthModel.provider.in_(provider_whitelist)
-        )
+        query = query.where(ProviderHealthModel.provider.in_(provider_whitelist))
 
     result = await db.execute(query)
     all_providers = list(result.scalars().all())
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Filter to available providers
     available = []
@@ -242,9 +237,11 @@ async def get_provider_health_status(
 ) -> list[ProviderHealthModel]:
     """Get full health status for all tracked providers."""
     result = await db.execute(
-        select(ProviderHealthModel).where(
+        select(ProviderHealthModel)
+        .where(
             ProviderHealthModel.user_id == user_id,
-        ).order_by(ProviderHealthModel.priority)
+        )
+        .order_by(ProviderHealthModel.priority)
     )
     return list(result.scalars().all())
 

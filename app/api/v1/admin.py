@@ -34,6 +34,11 @@ from app.schemas.providers import (
 )
 from app.services import credits
 from app.services.billing_policy import get_billing_policy, set_billing_policy
+from app.services.credit_costs import (
+    CreditCostConflictError,
+    get_catalog,
+    set_effective_costs,
+)
 from app.services.notifications import (
     get_notification_ttl_days,
     mark_purchase_requests_read,
@@ -41,11 +46,6 @@ from app.services.notifications import (
     mark_topup_requests_read,
     mark_upgrade_requests_read,
     set_notification_ttl_days,
-)
-from app.services.credit_costs import (
-    CreditCostConflictError,
-    get_catalog,
-    set_effective_costs,
 )
 from app.services.plans import (
     delete_plan,
@@ -109,9 +109,7 @@ async def list_users(
     conditions = []
     if search.strip():
         like = f"%{search.strip().lower()}%"
-        conditions.append(
-            func.lower(User.email).like(like) | func.lower(func.coalesce(User.full_name, "")).like(like)
-        )
+        conditions.append(func.lower(User.email).like(like) | func.lower(func.coalesce(User.full_name, "")).like(like))
     if role in ("admin", "client"):
         conditions.append(User.role == role)
     if tier:
@@ -122,10 +120,7 @@ async def list_users(
     # Whitelist sortable columns — anything else falls back to created_at.
     sortable = {"full_name", "email", "role", "tier", "created_at"}
     sort_col = getattr(User, sort, User.created_at) if sort in sortable else User.created_at
-    if order == "asc":
-        query = query.order_by(sort_col.asc())
-    else:
-        query = query.order_by(sort_col.desc())
+    query = query.order_by(sort_col.asc()) if order == "asc" else query.order_by(sort_col.desc())
 
     total = (await db.execute(select(func.count()).select_from(User).where(*conditions))).scalar_one()
 
@@ -136,14 +131,10 @@ async def list_users(
     # legacy ``premium`` counter is gone — ``active_subs`` counts users with
     # an active subscription (the real paid-user metric).
     stats_total = (await db.execute(select(func.count()).select_from(User))).scalar_one()
-    stats_admins = (
-        await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))
-    ).scalar_one()
+    stats_admins = (await db.execute(select(func.count()).select_from(User).where(User.role == "admin"))).scalar_one()
     stats_active_subs = (
         await db.execute(
-            select(func.count(func.distinct(UserSubscription.user_id))).where(
-                UserSubscription.status == "active"
-            )
+            select(func.count(func.distinct(UserSubscription.user_id))).where(UserSubscription.status == "active")
         )
     ).scalar_one()
 
@@ -290,7 +281,7 @@ async def put_provider_config(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
-        )
+        ) from exc
     await db.commit()
     await db.refresh(row)
     return await get_global_provider_config_out(db)
@@ -334,12 +325,17 @@ async def test_provider_config(
 
     try:
         response = await llm_completion(
-            [{"role": "user", "content": (
-                "Reply with ONLY a valid JSON object with these fields: "
-                "{\"status\": \"ok\", \"provider\": \"<provider-name>\", "
-                "\"model\": \"<model-name>\", \"timestamp\": \"<current-iso-timestamp>\"}. "
-                "No explanation, no markdown, no extra text."
-            )}],
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Reply with ONLY a valid JSON object with these fields: "
+                        '{"status": "ok", "provider": "<provider-name>", '
+                        '"model": "<model-name>", "timestamp": "<current-iso-timestamp>"}. '
+                        "No explanation, no markdown, no extra text."
+                    ),
+                }
+            ],
             provider=config["provider"],
             model=config["model"] or "claude-sonnet-4-20250514",
             api_key=api_key,
@@ -641,9 +637,7 @@ async def approve_topup(
         ) from exc
 
     # Auto-close the admin's pending top-up notifications for this user.
-    await mark_topup_requests_read(
-        db, admin["sub"], payload.user_id, payload.correlation_id
-    )
+    await mark_topup_requests_read(db, admin["sub"], payload.user_id, payload.correlation_id)
     await db.commit()
     return {
         "user_id": payload.user_id,
@@ -697,9 +691,7 @@ async def approve_refund(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No active subscription to refund",
             )
-        await mark_refund_requests_read(
-            db, admin["sub"], payload.user_id, payload.correlation_id
-        )
+        await mark_refund_requests_read(db, admin["sub"], payload.user_id, payload.correlation_id)
         await db.commit()
         return {
             "user_id": payload.user_id,
@@ -710,9 +702,7 @@ async def approve_refund(
 
     _sub, revoked = await refund_subscription(db, sub)
     # Auto-close the admin's pending refund notifications for this user.
-    await mark_refund_requests_read(
-        db, admin["sub"], payload.user_id, payload.correlation_id
-    )
+    await mark_refund_requests_read(db, admin["sub"], payload.user_id, payload.correlation_id)
     await db.commit()
     return {
         "user_id": payload.user_id,

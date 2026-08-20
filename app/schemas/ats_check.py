@@ -39,9 +39,7 @@ class ATSResult(BaseModel):
     has_email: bool = Field(False, description="Email found as extractable text")
     has_phone: bool = Field(False, description="Phone found as extractable text")
     has_candidate_name: bool = Field(False, description="Candidate name found in PDF text")
-    keyword_coverage: float = Field(
-        0.0, ge=0.0, le=1.0, description="Fraction of job keywords found in PDF"
-    )
+    keyword_coverage: float = Field(0.0, ge=0.0, le=1.0, description="Fraction of job keywords found in PDF")
     found_keywords: list[str] = Field(default_factory=list)
     missing_keywords: list[str] = Field(default_factory=list)
     reading_order_ok: bool = Field(True, description="Text reading order appears correct")

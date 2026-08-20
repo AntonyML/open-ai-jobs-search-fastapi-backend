@@ -4,13 +4,19 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user
 from app.db.models import Application, InterviewPrep, JobPosting, Outcome
 from app.db.session import get_db as _get_db
 from app.services.plans import get_plan
+
 # Fallback limits when the user's plan row is missing from the DB
 # (source of truth is the plans catalog — see Plan.limits)
-_PAID_DEFAULTS = {"max_rank_iterations": 100, "max_apply_count": 1000, "max_prepare_count": 1000, "max_track_count": 1000}
+_PAID_DEFAULTS = {
+    "max_rank_iterations": 100,
+    "max_apply_count": 1000,
+    "max_prepare_count": 1000,
+    "max_track_count": 1000,
+}
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -32,9 +38,7 @@ async def get_user_usage(
 
     apps = select(func.count()).where(Application.user_id == uid)
     preps = select(func.count()).where(InterviewPrep.user_id == uid)
-    ranks = select(func.count(JobPosting.id)).where(
-        JobPosting.user_id == uid, JobPosting.rank_score.isnot(None)
-    )
+    ranks = select(func.count(JobPosting.id)).where(JobPosting.user_id == uid, JobPosting.rank_score.isnot(None))
     outcomes = select(func.count()).where(Outcome.user_id == uid)
 
     stmt = select(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.core.logging.context import get_context
 
@@ -49,10 +49,7 @@ class ConsoleFormatter(logging.Formatter):
 
         if self.colorize:
             color = _COLORS.get(record.levelname, "")
-            line = (
-                f"{_DIM}{ts}{_RESET} │ {color}{level}{_RESET} │ "
-                f"{_DIM}{name}{_RESET} │ {msg}{ctx_str}"
-            )
+            line = f"{_DIM}{ts}{_RESET} │ {color}{level}{_RESET} │ {_DIM}{name}{_RESET} │ {msg}{ctx_str}"
         else:
             line = f"{ts} │ {level} │ {name} │ {msg}{ctx_str}"
 
@@ -93,7 +90,7 @@ class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         ctx = get_context()
         entry = {
-            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),

@@ -4,10 +4,8 @@ Request/response shapes for interview preparation.
 """
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
-
 
 # ── Request schemas ─────────────────────────────────────────────────
 
@@ -16,9 +14,7 @@ class InterviewPrepRequest(BaseModel):
     """Trigger interview preparation for an application."""
 
     application_id: str = Field(..., description="The application to prepare for")
-    stage: str = Field(
-        ..., description="Interview stage: phone_screen, technical, case, final_round"
-    )
+    stage: str = Field(..., description="Interview stage: phone_screen, technical, case, final_round")
     interview_date: str | None = Field(None, description="YYYY-MM-DD")
     interview_format: str | None = Field(None, description="phone, video, onsite")
     interviewer_names: list[str] | None = Field(None, description="Names and titles if known")
@@ -50,7 +46,7 @@ class InterviewPrepRequest(BaseModel):
         try:
             datetime.strptime(v, "%Y-%m-%d")
         except ValueError:
-            raise ValueError("interview_date must be in YYYY-MM-DD format")
+            raise ValueError("interview_date must be in YYYY-MM-DD format") from None
         return v
 
 
@@ -188,18 +184,16 @@ class MockInterviewRequest(BaseModel):
 
     Omit user_answer (or send empty) to start the mock interview.
     """
-    user_answer: str | None = Field(
-        None, description="The candidate's answer to the current question. Omit to start."
-    )
+
+    user_answer: str | None = Field(None, description="The candidate's answer to the current question. Omit to start.")
 
 
 class MockInterviewResponse(BaseModel):
     """Response from a mock interview turn."""
+
     prep_id: str
     question: str
-    feedback: str | None = Field(
-        None, description="Feedback on previous answer (null for first question)"
-    )
+    feedback: str | None = Field(None, description="Feedback on previous answer (null for first question)")
     question_number: int
     total_questions: int
     is_complete: bool

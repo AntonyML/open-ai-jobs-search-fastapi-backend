@@ -1,11 +1,13 @@
 """Test end-to-end: microservice ingest + API principal reads."""
+
 import asyncio
+
 import httpx
 from sqlalchemy import select
 
 from app.core.settings import get_settings
-from app.db.session import async_session_factory
 from app.db.models import IngestedJob
+from app.db.session import async_session_factory
 
 
 async def test():
@@ -25,19 +27,13 @@ async def test():
             job_id = data["ingest_job_id"]
             await asyncio.sleep(12)
 
-            resp2 = await client.get(
-                f"{s.ingest_service_url}/api/v1/ingest/{job_id}/status"
-            )
+            resp2 = await client.get(f"{s.ingest_service_url}/api/v1/ingest/{job_id}/status")
             print(f"Status after 12s: {resp2.json()}")
 
     print()
     print("=== Test 4: API principal reads ingested_jobs ===")
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(IngestedJob)
-            .limit(5)
-            .order_by(IngestedJob.ingested_at.desc())
-        )
+        result = await db.execute(select(IngestedJob).limit(5).order_by(IngestedJob.ingested_at.desc()))
         jobs = result.scalars().all()
         print(f"Direct DB query: {len(jobs)} jobs in ingested_jobs")
         for j in jobs[:5]:

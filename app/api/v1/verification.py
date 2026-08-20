@@ -105,10 +105,8 @@ async def verify_application(
     pass_count = len(verify_result.passes)
     total_count = len(verify_result.checks)
     status_emoji = "✅" if verify_result.overall_pass else "❌"
-    message = (
-        f"{status_emoji} Verification complete: "
-        f"{pass_count}/{total_count} checks passed"
-        + (f", {len(verify_result.failures)} issue(s) found." if verify_result.failures else " — all clear!")
+    message = f"{status_emoji} Verification complete: {pass_count}/{total_count} checks passed" + (
+        f", {len(verify_result.failures)} issue(s) found." if verify_result.failures else " — all clear!"
     )
 
     return VerificationResponse(

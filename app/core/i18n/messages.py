@@ -10,8 +10,6 @@ Usage::
 Add a new language by adding a new key to the CATALOG dict.
 """
 
-from typing import Any
-
 CATALOG: dict[str, dict[str, str]] = {
     "en": {
         # ── Common ────────────────────────────────────────────

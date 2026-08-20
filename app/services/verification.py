@@ -21,21 +21,20 @@ Architecture decision:
 
 from __future__ import annotations
 
-
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import bind_context, get_logger
 from app.db.models import Application, CandidateProfile, JobPosting
-from app.llm.adapter import llm_completion_structured, get_provider_kwargs
+from app.llm.adapter import get_provider_kwargs, llm_completion_structured
 from app.schemas.ats_check import ATSResult
 from app.schemas.verification import LlmContentCheckOutput, VerificationCheck, VerificationResult
-from app.services import artifact_store, ats_check, credits
-from app.core.logging import get_logger, bind_context
+from app.services import ats_check, credits
 
 logger = get_logger(__name__)
 
@@ -44,14 +43,14 @@ logger = get_logger(__name__)
 
 
 async def run_verification_checklist(
-        application: Application,
-        candidate: CandidateProfile | None,
-        job_posting: JobPosting,
-        cv_json: dict[str, Any] | None = None,
-        cv_pdf_path: str | Path | None = None,
-        provider_config: dict | None = None,
-        correlation_id: str | None = None,
-        db: AsyncSession | None = None,
+    application: Application,
+    candidate: CandidateProfile | None,
+    job_posting: JobPosting,
+    cv_json: dict[str, Any] | None = None,
+    cv_pdf_path: str | Path | None = None,
+    provider_config: dict | None = None,
+    correlation_id: str | None = None,
+    db: AsyncSession | None = None,
 ) -> VerificationResult:
     """Run the complete verification checklist on generated documents.
 
@@ -141,7 +140,8 @@ async def run_verification_checklist(
 
         llm_checks = await _run_llm_content_checks(
             cv_json,
-            job_posting, candidate,
+            job_posting,
+            candidate,
             provider_config,
             usage=usage,
         )
@@ -190,7 +190,7 @@ async def run_verification_checklist(
             warnings=warnings_list,
             ats_score=ats_result.keyword_coverage if ats_result else None,
             summary=summary,
-            checked_at=datetime.now(timezone.utc),
+            checked_at=datetime.now(UTC),
         )
 
 
@@ -328,7 +328,23 @@ def _check_role_in_profile(
     # Look for the job title in the CV profile statement
     title_words = job_title.lower().split()
     # Remove common filler words
-    filler = {"a", "an", "the", "and", "or", "in", "of", "for", "to", "with", "junior", "senior", "lead", "principal", "staff"}
+    filler = {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "in",
+        "of",
+        "for",
+        "to",
+        "with",
+        "junior",
+        "senior",
+        "lead",
+        "principal",
+        "staff",
+    }
     significant_words = [w for w in title_words if w not in filler]
 
     profile_text = ((cv_json.get("profile_statement") or "") if cv_json else "").lower()
@@ -712,7 +728,7 @@ def _check_keyword_coverage(ats: ATSResult | None) -> VerificationCheck:
             label="Keyword coverage ≥ 70%",
             category="ats",
             passed=True,
-            details=f"✅ {coverage:.0%} keyword coverage ({len(ats.found_keywords or [])} found, {len(missing)} missing).",
+            details=f"✅ {coverage:.0%} keyword coverage ({len(ats.found_keywords or [])} found, {len(missing)} missing).",  # noqa: E501
         )
 
     return VerificationCheck(
@@ -720,7 +736,7 @@ def _check_keyword_coverage(ats: ATSResult | None) -> VerificationCheck:
         label="Keyword coverage ≥ 70%",
         category="ats",
         passed=False,
-        details=f"❌ {coverage:.0%} keyword coverage — below {threshold:.0%} threshold. Missing: {', '.join(missing[:10])}.",
+        details=f"❌ {coverage:.0%} keyword coverage — below {threshold:.0%} threshold. Missing: {', '.join(missing[:10])}.",  # noqa: E501
         suggestion="Add more job-specific keywords from the posting into the CV experience bullets.",
     )
 
@@ -788,13 +804,13 @@ CANDIDATE PROFILE (ground truth):
 JOB POSTING:
 Title: {job_posting.title}
 Company: {job_posting.company}
-Requirements: {', '.join(job_posting.requirements[:8]) if job_posting.requirements else 'N/A'}
+Requirements: {", ".join(job_posting.requirements[:8]) if job_posting.requirements else "N/A"}
 
 CV DOCUMENT (JSON, first 4000 chars):
 {cv_text[:4000]}
 
 COVER LETTER (text, first 3000 chars):
-{cover_text[:3000] if cover_text else '(no content)'}
+{cover_text[:3000] if cover_text else "(no content)"}
 
 Evaluate these documents for fabricated claims, profile specificity, and tone consistency.
 """
@@ -820,58 +836,66 @@ Evaluate these documents for fabricated claims, profile specificity, and tone co
         has_fabricated = len(result.fabricated_claims) > 0
         if has_fabricated:
             claims_text = "; ".join(result.fabricated_claims[:3])
-            checks.append(VerificationCheck(
-                name="fabricated_claims_free",
-                label="No fabricated claims",
-                category="llm",
-                passed=False,
-                details=f"❌ {len(result.fabricated_claims)} potential fabrication(s) detected: {claims_text}",
-                suggestion="Remove fabricated claims. Use only experience from the candidate's actual profile.",
-            ))
+            checks.append(
+                VerificationCheck(
+                    name="fabricated_claims_free",
+                    label="No fabricated claims",
+                    category="llm",
+                    passed=False,
+                    details=f"❌ {len(result.fabricated_claims)} potential fabrication(s) detected: {claims_text}",
+                    suggestion="Remove fabricated claims. Use only experience from the candidate's actual profile.",
+                )
+            )
         else:
-            checks.append(VerificationCheck(
-                name="fabricated_claims_free",
-                label="No fabricated claims",
-                category="llm",
-                passed=True,
-                details="✅ No fabricated claims detected.",
-            ))
+            checks.append(
+                VerificationCheck(
+                    name="fabricated_claims_free",
+                    label="No fabricated claims",
+                    category="llm",
+                    passed=True,
+                    details="✅ No fabricated claims detected.",
+                )
+            )
 
         # Profile specificity check
-        checks.append(VerificationCheck(
-            name="profile_specific_to_role",
-            label="Profile statement specific to role",
-            category="llm",
-            passed=result.profile_specific,
-            details=(
-                "✅ Profile statement mentions the specific role or industry."
-                if result.profile_specific
-                else "❌ Profile statement is generic — could apply to any role."
-            ),
-            suggestion=(
-                None
-                if result.profile_specific
-                else "Update the profile statement to reference the specific role title and industry."
-            ),
-        ))
+        checks.append(
+            VerificationCheck(
+                name="profile_specific_to_role",
+                label="Profile statement specific to role",
+                category="llm",
+                passed=result.profile_specific,
+                details=(
+                    "✅ Profile statement mentions the specific role or industry."
+                    if result.profile_specific
+                    else "❌ Profile statement is generic — could apply to any role."
+                ),
+                suggestion=(
+                    None
+                    if result.profile_specific
+                    else "Update the profile statement to reference the specific role title and industry."
+                ),
+            )
+        )
 
         # Tone consistency check
-        checks.append(VerificationCheck(
-            name="tone_consistency",
-            label="Consistent tone CV/cover",
-            category="llm",
-            passed=result.tone_consistent,
-            details=(
-                "✅ CV and cover letter have consistent tone and formality."
-                if result.tone_consistent
-                else "❌ Tone mismatch between CV and cover letter."
-            ),
-            suggestion=(
-                None
-                if result.tone_consistent
-                else "Align the cover letter tone with the CV (both should sound like the same person)."
-            ),
-        ))
+        checks.append(
+            VerificationCheck(
+                name="tone_consistency",
+                label="Consistent tone CV/cover",
+                category="llm",
+                passed=result.tone_consistent,
+                details=(
+                    "✅ CV and cover letter have consistent tone and formality."
+                    if result.tone_consistent
+                    else "❌ Tone mismatch between CV and cover letter."
+                ),
+                suggestion=(
+                    None
+                    if result.tone_consistent
+                    else "Align the cover letter tone with the CV (both should sound like the same person)."
+                ),
+            )
+        )
 
         return checks
 
@@ -912,10 +936,7 @@ def _build_candidate_summary(candidate: CandidateProfile | None) -> str:
     if candidate.profile_statement:
         parts.append(f"Profile: {candidate.profile_statement}")
     if candidate.experience:
-        exp_summary = "; ".join(
-            f"{e.get('title', '')} at {e.get('company', '')}"
-            for e in candidate.experience[:3]
-        )
+        exp_summary = "; ".join(f"{e.get('title', '')} at {e.get('company', '')}" for e in candidate.experience[:3])
         parts.append(f"Experience: {exp_summary}")
     if candidate.skills:
         skill_list = []
@@ -927,9 +948,6 @@ def _build_candidate_summary(candidate: CandidateProfile | None) -> str:
             skill_list.extend(candidate.skills["software_tools"])
         parts.append(f"Skills: {', '.join(skill_list[:8])}")
     if candidate.education:
-        edu_summary = "; ".join(
-            f"{e.get('degree', '')} at {e.get('institution', '')}"
-            for e in candidate.education[:2]
-        )
+        edu_summary = "; ".join(f"{e.get('degree', '')} at {e.get('institution', '')}" for e in candidate.education[:2])
         parts.append(f"Education: {edu_summary}")
     return "\n".join(parts) if parts else "Profile not completed."

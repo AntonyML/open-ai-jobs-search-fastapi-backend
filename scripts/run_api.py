@@ -1,4 +1,5 @@
 """Start the API principal server."""
+
 import sys
 
 import uvicorn

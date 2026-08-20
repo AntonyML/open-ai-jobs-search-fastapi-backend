@@ -41,10 +41,10 @@ DEFAULT_TARGET_PLAN = "max"
 class MigrationResult:
     """Summary of a migration run."""
 
-    found: int = 0          # premium users discovered
-    tier_only: int = 0      # tier fixed, existing subscription kept
+    found: int = 0  # premium users discovered
+    tier_only: int = 0  # tier fixed, existing subscription kept
     subscriptions_created: int = 0  # tier fixed + active subscription created
-    skipped_missing_plan: int = 0   # target plan unavailable → left untouched
+    skipped_missing_plan: int = 0  # target plan unavailable → left untouched
 
     @property
     def migrated(self) -> int:
@@ -74,9 +74,7 @@ async def migrate_premium_tier(
     """
     result = MigrationResult()
 
-    rows = (
-        await db.execute(select(User).where(User.tier == LEGACY_TIER))
-    ).scalars().all()
+    rows = (await db.execute(select(User).where(User.tier == LEGACY_TIER))).scalars().all()
     result.found = len(rows)
     if not rows:
         logger.info("No-op: 0 users on tier '%s'", LEGACY_TIER)
@@ -84,9 +82,10 @@ async def migrate_premium_tier(
 
     if await get_plan(db, target) is None:
         logger.error(
-            "Migration target plan '%s' not found in the catalog — "
-            "leaving %d user(s) untouched on '%s'",
-            target, len(rows), LEGACY_TIER,
+            "Migration target plan '%s' not found in the catalog — leaving %d user(s) untouched on '%s'",
+            target,
+            len(rows),
+            LEGACY_TIER,
         )
         result.skipped_missing_plan = len(rows)
         return result
@@ -99,7 +98,10 @@ async def migrate_premium_tier(
             result.tier_only += 1
             logger.info(
                 "Migrated tier %s→%s (kept existing subscription): user=%s plan=%s",
-                LEGACY_TIER, target, user.id, existing.plan_key,
+                LEGACY_TIER,
+                target,
+                user.id,
+                existing.plan_key,
             )
             continue
 
@@ -115,7 +117,9 @@ async def migrate_premium_tier(
         result.subscriptions_created += 1
         logger.info(
             "Migrated tier %s→%s + created active subscription: user=%s",
-            LEGACY_TIER, target, user.id,
+            LEGACY_TIER,
+            target,
+            user.id,
         )
 
     await db.flush()

@@ -9,14 +9,13 @@ Verifies that the salary service works correctly with:
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import Base, User
 from app.schemas.salary import SalaryBenchmark
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -108,9 +107,11 @@ async def test_lookup_company_missing_data_file():
     from app.exceptions import NotFoundError
     from app.services.salary.service import lookup_company
 
-    with patch("app.services.salary.service.DATA_FILE", Path("/nonexistent/salary_data.json")):
-        with pytest.raises(NotFoundError):
-            await lookup_company("Acme")
+    with (
+        patch("app.services.salary.service.DATA_FILE", Path("/nonexistent/salary_data.json")),
+        pytest.raises(NotFoundError),
+    ):
+        await lookup_company("Acme")
 
 
 @pytest.mark.asyncio
@@ -131,14 +132,16 @@ async def test_lookup_company_with_temp_data():
         tmp_path = Path(f.name)
 
     try:
-        with patch("app.services.salary.service.DATA_FILE", tmp_path):
-            with patch("app.services.salary.salary_lookup.DATA_FILE", tmp_path):
-                from app.services.salary.service import lookup_company
+        with (
+            patch("app.services.salary.service.DATA_FILE", tmp_path),
+            patch("app.services.salary.salary_lookup.DATA_FILE", tmp_path),
+        ):
+            from app.services.salary.service import lookup_company
 
-                result = await lookup_company("Acme")
-                assert result["company"] == "Acme Corp"
-                assert result["city"] == "Copenhagen"
-                assert result["_match_score"] >= 70
+            result = await lookup_company("Acme")
+            assert result["company"] == "Acme Corp"
+            assert result["city"] == "Copenhagen"
+            assert result["_match_score"] >= 70
     finally:
         tmp_path.unlink()
 
@@ -164,9 +167,11 @@ async def test_lookup_company_no_match_raises():
         from app.exceptions import NotFoundError
         from app.services.salary.service import lookup_company
 
-        with patch("app.services.salary.service.DATA_FILE", tmp_path):
-            with pytest.raises(NotFoundError):
-                await lookup_company("NonexistentCompanyXYZ")
+        with (
+            patch("app.services.salary.service.DATA_FILE", tmp_path),
+            pytest.raises(NotFoundError),
+        ):
+            await lookup_company("NonexistentCompanyXYZ")
     finally:
         tmp_path.unlink()
 
@@ -195,8 +200,10 @@ async def test_save_and_get_user_salary_data(db_session):
     metadata = {"source": "test", "index_baseline": 100}
 
     count = await save_user_salary_data(
-        db_session, user_id="test-user-1",
-        companies=companies, metadata=metadata,
+        db_session,
+        user_id="test-user-1",
+        companies=companies,
+        metadata=metadata,
         source="json_upload",
     )
     assert count == 2
@@ -231,10 +238,12 @@ async def test_save_user_salary_data_upsert(db_session):
 @pytest.mark.asyncio
 async def test_lookup_company_for_user_uses_db_first(db_session):
     """lookup_company_for_user checks user DB before falling back to file."""
-    from app.services.salary.service import save_user_salary_data, lookup_company_for_user
+    from app.services.salary.service import lookup_company_for_user, save_user_salary_data
 
     # Save user-specific data
-    companies = [{"company": "CustomCo", "city": "Copenhagen", "categories": {"all_employees": {"count": 10, "index": 110.0}}}]
+    companies = [
+        {"company": "CustomCo", "city": "Copenhagen", "categories": {"all_employees": {"count": 10, "index": 110.0}}}
+    ]
     await save_user_salary_data(db_session, "test-user-1", companies=companies)
 
     # Mock the file-based lookup to raise (so we know DB is used)
@@ -252,18 +261,22 @@ async def test_lookup_company_for_user_falls_back_to_file(db_session):
 
     sample = {
         "metadata": {"source": "test", "index_baseline": 100, "index_label": "Index", "baseline_description": "test"},
-        "companies": [{"company": "FileCo", "city": "Copenhagen", "categories": {"all_employees": {"count": 100, "index": 105.5}}}],
+        "companies": [
+            {"company": "FileCo", "city": "Copenhagen", "categories": {"all_employees": {"count": 100, "index": 105.5}}}
+        ],
     }
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
         json.dump(sample, f)
         tmp_path = Path(f.name)
 
     try:
-        with patch("app.services.salary.service.DATA_FILE", tmp_path):
-            with patch("app.services.salary.salary_lookup.DATA_FILE", tmp_path):
-                result = await lookup_company_for_user(db_session, "test-user-1", "FileCo")
-                assert result is not None
-                assert result["company"] == "FileCo"
+        with (
+            patch("app.services.salary.service.DATA_FILE", tmp_path),
+            patch("app.services.salary.salary_lookup.DATA_FILE", tmp_path),
+        ):
+            result = await lookup_company_for_user(db_session, "test-user-1", "FileCo")
+            assert result is not None
+            assert result["company"] == "FileCo"
     finally:
         tmp_path.unlink()
 
@@ -274,10 +287,12 @@ async def test_lookup_company_for_user_not_found(db_session):
     from app.exceptions import NotFoundError
     from app.services.salary.service import lookup_company_for_user
 
-    with patch("app.services.salary.service.lookup_company", side_effect=NotFoundError("No file")):
-        with patch("app.services.salary.salary_lookup.DATA_FILE", Path("/nonexistent")):
-            result = await lookup_company_for_user(db_session, "test-user-1", "NonexistentXYZ")
-            assert result is None
+    with (
+        patch("app.services.salary.service.lookup_company", side_effect=NotFoundError("No file")),
+        patch("app.services.salary.salary_lookup.DATA_FILE", Path("/nonexistent")),
+    ):
+        result = await lookup_company_for_user(db_session, "test-user-1", "NonexistentXYZ")
+        assert result is None
 
 
 @pytest.mark.asyncio
@@ -294,10 +309,13 @@ async def test_benchmark_job_with_data(db_session):
     """benchmark_job returns salary benchmark when company is found."""
     from app.services.salary.service import benchmark_job, save_user_salary_data
 
-    companies = [{
-        "company": "Acme Corp", "city": "Copenhagen",
-        "categories": {"all_employees": {"count": 100, "index": 105.5}},
-    }]
+    companies = [
+        {
+            "company": "Acme Corp",
+            "city": "Copenhagen",
+            "categories": {"all_employees": {"count": 100, "index": 105.5}},
+        }
+    ]
     await save_user_salary_data(db_session, "test-user-1", companies=companies)
 
     result = await benchmark_job(db_session, "test-user-1", company_name="Acme Corp")

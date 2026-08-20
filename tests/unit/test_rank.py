@@ -3,12 +3,9 @@
 Uses an in-memory SQLite database and mocks the LLM calls.
 """
 
-import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import Base, CandidateProfile, JobPosting, RankEvaluation, User
@@ -84,7 +81,12 @@ async def sample_candidate(db_session):
         employment_status="Employed",
         constraints="No relocation",
         education=[
-            {"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020", "key_topics": "ML, Distributed Systems"}
+            {
+                "degree": "MSc Computer Science",
+                "institution": "DTU",
+                "period": "2018-2020",
+                "key_topics": "ML, Distributed Systems",
+            }
         ],
         experience=[
             {
@@ -111,26 +113,30 @@ async def sample_candidate(db_session):
                 ],
             },
         ],
-        projects=[
-            {"name": "Open Source ML Library", "description": "Contributor to popular ML library"}
-        ],
+        projects=[{"name": "Open Source ML Library", "description": "Contributor to popular ML library"}],
         skills={
             "programming_ml": [
-                {"language": "Python", "proficiency": "Expert", "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"]},
+                {
+                    "language": "Python",
+                    "proficiency": "Expert",
+                    "frameworks": ["PyTorch", "TensorFlow", "scikit-learn"],
+                },
                 {"language": "SQL", "proficiency": "Advanced", "frameworks": []},
             ],
             "domain_expertise": ["Machine Learning", "NLP", "Recommendation Systems"],
             "software_tools": ["Docker", "Kubernetes", "AWS", "Git"],
         },
         publications=[
-            {"authors": "Doe, J.", "year": "2021", "title": "Efficient Transformers", "journal": "NeurIPS", "doi": "10.xxxx/xxxx"}
+            {
+                "authors": "Doe, J.",
+                "year": "2021",
+                "title": "Efficient Transformers",
+                "journal": "NeurIPS",
+                "doi": "10.xxxx/xxxx",
+            }
         ],
-        awards=[
-            {"award": "Best Paper Award", "event": "ICML", "year": "2020"}
-        ],
-        references=[
-            {"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}
-        ],
+        awards=[{"award": "Best Paper Award", "event": "ICML", "year": "2020"}],
+        references=[{"name": "John Smith", "title": "CTO", "company": "Acme Corp", "email": "john@acme.com"}],
         profile_statement="ML engineer with 5+ years building production ML systems at scale.",
     )
     db_session.add(candidate)
@@ -152,7 +158,7 @@ async def sample_job(db_session, sample_candidate):
         url="https://linkedin.com/jobs/123",
         posting_date="2026-07-10",
         deadline="2026-08-10",
-        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",
+        description="We are looking for a Senior ML Engineer to build scalable ML systems. Experience with PyTorch, Kubernetes, and AWS required. You will lead a team of 3-5 engineers.",  # noqa: E501
         requirements=[
             "5+ years ML engineering experience",
             "Expert in Python and PyTorch",
@@ -188,7 +194,8 @@ def mock_orchestrator_output(
     return RankQualitativeOutput(
         behavioral_score=behavioral,
         career_score=career,
-        strengths=strengths or ["Strong ML engineering background", "Team leadership experience", "Production ML at scale"],
+        strengths=strengths
+        or ["Strong ML engineering background", "Team leadership experience", "Production ML at scale"],
         gaps=gaps or ["No explicit Kubernetes certification", "Limited public cloud architecture experience"],
         red_flags=red_flags or ["Gap in employment 2017-2018"],
         confidence="high",
@@ -203,9 +210,7 @@ def mock_orchestrator():
     This avoids needing the orchestrator's DB tables (execution_jobs, etc.)
     while still testing the rank service logic.
     """
-    with patch(
-        "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
-    ) as mock:
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock:
         mock.return_value = mock_orchestrator_output()
         yield mock
 
@@ -217,7 +222,8 @@ def mock_orchestrator():
 async def test_execute_rank_basic(db_session, db_factory, sample_candidate, sample_job, mock_orchestrator):
     """execute_rank evaluates a job and returns a shortlist."""
     mock_orchestrator.return_value = mock_orchestrator_output(
-        behavioral=75, career=90,
+        behavioral=75,
+        career=90,
     )
 
     result = await rank.execute_rank(
@@ -240,7 +246,7 @@ async def test_execute_rank_basic(db_session, db_factory, sample_candidate, samp
     assert isinstance(item.evaluation.technical_score, int)
     assert isinstance(item.evaluation.experience_score, int)
     assert item.evaluation.behavioral_score == 75  # From LLM mock
-    assert item.evaluation.career_score == 90       # From LLM mock
+    assert item.evaluation.career_score == 90  # From LLM mock
     assert item.evaluation.verdict in ("Strong Fit", "Good Fit", "Moderate Fit", "Weak Fit", "Poor Fit")
     assert item.evaluation.location_status in ("PASS", "FAIL", "FLAG")
 
@@ -299,9 +305,7 @@ async def test_execute_rank_llm_error_continues(db_session, db_factory, sample_c
     db_session.add(job2)
     await db_session.commit()
 
-    with patch(
-        "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
-    ) as mock:
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock:
         # First call succeeds, second fails
         mock.side_effect = [
             mock_orchestrator_output(),
@@ -314,7 +318,7 @@ async def test_execute_rank_llm_error_continues(db_session, db_factory, sample_c
             focus_area=None,
             re_rank=False,
             top_n=5,
-        )        # Should have ranked 1 job (the one that succeeded)
+        )  # Should have ranked 1 job (the one that succeeded)
         # NOTE: shortlist may be empty if deterministic analyzer flags location
         # as FAIL (e.g. when candidate has 'No relocation' constraint).
         # The important thing is that the 2nd job's failure didn't crash the pipeline.
@@ -324,16 +328,12 @@ async def test_execute_rank_llm_error_continues(db_session, db_factory, sample_c
 @pytest.mark.asyncio
 async def test_execute_rank_re_rank(db_session, db_factory, sample_candidate, sample_job):
     """execute_rank with re_rank=True re-evaluates already-ranked jobs."""
-    with patch(
-        "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
-    ) as mock:
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock:
         mock.return_value = mock_orchestrator_output(behavioral=50, career=50)
         await rank.execute_rank(db_factory, user_id="test-user-id", re_rank=False)
 
     # Re-rank with different scores
-    with patch(
-        "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
-    ) as mock:
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock:
         mock.return_value = mock_orchestrator_output(behavioral=90, career=90)
         result = await rank.execute_rank(db_factory, user_id="test-user-id", re_rank=True)
 
@@ -367,9 +367,7 @@ async def test_execute_rank_focus_area(db_session, db_factory, sample_candidate)
     db_session.add_all([job1, job2])
     await db_session.commit()
 
-    with patch(
-        "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
-    ) as mock:
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock:
         mock.return_value = mock_orchestrator_output()
         result = await rank.execute_rank(
             db_factory,
@@ -398,9 +396,7 @@ async def test_execute_rank_location_fail(db_session, db_factory, sample_candida
     db_session.add(job)
     await db_session.commit()
 
-    with patch(
-        "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
-    ) as mock:
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock:
         mock.return_value = mock_orchestrator_output()
         result = await rank.execute_rank(db_factory, user_id="test-user-id")
 
@@ -429,9 +425,7 @@ async def test_execute_rank_deadline_urgent(db_session, db_factory, sample_candi
     db_session.add(job)
     await db_session.commit()
 
-    with patch(
-        "app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute"
-    ) as mock:
+    with patch("app.services.orchestrator.llm_orchestrator.LLMOrchestrator.execute") as mock:
         mock.return_value = mock_orchestrator_output()
         result = await rank.execute_rank(db_factory, user_id="test-user-id")
 

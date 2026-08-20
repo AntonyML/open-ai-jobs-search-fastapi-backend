@@ -2,28 +2,29 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.auth import router as auth_router
-from app.api.v1.setup import router as setup_router
-from app.api.v1.rank import router as rank_router
+from app.api.v1.admin import router as admin_router
 from app.api.v1.apply import router as apply_router
-from app.api.v1.interview import router as interview_router
-from app.api.v1.outcome import router as outcome_router
-from app.api.v1.expand import router as expand_router
-from app.api.v1.upskill import router as upskill_router
-from app.api.v1.reset import router as reset_router
-from app.api.v1.job_data import router as job_data_router
-from app.api.v1.orchestrator import router as orchestrator_router
-from app.api.v1.salary import router as salary_router
-from app.api.v1.verification import router as verification_router
-from app.api.v1.dashboard import router as dashboard_router
-from app.api.v1.dashboard import analytics_router
-from app.api.v1.users import router as users_router
-from app.api.v1.jobs import router as jobs_router
-from app.api.v1.cv import router as cv_router
-from app.api.v1.providers import router as providers_router
+from app.api.v1.auth import router as auth_router
 from app.api.v1.billing import router as billing_router
+from app.api.v1.cv import router as cv_router
+from app.api.v1.dashboard import analytics_router
+from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.expand import router as expand_router
+from app.api.v1.interview import router as interview_router
+from app.api.v1.job_data import router as job_data_router
+from app.api.v1.jobs import router as jobs_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.orchestrator import router as orchestrator_router
+from app.api.v1.outcome import router as outcome_router
+from app.api.v1.providers import router as providers_router
 from app.api.v1.public import router as public_router
+from app.api.v1.rank import router as rank_router
+from app.api.v1.reset import router as reset_router
+from app.api.v1.salary import router as salary_router
+from app.api.v1.setup import router as setup_router
+from app.api.v1.upskill import router as upskill_router
+from app.api.v1.users import router as users_router
+from app.api.v1.verification import router as verification_router
 
 router = APIRouter()
 
@@ -54,7 +55,6 @@ router.include_router(job_data_router)
 router.include_router(reset_router)
 
 # ── Admin ────────────────────────────────────────────────────────────
-from app.api.v1.admin import router as admin_router
 router.include_router(admin_router)
 
 # ── Dashboard + Analytics ───────────────────────────────────────────

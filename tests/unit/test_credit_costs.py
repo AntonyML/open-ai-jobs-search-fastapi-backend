@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import Base, CreditCostConfig
+from app.services import plans
 from app.services.credit_costs import (
     CATALOG_BY_KEY,
     CATALOG_KEYS,
@@ -28,7 +29,6 @@ from app.services.credit_costs import (
     get_effective_costs,
     set_effective_costs,
 )
-from app.services import plans
 
 
 @pytest.fixture
@@ -93,8 +93,7 @@ def test_drift_reverse_catalog_actions_without_consumers_warn_only():
     orphaned = CATALOG_KEYS - used
     if orphaned:
         warnings.warn(
-            f"catalog action(s) with no enforce_action_gate consumer yet: "
-            f"{sorted(orphaned)}",
+            f"catalog action(s) with no enforce_action_gate consumer yet: {sorted(orphaned)}",
             stacklevel=1,
         )
 
@@ -159,9 +158,7 @@ async def test_set_effective_costs_rejects_unknown_key(db_session):
     with pytest.raises(ValueError, match="pipeline"):
         await set_effective_costs(db_session, {"cv_base": 1, "pipeline": 1})
     # nothing was written
-    assert (await get_effective_costs(db_session)) == {
-        s.key: s.default_cost for s in CREDIT_ACTION_CATALOG
-    }
+    assert (await get_effective_costs(db_session)) == {s.key: s.default_cost for s in CREDIT_ACTION_CATALOG}
 
 
 async def test_set_effective_costs_rejects_negative_and_non_int(db_session):
@@ -176,18 +173,14 @@ async def test_set_effective_costs_rejects_negative_and_non_int(db_session):
 async def test_set_effective_costs_conflict_on_stale_version(db_session):
     await set_effective_costs(db_session, {"cv_base": 3})
     with pytest.raises(CreditCostConflictError, match="cv_base"):
-        await set_effective_costs(
-            db_session, {"cv_base": 5}, expected_versions={"cv_base": 99}
-        )
+        await set_effective_costs(db_session, {"cv_base": 5}, expected_versions={"cv_base": 99})
     # nothing written on conflict
     assert (await get_effective_costs(db_session))["cv_base"] == 3
 
 
 async def test_set_effective_costs_no_conflict_with_current_version(db_session):
     await set_effective_costs(db_session, {"cv_base": 3})  # insert -> version 1
-    result = await set_effective_costs(
-        db_session, {"cv_base": 7}, expected_versions={"cv_base": 1}
-    )
+    result = await set_effective_costs(db_session, {"cv_base": 7}, expected_versions={"cv_base": 1})
     assert result["cv_base"] == 7
 
 

@@ -3,17 +3,12 @@
 Uses an in-memory SQLite database for fast, isolated unit tests.
 """
 
-import asyncio
-from datetime import datetime
-
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.models import Base, CandidateProfile, User
+from app.db.models import Base, User
 from app.exceptions import NotFoundError, ProfileIncompleteError
 from app.services import setup
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -104,9 +99,7 @@ async def test_update_profile(db_session):
     data = {"full_name": "Jane Doe", "email": "jane@example.com", "location": "Copenhagen"}
     await setup.create_profile(db_session, "test-user-id", data)
 
-    updated = await setup.update_profile(
-        db_session, "test-user-id", {"location": "Aarhus"}
-    )
+    updated = await setup.update_profile(db_session, "test-user-id", {"location": "Aarhus"})
     assert updated.location == "Aarhus"
     assert updated.full_name == "Jane Doe"  # unchanged
     assert updated.email == "jane@example.com"  # unchanged
@@ -148,9 +141,7 @@ async def test_complete_setup(db_session):
 @pytest.mark.asyncio
 async def test_upsert_behavioral_profile_create(db_session):
     """Upserting a behavioral profile creates it when it doesn't exist."""
-    candidate = await setup.create_profile(
-        db_session, "test-user-id", {"full_name": "Jane Doe"}
-    )
+    candidate = await setup.create_profile(db_session, "test-user-id", {"full_name": "Jane Doe"})
 
     bp = await setup.upsert_behavioral_profile(
         db_session,
@@ -164,16 +155,10 @@ async def test_upsert_behavioral_profile_create(db_session):
 @pytest.mark.asyncio
 async def test_upsert_behavioral_profile_update(db_session):
     """Upserting a behavioral profile updates it when it exists."""
-    candidate = await setup.create_profile(
-        db_session, "test-user-id", {"full_name": "Jane Doe"}
-    )
-    await setup.upsert_behavioral_profile(
-        db_session, candidate.id, {"profile_type": "Type A"}
-    )
+    candidate = await setup.create_profile(db_session, "test-user-id", {"full_name": "Jane Doe"})
+    await setup.upsert_behavioral_profile(db_session, candidate.id, {"profile_type": "Type A"})
 
-    bp = await setup.upsert_behavioral_profile(
-        db_session, candidate.id, {"summary": "Updated summary"}
-    )
+    bp = await setup.upsert_behavioral_profile(db_session, candidate.id, {"summary": "Updated summary"})
     assert bp.profile_type == "Type A"  # unchanged
     assert bp.summary == "Updated summary"
 
@@ -184,11 +169,9 @@ async def test_upsert_behavioral_profile_update(db_session):
 @pytest.mark.asyncio
 async def test_create_and_list_star_examples(db_session):
     """Creating STAR examples and listing them works."""
-    candidate = await setup.create_profile(
-        db_session, "test-user-id", {"full_name": "Jane Doe"}
-    )
+    candidate = await setup.create_profile(db_session, "test-user-id", {"full_name": "Jane Doe"})
 
-    example1 = await setup.create_star_example(
+    await setup.create_star_example(
         db_session,
         candidate.id,
         {
@@ -200,7 +183,7 @@ async def test_create_and_list_star_examples(db_session):
             "use_for": ["technical", "performance"],
         },
     )
-    example2 = await setup.create_star_example(
+    await setup.create_star_example(
         db_session,
         candidate.id,
         {
@@ -221,9 +204,7 @@ async def test_create_and_list_star_examples(db_session):
 @pytest.mark.asyncio
 async def test_delete_star_example(db_session):
     """Deleting a STAR example removes it."""
-    candidate = await setup.create_profile(
-        db_session, "test-user-id", {"full_name": "Jane Doe"}
-    )
+    candidate = await setup.create_profile(db_session, "test-user-id", {"full_name": "Jane Doe"})
     example = await setup.create_star_example(
         db_session,
         candidate.id,
@@ -245,9 +226,7 @@ async def test_delete_star_example(db_session):
 @pytest.mark.asyncio
 async def test_delete_star_example_wrong_owner(db_session):
     """Deleting a STAR example with wrong candidate_id raises NotFoundError."""
-    candidate = await setup.create_profile(
-        db_session, "test-user-id", {"full_name": "Jane Doe"}
-    )
+    candidate = await setup.create_profile(db_session, "test-user-id", {"full_name": "Jane Doe"})
     example = await setup.create_star_example(
         db_session,
         candidate.id,

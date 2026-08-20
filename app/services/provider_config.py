@@ -132,24 +132,25 @@ async def _notify_admin_no_provider(db: AsyncSession) -> None:
     notification already exists (avoids spam on every profile page load).
     """
     from sqlalchemy import select
+
+    from app.core.settings import get_settings
     from app.db.models import AppNotification, User
     from app.services.notifications import notify_admin
-    from app.core.settings import get_settings
 
     # Check for existing unread alert to avoid duplicate notifications.
-    admin_result = await db.execute(
-        select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1)
-    )
+    admin_result = await db.execute(select(User).where(User.role == "admin").order_by(User.created_at.asc()).limit(1))
     admin = admin_result.scalar_one_or_none()
     if admin is None:
         return
 
     existing = await db.execute(
-        select(AppNotification.id).where(
+        select(AppNotification.id)
+        .where(
             AppNotification.user_id == admin.id,
             AppNotification.type == "no_provider_alert",
             AppNotification.is_read == False,  # noqa: E712
-        ).limit(1)
+        )
+        .limit(1)
     )
     if existing.scalar_one_or_none() is not None:
         return  # Already has an unread alert — don't spam.
@@ -159,7 +160,7 @@ async def _notify_admin_no_provider(db: AsyncSession) -> None:
         type_="no_provider_alert",
         title="Sin proveedor de IA configurado",
         body="El sistema no tiene una clave API de proveedor de IA configurada."
-             " Algunas funcionalidades de IA pueden no estar disponibles.",
+        " Algunas funcionalidades de IA pueden no estar disponibles.",
         payload={"action": "configure_provider", "href": "/admin/providers"},
     )
     await db.flush()
@@ -167,6 +168,7 @@ async def _notify_admin_no_provider(db: AsyncSession) -> None:
     # Send email asynchronously (fire-and-forget; failures are logged).
     try:
         from app.services.email import send_no_provider_notification
+
         settings = get_settings()
         await send_no_provider_notification(admin_email=settings.admin_email)
     except Exception:

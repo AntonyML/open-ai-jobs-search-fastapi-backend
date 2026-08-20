@@ -21,7 +21,6 @@ from app.core.security import decode_access_token
 from app.schemas.orchestrator import (
     ExecutionJobOut,
     ModelListOut,
-    ProviderHealthOut,
     ProviderListOut,
     QueueControlRequest,
     QueueControlResult,
@@ -32,8 +31,8 @@ try:
     from asyncpg.exceptions import InternalServerError as AsyncpgError
 except ImportError:
     AsyncpgError = OperationalError
-from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.orchestrator import LLMOrchestrator
+from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.orchestrator.queue_notifier import get_queue_notifier
 
 logger = logging.getLogger(__name__)

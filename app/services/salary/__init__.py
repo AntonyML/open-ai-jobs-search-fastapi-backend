@@ -8,11 +8,11 @@ Data file location: app/services/salary/salary_data.json (gitignored).
 """
 
 from app.services.salary.salary_lookup import (  # noqa: F401
-    format_entry,
-    match_score,
-    search_company,
-    normalize,
     anglicize,
     extract_core_words,
+    format_entry,
     load_data,
+    match_score,
+    normalize,
+    search_company,
 )

@@ -25,7 +25,6 @@ from app.api.v1.billing import request_topup
 from app.db.models import AppNotification, Base, CreditTransaction, User
 from app.schemas.billing import AdminTopupApprove, TopupRequest
 from app.services.plans import build_catalog
-from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import activate_subscription
 from app.services.topups import (
     DEFAULT_TOPUP_PACKS,
@@ -33,6 +32,7 @@ from app.services.topups import (
     apply_topup,
     get_topup_packs,
 )
+from tests.unit.plan_helpers import seed_test_plans
 
 
 @pytest.fixture
@@ -53,8 +53,11 @@ async def db_session():
 @pytest.fixture
 async def admin_user(db_session):
     u = User(
-        id="admin-1", email="admin@example.com", hashed_password="x",
-        role="admin", tier="free",
+        id="admin-1",
+        email="admin@example.com",
+        hashed_password="x",
+        role="admin",
+        tier="free",
     )
     db_session.add(u)
     await db_session.commit()
@@ -89,9 +92,7 @@ def _admin_ctx() -> dict:
 
 
 async def _notifications(db: AsyncSession, type_: str) -> list[AppNotification]:
-    rows = await db.execute(
-        select(AppNotification).where(AppNotification.type == type_)
-    )
+    rows = await db.execute(select(AppNotification).where(AppNotification.type == type_))
     return list(rows.scalars().all())
 
 
@@ -146,16 +147,20 @@ async def test_apply_topup_grants_credits_with_ledger_action(db_session, pro_use
 
     assert (await get_balance(db_session, pro_user.id))["balance"] == 100
 
-    account = await apply_topup(
-        db_session, pro_user.id, DEFAULT_TOPUP_PACKS[0], correlation_id="topup-cid-1"
-    )
+    account = await apply_topup(db_session, pro_user.id, DEFAULT_TOPUP_PACKS[0], correlation_id="topup-cid-1")
     assert account.balance == 150  # 100 period allowance + 50 top-up
 
-    txn = (await db_session.execute(
-        select(CreditTransaction)
-        .where(CreditTransaction.user_id == pro_user.id)
-        .order_by(CreditTransaction.created_at.desc())
-    )).scalars().first()
+    txn = (
+        (
+            await db_session.execute(
+                select(CreditTransaction)
+                .where(CreditTransaction.user_id == pro_user.id)
+                .order_by(CreditTransaction.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
     assert txn.action == "topup"
     assert txn.credits_delta == 50
     assert txn.correlation_id == "topup-cid-1"
@@ -288,11 +293,17 @@ async def test_approve_topup_applies_and_closes_notification(db_session, pro_use
     notifs = await _notifications(db_session, "topup_request")
     assert len(notifs) == 1 and notifs[0].is_read is True
 
-    txn = (await db_session.execute(
-        select(CreditTransaction)
-        .where(CreditTransaction.user_id == pro_user.id)
-        .order_by(CreditTransaction.created_at.desc())
-    )).scalars().first()
+    txn = (
+        (
+            await db_session.execute(
+                select(CreditTransaction)
+                .where(CreditTransaction.user_id == pro_user.id)
+                .order_by(CreditTransaction.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
     assert txn.action == "topup"
     assert txn.correlation_id == out.correlation_id
 

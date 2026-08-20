@@ -77,16 +77,10 @@ async def get_topup_packs(db: AsyncSession) -> list[dict[str, Any]]:
     Falls back to ``DEFAULT_TOPUP_PACKS`` when the stored value is missing
     or does not validate (same defensive pattern as ``get_credit_costs``).
     """
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == TOPUP_PACKS_CONFIG_KEY)
-    )
+    result = await db.execute(select(AppConfig).where(AppConfig.key == TOPUP_PACKS_CONFIG_KEY))
     row = result.scalar_one_or_none()
     stored = (row.value if row is not None else None) or []
-    if (
-        isinstance(stored, list)
-        and len(stored) == MAX_TOPUP_PACKS
-        and all(_valid_pack(p) for p in stored)
-    ):
+    if isinstance(stored, list) and len(stored) == MAX_TOPUP_PACKS and all(_valid_pack(p) for p in stored):
         return stored
     return list(DEFAULT_TOPUP_PACKS)
 
@@ -109,9 +103,7 @@ async def set_topup_packs(db: AsyncSession, packs: list[dict[str, Any]]) -> list
                 "credits": int(pack["credits"]),
             }
         )
-    result = await db.execute(
-        select(AppConfig).where(AppConfig.key == TOPUP_PACKS_CONFIG_KEY)
-    )
+    result = await db.execute(select(AppConfig).where(AppConfig.key == TOPUP_PACKS_CONFIG_KEY))
     row = result.scalar_one_or_none()
     if row is None:
         row = AppConfig(key=TOPUP_PACKS_CONFIG_KEY, value=cleaned)
@@ -134,9 +126,7 @@ def is_paid_plan(plan: Plan) -> bool:
     return (plan.price_monthly_usd or 0) > 0 or (plan.price_yearly_usd or 0) > 0
 
 
-async def get_paid_subscription(
-    db: AsyncSession, user_id: str
-) -> tuple[UserSubscription | None, Plan | None]:
+async def get_paid_subscription(db: AsyncSession, user_id: str) -> tuple[UserSubscription | None, Plan | None]:
     """Return (subscription, plan) for the user's latest *paid* active sub.
 
     ``(None, None)`` when the user has no active subscription or the active
@@ -190,9 +180,7 @@ async def apply_topup(
 
     subscription, _plan = await get_paid_subscription(db, user_id)
     if subscription is None:
-        raise TopupNotAllowedError(
-            message="Top-ups require an active subscription on a paid plan"
-        )
+        raise TopupNotAllowedError(message="Top-ups require an active subscription on a paid plan")
 
     return await adjust_credits(
         db,

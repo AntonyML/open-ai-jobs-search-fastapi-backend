@@ -5,12 +5,11 @@ Verifies that executing a reset purges the on-disk apply artifacts via
 tracker CSV is deleted.
 """
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-import pytest
-
-from app.db.models import Base, CandidateProfile, GeneratedCV, JobPosting, User
+from app.db.models import Base, GeneratedCV, JobPosting, User
 from app.services import artifact_store
 from app.services.job_data import execute_job_data
 
@@ -73,9 +72,7 @@ def artifact_settings(monkeypatch, tmp_path):
 
 async def test_reset_purges_apply_artifacts_on_disk(db_session, artifact_settings):
     # Apply pipeline left files on disk under generated/<user_id>/...
-    abs_path, _ = artifact_store.new_output_path(
-        "apply", "test-user-id", "job-post-1", "cv_job.pdf"
-    )
+    abs_path, _ = artifact_store.new_output_path("apply", "test-user-id", "job-post-1", "cv_job.pdf")
     abs_path.write_bytes(b"%PDF-1.4")
 
     summary = await execute_job_data(db_session, "test-user-id")
@@ -108,9 +105,7 @@ async def test_reset_removes_tracker_csv(db_session, artifact_settings):
     assert summary["deleted"].get("tracker_csv") == 1
 
 
-async def test_reset_deletes_job_postings_and_preserves_user(
-    db_session, artifact_settings
-):
+async def test_reset_deletes_job_postings_and_preserves_user(db_session, artifact_settings):
     summary = await execute_job_data(db_session, "test-user-id")
 
     assert summary["deleted"]["job_postings"] == 1

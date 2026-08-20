@@ -23,9 +23,7 @@ class Settings(BaseSettings):
     )
 
     # -- Supabase / PostgreSQL ----------------------------------
-    database_url: str = (
-        "postgresql+asyncpg://postgres:password@localhost:5432/postgres"
-    )
+    database_url: str = "postgresql+asyncpg://postgres:password@localhost:5432/postgres"
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -94,7 +92,6 @@ class Settings(BaseSettings):
     # -- Orchestrator -------------------------------------------
     # Max concurrent LLM workers in the execution queue
     orchestrator_max_concurrency: int = 4
-
 
 
 @lru_cache

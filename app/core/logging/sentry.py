@@ -13,8 +13,8 @@ def init_sentry(config: LoggingConfig) -> None:
     """Initialize Sentry SDK with LoggingIntegration plus context enrichment."""
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
     from sentry_sdk.integrations.logging import LoggingIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
     from app.core.logging.context import get_context
 

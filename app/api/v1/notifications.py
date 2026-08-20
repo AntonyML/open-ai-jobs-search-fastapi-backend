@@ -73,9 +73,7 @@ async def clear_notifications(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Delete every notification of the user (replaces ``clearNotifications``)."""
-    await db.execute(
-        delete(AppNotification).where(AppNotification.user_id == user["sub"])
-    )
+    await db.execute(delete(AppNotification).where(AppNotification.user_id == user["sub"]))
     await db.flush()
     return {"ok": True}
 
@@ -105,10 +103,6 @@ async def mark_all_notifications_read(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Mark every notification of the user as read."""
-    await db.execute(
-        update(AppNotification)
-        .where(AppNotification.user_id == user["sub"])
-        .values(is_read=True)
-    )
+    await db.execute(update(AppNotification).where(AppNotification.user_id == user["sub"]).values(is_read=True))
     await db.flush()
     return {"ok": True}

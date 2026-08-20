@@ -44,9 +44,7 @@ def test_new_output_path_creates_dirs_and_returns_rel_path(settings, tmp_path):
 
 
 def test_new_output_path_sanitizes_display_filename(settings):
-    _, rel = new_output_path(
-        "apply", "user-1", "job-abc", "cv_Acme/Sales Manager:NY.pdf "
-    )
+    _, rel = new_output_path("apply", "user-1", "job-abc", "cv_Acme/Sales Manager:NY.pdf ")
     # '/' ':' and trailing/leading junk replaced/stripped; no sub-directories.
     assert rel == "generated/user-1/job-abc/cv_Acme-Sales Manager-NY.pdf"
     assert "/" not in rel.split("cv_")[1]

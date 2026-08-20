@@ -7,9 +7,9 @@ Tests cover:
 - Edge cases (no outcomes, single outcome, all rejected)
 """
 
+from datetime import datetime
+
 import pytest
-from datetime import datetime, timezone
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import (
@@ -23,12 +23,8 @@ from app.db.models import (
 )
 from app.exceptions import NotFoundError
 from app.services.fit_calibration import (
-    _analyze_keywords,
-    _compute_funnel,
-    _generate_insights,
     generate_calibration_report,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -91,8 +87,7 @@ async def _create_job(db, user_id, title, company, description, requirements=Non
     return job
 
 
-async def _create_evaluation(db, user_id, job_id, score=80, verdict="Good Fit",
-                              missing_keywords=None):
+async def _create_evaluation(db, user_id, job_id, score=80, verdict="Good Fit", missing_keywords=None):
     """Helper to create a rank evaluation."""
     eval_ = RankEvaluation(
         job_posting_id=job_id,
@@ -159,8 +154,7 @@ async def test_no_outcomes_raises_not_found(db_session):
 @pytest.mark.asyncio
 async def test_basic_funnel_with_one_outcome(db_session, sample_candidate):
     """Single hired outcome produces correct funnel metrics."""
-    job = await _create_job(db_session, "test-user-id", "ML Engineer", "TechCorp",
-                            "Python PyTorch Kubernetes AWS")
+    job = await _create_job(db_session, "test-user-id", "ML Engineer", "TechCorp", "Python PyTorch Kubernetes AWS")
     eval_ = await _create_evaluation(db_session, "test-user-id", job.id)
     app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
     await _create_outcome(db_session, "test-user-id", app.id, "hired", "2026-08-01")
@@ -181,22 +175,19 @@ async def test_basic_funnel_with_one_outcome(db_session, sample_candidate):
 async def test_funnel_multiple_outcomes_mixed(db_session, sample_candidate):
     """Multiple outcomes produce correct conversion rates."""
     # Outcome 1: Rejected (no interview)
-    job1 = await _create_job(db_session, "test-user-id", "ML Engineer", "CorpA",
-                             "Python", ["Python"])
+    job1 = await _create_job(db_session, "test-user-id", "ML Engineer", "CorpA", "Python", ["Python"])
     eval1 = await _create_evaluation(db_session, "test-user-id", job1.id, score=70)
     app1 = await _create_application(db_session, "test-user-id", job1.id, eval1.id)
     await _create_outcome(db_session, "test-user-id", app1.id, "rejected")
 
     # Outcome 2: Interviewed but rejected
-    job2 = await _create_job(db_session, "test-user-id", "Data Scientist", "CorpB",
-                             "SQL R", ["SQL"])
+    job2 = await _create_job(db_session, "test-user-id", "Data Scientist", "CorpB", "SQL R", ["SQL"])
     eval2 = await _create_evaluation(db_session, "test-user-id", job2.id, score=75)
     app2 = await _create_application(db_session, "test-user-id", job2.id, eval2.id)
     await _create_outcome(db_session, "test-user-id", app2.id, "interview_invited")
 
     # Outcome 3: Hired
-    job3 = await _create_job(db_session, "test-user-id", "Senior ML", "CorpC",
-                             "PyTorch Kubernetes Docker", ["PyTorch"])
+    job3 = await _create_job(db_session, "test-user-id", "Senior ML", "CorpC", "PyTorch Kubernetes Docker", ["PyTorch"])
     eval3 = await _create_evaluation(db_session, "test-user-id", job3.id, score=90)
     app3 = await _create_application(db_session, "test-user-id", job3.id, eval3.id)
     await _create_outcome(db_session, "test-user-id", app3.id, "hired", "2026-08-01")
@@ -221,8 +212,7 @@ async def test_funnel_multiple_outcomes_mixed(db_session, sample_candidate):
 async def test_funnel_all_rejected(db_session, sample_candidate):
     """All outcomes rejected produces 0% conversion rates."""
     for i in range(3):
-        job = await _create_job(db_session, "test-user-id", f"Job {i}", f"Corp{i}",
-                                "skills", ["skill"])
+        job = await _create_job(db_session, "test-user-id", f"Job {i}", f"Corp{i}", "skills", ["skill"])
         eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=60)
         app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
         await _create_outcome(db_session, "test-user-id", app.id, "rejected")
@@ -246,16 +236,18 @@ async def test_keyword_analysis_correlation(db_session, sample_candidate):
     """Keywords from successful jobs appear in top_keywords."""
     # Create 2 successful outcomes (hired) with Python keyword
     for i in range(2):
-        job = await _create_job(db_session, "test-user-id", f"ML Engineer {i}", f"GoodCorp{i}",
-                                "Python PyTorch ML", ["Python", "PyTorch"])
+        job = await _create_job(
+            db_session, "test-user-id", f"ML Engineer {i}", f"GoodCorp{i}", "Python PyTorch ML", ["Python", "PyTorch"]
+        )
         eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=90)
         app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
         await _create_outcome(db_session, "test-user-id", app.id, "hired")
 
     # Create 2 unsuccessful outcomes with Java keyword
     for i in range(2):
-        job = await _create_job(db_session, "test-user-id", f"Java Dev {i}", f"BadCorp{i}",
-                                "Java Spring", ["Java", "Spring"])
+        job = await _create_job(
+            db_session, "test-user-id", f"Java Dev {i}", f"BadCorp{i}", "Java Spring", ["Java", "Spring"]
+        )
         eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=50)
         app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
         await _create_outcome(db_session, "test-user-id", app.id, "rejected")
@@ -283,8 +275,7 @@ async def test_insights_generated_for_multiple_outcomes(db_session, sample_candi
     """Insights are generated when enough data exists."""
     # Create 5 outcomes: 2 hired, 2 rejected, 1 in progress
     for i in range(5):
-        job = await _create_job(db_session, "test-user-id", f"Job {i}", f"Corp{i}",
-                                "skills", ["skill"])
+        job = await _create_job(db_session, "test-user-id", f"Job {i}", f"Corp{i}", "skills", ["skill"])
         eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=70)
         app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
         status = "hired" if i < 2 else ("rejected" if i < 4 else "interview_invited")
@@ -304,8 +295,7 @@ async def test_insights_low_interview_rate(db_session, sample_candidate):
     """Low interview rate triggers funnel insight."""
     # 5 applications, 0 interviews → low rate insight
     for i in range(5):
-        job = await _create_job(db_session, "test-user-id", f"Job {i}", f"Corp{i}",
-                                "skills", ["skill"])
+        job = await _create_job(db_session, "test-user-id", f"Job {i}", f"Corp{i}", "skills", ["skill"])
         eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=60)
         app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
         await _create_outcome(db_session, "test-user-id", app.id, "rejected")
@@ -324,8 +314,7 @@ async def test_insights_low_interview_rate(db_session, sample_candidate):
 @pytest.mark.asyncio
 async def test_keywords_from_empty_job_description(db_session, sample_candidate):
     """Job posting with no description produces no keywords (no crash)."""
-    job = await _create_job(db_session, "test-user-id", "Some Job", "SomeCorp",
-                            "", [])
+    job = await _create_job(db_session, "test-user-id", "Some Job", "SomeCorp", "", [])
     eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=80)
     app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
     await _create_outcome(db_session, "test-user-id", app.id, "hired")
@@ -339,8 +328,7 @@ async def test_keywords_from_empty_job_description(db_session, sample_candidate)
 @pytest.mark.asyncio
 async def test_funnel_latest_outcome_only(db_session, sample_candidate):
     """When an app has multiple outcomes, only the latest is used for funnel."""
-    job = await _create_job(db_session, "test-user-id", "Job", "Corp",
-                            "Python", ["Python"])
+    job = await _create_job(db_session, "test-user-id", "Job", "Corp", "Python", ["Python"])
     eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=80)
     app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
 
@@ -360,8 +348,7 @@ async def test_funnel_latest_outcome_only(db_session, sample_candidate):
 @pytest.mark.asyncio
 async def test_report_includes_generated_at_timestamp(db_session, sample_candidate):
     """CalibrationReport includes a valid generated_at timestamp."""
-    job = await _create_job(db_session, "test-user-id", "Job", "Corp",
-                            "skills", ["skill"])
+    job = await _create_job(db_session, "test-user-id", "Job", "Corp", "skills", ["skill"])
     eval_ = await _create_evaluation(db_session, "test-user-id", job.id, score=80)
     app = await _create_application(db_session, "test-user-id", job.id, eval_.id)
     await _create_outcome(db_session, "test-user-id", app.id, "hired")

@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, hash_password, verify_password
+from app.core.settings import get_settings
 from app.db.models import User
 from app.exceptions import DuplicateError
-from app.core.settings import get_settings
 
 settings = get_settings()
 
@@ -30,7 +30,7 @@ def check_login_rate_limit(ip: str, email: str) -> None:
         RateLimitError: If too many failed attempts in the window.
     """
     key = _rate_limit_key(ip, email)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     window_start = now - timedelta(seconds=settings.rate_limit_window_seconds)
     # Purge old entries
     _login_attempts[key] = [t for t in _login_attempts[key] if t > window_start]
@@ -41,7 +41,7 @@ def check_login_rate_limit(ip: str, email: str) -> None:
 def record_failed_login(ip: str, email: str) -> None:
     """Record a failed login attempt for rate limiting."""
     key = _rate_limit_key(ip, email)
-    _login_attempts[key].append(datetime.now(timezone.utc))
+    _login_attempts[key].append(datetime.now(UTC))
 
 
 def clear_login_rate_limit(ip: str, email: str) -> None:
@@ -52,16 +52,19 @@ def clear_login_rate_limit(ip: str, email: str) -> None:
 
 class InvalidCredentialsError(Exception):
     """Raised when login credentials are invalid."""
+
     pass
 
 
 class DeleteAccountError(Exception):
     """Raised when account deletion fails (wrong password, wrong confirmation)."""
+
     pass
 
 
 class RateLimitError(Exception):
     """Raised when login rate limit is exceeded."""
+
     pass
 
 

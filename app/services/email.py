@@ -5,10 +5,9 @@ Sends transactional emails for payment requests, donations, and admin contact.
 
 from __future__ import annotations
 
-
+from app.core.logging import bind_context, get_logger
 from app.core.settings import get_settings
 
-from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 settings = get_settings()
@@ -95,9 +94,7 @@ async def send_purchase_request(
     correlation_id: str = "",
 ) -> dict:
     """Notify the admin that a user wants to purchase a plan (manual flow)."""
-    method_label = {"sinpe": "SINPE Móvil", "whatsapp": "WhatsApp", "email": "Correo electrónico"}.get(
-        method, method
-    )
+    method_label = {"sinpe": "SINPE Móvil", "whatsapp": "WhatsApp", "email": "Correo electrónico"}.get(method, method)
     phone_line = f"<p><strong>Teléfono (SINPE):</strong> {phone}</p>" if phone else ""
     note_line = f"<p><strong>Nota:</strong> {note}</p>" if note else ""
     html = f"""<h2>Solicitud de compra de plan</h2>
@@ -109,7 +106,7 @@ async def send_purchase_request(
 {phone_line}
 {note_line}
 <p><strong>Correlation ID:</strong> {correlation_id}</p>
-<p>Contactar al usuario para gestionar el pago (SINPE / WhatsApp) y activar el plan desde el panel de administración.</p>"""
+<p>Contactar al usuario para gestionar el pago (SINPE / WhatsApp) y activar el plan desde el panel de administración.</p>"""  # noqa: E501
     return await send_resend_email(
         to=admin_email,
         subject=f"Solicitud de compra — {user_name} ({plan_key})",
@@ -208,7 +205,7 @@ async def send_refund_request(
 <p><strong>Plan:</strong> {plan_key}</p>
 <p><strong>Uso del periodo:</strong> {usage_in_period} créditos</p>
 <p><strong>Correlation ID:</strong> {correlation_id}</p>
-<p>Contactar al usuario para gestionar el reembolso (SINPE / WhatsApp) y aprobarlo desde el panel de administración.</p>"""
+<p>Contactar al usuario para gestionar el reembolso (SINPE / WhatsApp) y aprobarlo desde el panel de administración.</p>"""  # noqa: E501
     return await send_resend_email(
         to=admin_email,
         subject=f"Solicitud de reembolso — {user_name}",

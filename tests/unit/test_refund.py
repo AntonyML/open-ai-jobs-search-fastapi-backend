@@ -29,7 +29,6 @@ from app.services.billing_policy import (
     compute_usage_in_period,
     get_billing_policy,
 )
-from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import (
     activate_subscription,
     cancel_subscription,
@@ -37,6 +36,7 @@ from app.services.subscriptions import (
     process_expired_subscriptions,
     refund_subscription,
 )
+from tests.unit.plan_helpers import seed_test_plans
 
 
 @pytest.fixture
@@ -57,8 +57,11 @@ async def db_session():
 @pytest.fixture
 async def admin_user(db_session):
     u = User(
-        id="admin-1", email="admin@example.com", hashed_password="x",
-        role="admin", tier="free",
+        id="admin-1",
+        email="admin@example.com",
+        hashed_password="x",
+        role="admin",
+        tier="free",
     )
     db_session.add(u)
     await db_session.commit()
@@ -89,9 +92,7 @@ async def _notifications(db: AsyncSession, type_: str) -> list[AppNotification]:
 
 
 async def _ledger_rows(db: AsyncSession, action: str) -> list[CreditTransaction]:
-    rows = await db.execute(
-        select(CreditTransaction).where(CreditTransaction.action == action)
-    )
+    rows = await db.execute(select(CreditTransaction).where(CreditTransaction.action == action))
     return list(rows.scalars().all())
 
 
@@ -196,7 +197,8 @@ async def test_check_refund_eligibility_yearly_within_cooling(db_session, user):
     policy = await get_billing_policy(db_session)
     now = datetime.now(UTC)
     sub = await _make_sub(
-        db_session, user.id,
+        db_session,
+        user.id,
         period_start=now - timedelta(days=5),
         period_end=now + timedelta(days=360),
     )
@@ -208,7 +210,8 @@ async def test_check_refund_eligibility_yearly_after_cooling(db_session, user):
     policy = await get_billing_policy(db_session)
     now = datetime.now(UTC)
     sub = await _make_sub(
-        db_session, user.id,
+        db_session,
+        user.id,
         period_start=now - timedelta(days=20),
         period_end=now + timedelta(days=345),
     )
@@ -241,7 +244,8 @@ async def test_cancel_then_expiry_drops_tier_to_free(db_session, user):
     flips it to expired and resets the tier (plan.md §2 Caso 4)."""
     now = datetime.now(UTC)
     sub = await _make_sub(
-        db_session, user.id,
+        db_session,
+        user.id,
         period_start=now - timedelta(days=40),
         period_end=now - timedelta(days=10),
         auto_renew=False,
@@ -361,7 +365,8 @@ async def test_request_refund_403_monthly_usage_exceeded(db_session, user, admin
 async def test_request_refund_403_yearly_cooling_passed(db_session, user, admin_user):
     now = datetime.now(UTC)
     await _make_sub(
-        db_session, user.id,
+        db_session,
+        user.id,
         period_start=now - timedelta(days=20),
         period_end=now + timedelta(days=345),
     )

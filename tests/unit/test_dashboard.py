@@ -1,6 +1,6 @@
 """Tests for the dashboard/analytics endpoints (stats, funnel, trends)."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -47,7 +47,7 @@ async def db_session():
 
 async def _seed_activity(db: AsyncSession, **counts: int) -> None:
     """Create the FK chain job → rank eval → application → interview/outcome."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     job = JobPosting(
         user_id=USER_ID,
         portal="linkedin",
@@ -78,20 +78,24 @@ async def _seed_activity(db: AsyncSession, **counts: int) -> None:
     await db.flush()
 
     if counts.get("interviews"):
-        db.add(InterviewPrep(
-            user_id=USER_ID,
-            application_id=app.id,
-            stage="technical",
-            created_at=now,
-        ))
+        db.add(
+            InterviewPrep(
+                user_id=USER_ID,
+                application_id=app.id,
+                stage="technical",
+                created_at=now,
+            )
+        )
 
     if counts.get("hired"):
-        db.add(Outcome(
-            user_id=USER_ID,
-            application_id=app.id,
-            status="hired",
-            created_at=now,
-        ))
+        db.add(
+            Outcome(
+                user_id=USER_ID,
+                application_id=app.id,
+                status="hired",
+                created_at=now,
+            )
+        )
 
     await db.commit()
 
@@ -100,28 +104,47 @@ async def _seed_activity(db: AsyncSession, **counts: int) -> None:
 async def test_stats_reports_cv_document_metrics(db_session):
     """Document KPIs are reported: active base CV, adapted CVs and totals."""
     # Active base CV + one obsolete base + two adapted CVs
-    db_session.add_all([
-        GeneratedCV(
-            id="base-active", user_id=USER_ID, cv_type="base", base_status="active",
-            cv_json={}, is_deleted=False,
-        ),
-        GeneratedCV(
-            id="base-old", user_id=USER_ID, cv_type="base", base_status="obsolete",
-            cv_json={}, is_deleted=False,
-        ),
-        GeneratedCV(
-            id="adapted-1", user_id=USER_ID, cv_type="personalized",
-            cv_json={}, is_deleted=False,
-        ),
-        GeneratedCV(
-            id="adapted-2", user_id=USER_ID, cv_type="personalized",
-            cv_json={}, is_deleted=False,
-        ),
-        GeneratedCV(
-            id="deleted-cv", user_id=USER_ID, cv_type="personalized",
-            cv_json={}, is_deleted=True,
-        ),
-    ])
+    db_session.add_all(
+        [
+            GeneratedCV(
+                id="base-active",
+                user_id=USER_ID,
+                cv_type="base",
+                base_status="active",
+                cv_json={},
+                is_deleted=False,
+            ),
+            GeneratedCV(
+                id="base-old",
+                user_id=USER_ID,
+                cv_type="base",
+                base_status="obsolete",
+                cv_json={},
+                is_deleted=False,
+            ),
+            GeneratedCV(
+                id="adapted-1",
+                user_id=USER_ID,
+                cv_type="personalized",
+                cv_json={},
+                is_deleted=False,
+            ),
+            GeneratedCV(
+                id="adapted-2",
+                user_id=USER_ID,
+                cv_type="personalized",
+                cv_json={},
+                is_deleted=False,
+            ),
+            GeneratedCV(
+                id="deleted-cv",
+                user_id=USER_ID,
+                cv_type="personalized",
+                cv_json={},
+                is_deleted=True,
+            ),
+        ]
+    )
     await db_session.commit()
 
     res = await stats_handler(user={"sub": USER_ID}, db=db_session)
@@ -134,10 +157,15 @@ async def test_stats_reports_cv_document_metrics(db_session):
 @pytest.mark.asyncio
 async def test_stats_reports_no_base_cv_when_missing(db_session):
     """A user without an active base CV gets base_cv_ready=False."""
-    db_session.add(GeneratedCV(
-        id="adapted-only", user_id=USER_ID, cv_type="personalized",
-        cv_json={}, is_deleted=False,
-    ))
+    db_session.add(
+        GeneratedCV(
+            id="adapted-only",
+            user_id=USER_ID,
+            cv_type="personalized",
+            cv_json={},
+            is_deleted=False,
+        )
+    )
     await db_session.commit()
 
     res = await stats_handler(user={"sub": USER_ID}, db=db_session)

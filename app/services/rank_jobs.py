@@ -7,19 +7,18 @@ and returns {job_id, status, total_jobs, accepted_jobs}.
 
 from __future__ import annotations
 
-
 from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
+from app.core.logging import bind_context, get_logger
 from app.db.models import CandidateProfile, ExecutionJob, ExecutionJobItem, IngestedJob, JobPosting
 from app.services import credits
 from app.services.orchestrator.execution_queue import ExecutionQueue
 from app.services.orchestrator.orchestrator_deps import get_orchestrator
 from app.services.rank import ALGORITHM_VERSION, PROMPT_VERSION
 
-from app.core.logging import get_logger, bind_context
 logger = get_logger(__name__)
 
 # ── Queue instance (shared with orchestrator) ───────────────────────
@@ -30,11 +29,11 @@ def _get_queue() -> ExecutionQueue:
 
 
 async def start(
-        db_factory,
-        user_id: str,
-        payload: dict[str, Any],
-        idempotency_key: str | None = None,
-        correlation_id: str | None = None,
+    db_factory,
+    user_id: str,
+    payload: dict[str, Any],
+    idempotency_key: str | None = None,
+    correlation_id: str | None = None,
 ) -> dict[str, Any]:
     """Start a ranking run and enqueue items for the worker.
 
@@ -67,16 +66,13 @@ async def start(
         async with db_factory() as db:
             # 1. Idempotency check (early return if hit)
             if idempotency_key:
-                existing = await db.execute(
-                    select(ExecutionJob).where(
-                        ExecutionJob.idempotency_key == idempotency_key
-                    )
-                )
+                existing = await db.execute(select(ExecutionJob).where(ExecutionJob.idempotency_key == idempotency_key))
                 existing_job = existing.scalar_one_or_none()
                 if existing_job is not None:
                     logger.info(
                         "Idempotency key %s hit — returning existing job %s",
-                        idempotency_key, existing_job.id,
+                        idempotency_key,
+                        existing_job.id,
                     )
                     return {
                         "job_id": existing_job.id,
@@ -87,9 +83,7 @@ async def start(
                     }
 
             # 2. Load candidate profile + count unranked jobs
-            cand_result = await db.execute(
-                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-            )
+            cand_result = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user_id))
             candidate = cand_result.scalar_one_or_none()
             profile_snapshot = {
                 "skills": candidate.skills if candidate else {},
@@ -113,9 +107,7 @@ async def start(
                     "message": "Select jobs to rank first.",
                 }
 
-            ingested_result = await db.execute(
-                select(IngestedJob).where(IngestedJob.id.in_(job_ids))
-            )
+            ingested_result = await db.execute(select(IngestedJob).where(IngestedJob.id.in_(job_ids)))
             ingested_list = list(ingested_result.scalars().all())
             if not ingested_list:
                 return {
@@ -169,7 +161,8 @@ async def start(
             if active_job is not None:
                 logger.info(
                     "Active rank job %s already exists for user %s — returning it",
-                    active_job.id, user_id,
+                    active_job.id,
+                    user_id,
                 )
                 return {
                     "job_id": active_job.id,
@@ -186,8 +179,7 @@ async def start(
                     user_id=user_id,
                     pipeline="rank",
                     description=(
-                        f"Rank run: focus={payload.get('focus_area', 'all')}, "
-                        f"re_rank={re_rank}, jobs={total_jobs}"
+                        f"Rank run: focus={payload.get('focus_area', 'all')}, re_rank={re_rank}, jobs={total_jobs}"
                     ),
                     group_id=None,
                     messages=None,
@@ -214,7 +206,8 @@ async def start(
                 if active_job is not None:
                     logger.info(
                         "Deduplicated concurrent rank job for user %s — returning existing %s",
-                        user_id, active_job.id,
+                        user_id,
+                        active_job.id,
                     )
                     return {
                         "job_id": active_job.id,
@@ -262,7 +255,9 @@ async def start(
 
         logger.info(
             "Rank job %s enqueued | %d items for %d total jobs",
-            job_id, len(items), total_jobs,
+            job_id,
+            len(items),
+            total_jobs,
         )
 
         return {

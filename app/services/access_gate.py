@@ -82,20 +82,16 @@ async def enforce_action_gate(
     # missing → 403 before any quota/credit is touched.  ``feature_gate=None``
     # (e.g. ``verify``) is available to every plan.
     spec = CATALOG_BY_KEY.get(action)
-    if spec is not None and spec.feature_gate is not None:
-        if spec.feature_gate not in access["features"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "feature_required",
-                    "message": (
-                        f"Your current plan does not include this action. "
-                        f"Upgrade to unlock it."
-                    ),
-                    "feature": spec.feature_gate,
-                    "plan_key": access["plan_key"],
-                },
-            )
+    if spec is not None and spec.feature_gate is not None and spec.feature_gate not in access["features"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "feature_required",
+                "message": ("Your current plan does not include this action. Upgrade to unlock it."),
+                "feature": spec.feature_gate,
+                "plan_key": access["plan_key"],
+            },
+        )
 
     plan: Plan | None = access["plan"]
     if plan is not None and (plan.daily_quota > 0 or plan.weekly_quota > 0):
@@ -124,22 +120,17 @@ async def enforce_action_gate(
     if required <= 0:
         return None
 
-    can_run, account, correlation_id = await credits.check_credits(
-        db, user["sub"], action, required
-    )
+    can_run, account, correlation_id = await credits.check_credits(db, user["sub"], action, required)
     if not can_run:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "code": "insufficient_credits",
                 "message": (
-                    "Not enough AI credits. Add credits or upgrade your plan. "
-                    f"Correlation ID: {correlation_id}"
+                    f"Not enough AI credits. Add credits or upgrade your plan. Correlation ID: {correlation_id}"
                 ),
                 "balance": account.balance,
-                "next_reset_at": _iso(
-                    _next_refill_at(access["subscription"], plan, account)
-                ),
+                "next_reset_at": _iso(_next_refill_at(access["subscription"], plan, account)),
                 "quota_week_used": account.quota_week_used,
                 "quota_week_limit": access["weekly_quota"],
                 "topup_packs": await get_topup_packs(db),

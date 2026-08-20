@@ -1,8 +1,12 @@
 """Quick in-process end-to-end test."""
-import sys, os
+
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi.testclient import TestClient
+
 from app.main import create_app
 
 app = create_app()
@@ -32,7 +36,7 @@ if jobs:
     rank = resp.json()
     if resp.status_code == 202:
         print(f"  accepted={rank['accepted_jobs']}, total={rank['total_jobs']}")
-        print(f"  ✅" if rank['accepted_jobs'] == len(job_ids) else f"  ⚠️")
+        print("  ✅" if rank["accepted_jobs"] == len(job_ids) else "  ⚠️")
     else:
         print(f"  Response: {rank}")
 else:

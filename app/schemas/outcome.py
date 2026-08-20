@@ -3,11 +3,10 @@
 Request/response shapes for recording job application outcomes.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, Field
-
 
 # ── Request schemas ─────────────────────────────────────────────────
 
@@ -25,9 +24,7 @@ class OutcomeCreate(BaseModel):
             "no_response, interview_only, withdrawn"
         ),
     )
-    date_resolved: str | None = Field(
-        None, description="YYYY-MM-DD (only for final resolutions)"
-    )
+    date_resolved: str | None = Field(None, description="YYYY-MM-DD (only for final resolutions)")
     phone_screen_date: str | None = Field(None, description="YYYY-MM-DD")
     technical_date: str | None = Field(None, description="YYYY-MM-DD")
     case_date: str | None = Field(None, description="YYYY-MM-DD")
@@ -194,4 +191,4 @@ class CalibrationReport(BaseModel):
     bottom_keywords: list[CalibrationKeyword] = []
     insights: list[CalibrationInsight] = []
     data_points: int = 0
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

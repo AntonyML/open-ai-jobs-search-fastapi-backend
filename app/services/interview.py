@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import bind_context, get_logger
 from app.core.settings import get_settings
 from app.db.models import (
     Application,
@@ -26,33 +27,20 @@ from app.db.models import (
     JobPosting,
     RankEvaluation,
     StarExample,
-    User,
 )
 from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
-
 from app.llm.adapter import llm_completion_structured
-from app.services import credits
-from app.core.logging import get_logger, bind_context
 from app.schemas.interview import (
     CompanyResearchLLMOutput,
-    CompanyResearchOut,
-    ConversationHookLLMOutput,
-    ConversationHookOut,
-    LikelyQuestionsLLMOutput,
-    LikelyQuestionOut,
-    StarMappingLLMOutput,
-    StarMappingOut,
-    NewStarDraftsLLMOutput,
-    NewStarDraftOut,
     ConsistencyBriefLLMOutput,
-    ConsistencyBriefOut,
-    ToughQuestionsLLMOutput,
-    ToughQuestionOut,
-    QuestionsToAskLLMOutput,
-    QuestionToAskOut,
+    LikelyQuestionsLLMOutput,
     LogisticsLLMOutput,
-    LogisticsOut,
+    NewStarDraftsLLMOutput,
+    QuestionsToAskLLMOutput,
+    StarMappingLLMOutput,
+    ToughQuestionsLLMOutput,
 )
+from app.services import credits
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -74,7 +62,7 @@ Your role is to:
 - Never prepare an answer that invents experience the candidate doesn't have
 
 The candidate must be able to defend every claim in the interview without backtracking.
-"""
+"""  # noqa: E501
 
 
 # ── Prompt builders ─────────────────────────────────────────────────
@@ -132,7 +120,9 @@ def _build_candidate_summary(candidate: CandidateProfile) -> str:
     if candidate.skills:
         skill_parts = []
         if candidate.skills.get("programming_ml"):
-            langs = [f"{s.get('language', '')} ({s.get('proficiency', '')})" for s in candidate.skills["programming_ml"]]
+            langs = [
+                f"{s.get('language', '')} ({s.get('proficiency', '')})" for s in candidate.skills["programming_ml"]
+            ]
             skill_parts.append(f"Programming/ML: {', '.join(langs)}")
         if candidate.skills.get("domain_expertise"):
             skill_parts.append(f"Domain: {', '.join(candidate.skills['domain_expertise'])}")
@@ -185,7 +175,9 @@ def _build_application_context(application: Application) -> str:
         parts.append("Submitted CV Experience (tailored):\n" + "\n".join(exp_lines))
 
     if application.incorporated_keywords:
-        kw_lines = [f"  - {k.get('keyword', '')}: {k.get('where_incorporated', '')}" for k in application.incorporated_keywords]
+        kw_lines = [
+            f"  - {k.get('keyword', '')}: {k.get('where_incorporated', '')}" for k in application.incorporated_keywords
+        ]
         parts.append("Incorporated Keywords:\n" + "\n".join(kw_lines))
 
     if application.addressed_red_flags:
@@ -255,7 +247,9 @@ def build_likely_questions_prompt(
             parts.append(f"Priority keywords: {', '.join(jt['keywords'])}")
         if jt.get("seniority"):
             seniority = jt["seniority"]
-            parts.append(f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy")
+            parts.append(
+                f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy"  # noqa: E501
+            )
         if parts:
             jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
 
@@ -264,10 +258,10 @@ def build_likely_questions_prompt(
         eval_context = f"""
 RANK EVALUATION INSIGHTS:
 - Overall fit: {evaluation.verdict} ({evaluation.overall_score}/100)
-- Technical gaps: {', '.join(evaluation.gaps or [])}
-- Missing keywords: {', '.join(evaluation.missing_keywords or [])}
-- Red flags: {', '.join(evaluation.red_flags or [])}
-- Strengths: {', '.join(evaluation.strengths or [])}
+- Technical gaps: {", ".join(evaluation.gaps or [])}
+- Missing keywords: {", ".join(evaluation.missing_keywords or [])}
+- Red flags: {", ".join(evaluation.red_flags or [])}
+- Strengths: {", ".join(evaluation.strengths or [])}
 """
 
     system_prompt = f"""{INTERVIEW_GUARDRAIL}
@@ -294,7 +288,7 @@ QUESTION SOURCES (priority order):
 
 For each question, specify source and priority (high/medium/low).
 Return ONLY valid JSON matching LikelyQuestionsLLMOutput schema.
-"""
+"""  # noqa: E501
 
     user_prompt = f"Generate likely interview questions for a {stage} interview. Return structured JSON."
 
@@ -320,8 +314,8 @@ def build_star_mapping_prompt(
         star_lines.append(f"""
 ID: {se.id}
 Title: {se.title}
-Skill: {se.skill_demonstrated or 'N/A'}
-Use for: {', '.join(se.use_for or [])}
+Skill: {se.skill_demonstrated or "N/A"}
+Use for: {", ".join(se.use_for or [])}
 Situation: {se.situation}
 Task: {se.task}
 Action: {se.action}
@@ -457,7 +451,9 @@ def build_tough_questions_prompt(
             parts.append(f"Target industry: {jt['industry']}")
         if jt.get("seniority"):
             seniority = jt["seniority"]
-            parts.append(f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy")
+            parts.append(
+                f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy"  # noqa: E501
+            )
         if parts:
             jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
 
@@ -466,9 +462,9 @@ def build_tough_questions_prompt(
         eval_context = f"""
 RANK EVALUATION:
 - Overall fit: {evaluation.verdict} ({evaluation.overall_score}/100)
-- Gaps: {', '.join(evaluation.gaps or [])}
-- Missing keywords: {', '.join(evaluation.missing_keywords or [])}
-- Red flags: {', '.join(evaluation.red_flags or [])}
+- Gaps: {", ".join(evaluation.gaps or [])}
+- Missing keywords: {", ".join(evaluation.missing_keywords or [])}
+- Red flags: {", ".join(evaluation.red_flags or [])}
 """
 
     system_prompt = f"""{INTERVIEW_GUARDRAIL}
@@ -529,7 +525,9 @@ def build_questions_to_ask_prompt(
             parts.append(f"Industry focus: {jt['industry']}")
         if jt.get("seniority"):
             seniority = jt["seniority"]
-            parts.append(f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy")
+            parts.append(
+                f"Target seniority: {seniority} — adjust question depth: junior=fundamentals, mid=applied, senior=architecture, lead/manager=leadership+strategy"  # noqa: E501
+            )
         if parts:
             jt_guidance = "JOB TARGET CONTEXT:\n" + "\n".join(f"- {p}" for p in parts) + "\n"
 
@@ -537,13 +535,13 @@ def build_questions_to_ask_prompt(
     if company_research:
         research_text = f"""
 COMPANY RESEARCH:
-- Mission: {company_research.get('mission', 'N/A')}
-- Values: {', '.join(company_research.get('values', []))}
-- Recent news: {', '.join([n.get('title', '') for n in company_research.get('recent_news', [])])}
-- Products: {', '.join(company_research.get('products', []))}
-- Team structure: {company_research.get('team_structure', 'N/A')}
-- Growth signals: {', '.join(company_research.get('growth_signals', []))}
-- Red flags: {', '.join(company_research.get('red_flags', []))}
+- Mission: {company_research.get("mission", "N/A")}
+- Values: {", ".join(company_research.get("values", []))}
+- Recent news: {", ".join([n.get("title", "") for n in company_research.get("recent_news", [])])}
+- Products: {", ".join(company_research.get("products", []))}
+- Team structure: {company_research.get("team_structure", "N/A")}
+- Growth signals: {", ".join(company_research.get("growth_signals", []))}
+- Red flags: {", ".join(company_research.get("red_flags", []))}
 """
 
     system_prompt = f"""{INTERVIEW_GUARDRAIL}
@@ -591,9 +589,9 @@ def build_logistics_prompt(
 You are providing interview logistics advice.
 
 STAGE: {stage}
-FORMAT: {interview_format or 'Not specified'}
-DATE: {interview_date or 'Not specified'}
-INTERVIEWERS: {', '.join(interviewer_names) if interviewer_names else 'Not specified'}
+FORMAT: {interview_format or "Not specified"}
+DATE: {interview_date or "Not specified"}
+INTERVIEWERS: {", ".join(interviewer_names) if interviewer_names else "Not specified"}
 
 TASK:
 Provide practical logistics advice including phone/video tips when relevant.
@@ -612,14 +610,14 @@ Return ONLY valid JSON matching LogisticsLLMOutput schema.
 
 
 async def execute_interview_prep(
-        db: AsyncSession,
-        user_id: str,
-        application_id: str,
-        stage: str,
-        interview_date: str | None = None,
-        interview_format: str | None = None,
-        interviewer_names: list[str] | None = None,
-        correlation_id: str | None = None,
+    db: AsyncSession,
+    user_id: str,
+    application_id: str,
+    stage: str,
+    interview_date: str | None = None,
+    interview_format: str | None = None,
+    interviewer_names: list[str] | None = None,
+    correlation_id: str | None = None,
 ) -> InterviewPrep:
     """Execute the full interview preparation workflow.
 
@@ -640,40 +638,30 @@ async def execute_interview_prep(
     with bind_context(stage="interview"):
         # 1. Load application + related data
         app_result = await db.execute(
-            select(Application)
-            .where(Application.id == application_id)
-            .where(Application.user_id == user_id)
+            select(Application).where(Application.id == application_id).where(Application.user_id == user_id)
         )
         application = app_result.scalar_one_or_none()
         if application is None:
             raise NotFoundError("Application not found.")
 
         # 2. Load job posting
-        job_result = await db.execute(
-            select(JobPosting).where(JobPosting.id == application.job_posting_id)
-        )
+        job_result = await db.execute(select(JobPosting).where(JobPosting.id == application.job_posting_id))
         job = job_result.scalar_one_or_none()
         if job is None:
             raise NotFoundError("Job posting not found.")
 
         # 3. Load candidate profile
-        candidate_result = await db.execute(
-            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-        )
+        candidate_result = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user_id))
         candidate = candidate_result.scalar_one_or_none()
         if candidate is None:
             raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
 
         # 4. Load rank evaluation
-        eval_result = await db.execute(
-            select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id)
-        )
+        eval_result = await db.execute(select(RankEvaluation).where(RankEvaluation.job_posting_id == job.id))
         evaluation = eval_result.scalar_one_or_none()
 
         # 5. Load STAR examples
-        star_result = await db.execute(
-            select(StarExample).where(StarExample.candidate_id == candidate.id)
-        )
+        star_result = await db.execute(select(StarExample).where(StarExample.candidate_id == candidate.id))
         star_examples = list(star_result.scalars().all())
 
         # 6. Company research
@@ -943,27 +931,33 @@ def _extract_conversation_hooks(company_research: dict[str, Any]) -> list[dict[s
 
     # Recent news as hooks
     for news in company_research.get("recent_news", [])[:3]:
-        hooks.append({
-            "topic": news.get("title", ""),
-            "source_url": news.get("url", ""),
-            "why_relevant": f"Recent company news — shows you've done your homework",
-        })
+        hooks.append(
+            {
+                "topic": news.get("title", ""),
+                "source_url": news.get("url", ""),
+                "why_relevant": "Recent company news — shows you've done your homework",
+            }
+        )
 
     # Growth signals as hooks
     for signal in company_research.get("growth_signals", [])[:2]:
-        hooks.append({
-            "topic": signal,
-            "source_url": "",
-            "why_relevant": "Company growth signal — natural conversation starter about team scaling",
-        })
+        hooks.append(
+            {
+                "topic": signal,
+                "source_url": "",
+                "why_relevant": "Company growth signal — natural conversation starter about team scaling",
+            }
+        )
 
     # Products as hooks
     for product in company_research.get("products", [])[:2]:
-        hooks.append({
-            "topic": product,
-            "source_url": "",
-            "why_relevant": "Core product — can ask about roadmap, challenges, tech stack",
-        })
+        hooks.append(
+            {
+                "topic": product,
+                "source_url": "",
+                "why_relevant": "Core product — can ask about roadmap, challenges, tech stack",
+            }
+        )
 
     return hooks[:5]  # Max 5 hooks
 
@@ -971,14 +965,10 @@ def _extract_conversation_hooks(company_research: dict[str, Any]) -> list[dict[s
 # ── Query helpers ───────────────────────────────────────────────────
 
 
-async def get_interview_prep(
-    db: AsyncSession, prep_id: str, user_id: str
-) -> InterviewPrep:
+async def get_interview_prep(db: AsyncSession, prep_id: str, user_id: str) -> InterviewPrep:
     """Get an interview prep by ID, verifying ownership."""
     result = await db.execute(
-        select(InterviewPrep)
-        .where(InterviewPrep.id == prep_id)
-        .where(InterviewPrep.user_id == user_id)
+        select(InterviewPrep).where(InterviewPrep.id == prep_id).where(InterviewPrep.user_id == user_id)
     )
     prep = result.scalar_one_or_none()
     if prep is None:
@@ -1053,9 +1043,7 @@ async def start_mock_interview(
         "question_number": 1,
         "total_questions": len(likely_questions),
         "is_complete": False,
-        "transcript": [
-            {"role": "interviewer", "content": first_question}
-        ],
+        "transcript": [{"role": "interviewer", "content": first_question}],
         "message": f"Mock interview started. {len(likely_questions)} questions total.",
     }
 
@@ -1077,14 +1065,14 @@ def _build_mock_feedback_prompt(
         if cr.get("values"):
             context_parts.append(f"Values: {', '.join(cr['values'])}")
         if cr.get("recent_news"):
-            context_parts.append(f"Recent news: {', '.join(n.get('title','') for n in cr['recent_news'][:2])}")
+            context_parts.append(f"Recent news: {', '.join(n.get('title', '') for n in cr['recent_news'][:2])}")
 
     # Likely questions
     qs = prep.likely_questions or []
     remaining = []
     for q in qs:
         if isinstance(q, dict):
-            remaining.append(f"- [{q.get('priority','medium')}] {q.get('question','')}")
+            remaining.append(f"- [{q.get('priority', 'medium')}] {q.get('question', '')}")
         else:
             remaining.append(f"- [{getattr(q, 'priority', 'medium')}] {getattr(q, 'question', '')}")
 
@@ -1163,6 +1151,7 @@ async def submit_mock_answer(
     # Verify ownership
     if prep.user_id != user_id:
         from app.exceptions import NotFoundError
+
         raise NotFoundError("Interview prep not found.")
 
     # 2. Get the current question (last interviewer turn in transcript)
@@ -1194,6 +1183,7 @@ async def submit_mock_answer(
 
         # Use a simple LLM completion (not structured since we want free-form JSON with feedback)
         from app.llm.adapter import llm_completion
+
         llm_response = await llm_completion(
             messages=messages,
             provider=settings.llm_default_provider,
@@ -1211,7 +1201,7 @@ async def submit_mock_answer(
 
         try:
             # Find JSON block in response
-            json_match = re.search(r'\{[\s\S]*\}', content)
+            json_match = re.search(r"\{[\s\S]*\}", content)
             if json_match:
                 parsed = json.loads(json_match.group(0))
                 feedback = parsed.get("feedback", feedback)
@@ -1220,8 +1210,8 @@ async def submit_mock_answer(
             # Fallback: use the raw response as feedback
             feedback = content[:500] if content else feedback
 
-    except Exception as e:
-        feedback = f"Note: I couldn't generate detailed feedback right now. Let's continue with the next question."
+    except Exception:
+        feedback = "Note: I couldn't generate detailed feedback right now. Let's continue with the next question."
         next_question = "__COMPLETE__"
 
     # Record LLM usage against the gated ledger row (if any)
@@ -1242,10 +1232,7 @@ async def submit_mock_answer(
         updated_transcript.append({"role": "interviewer", "content": next_question})
 
     # 6. Save transcript to prep pack
-    transcript_text = "\n".join(
-        f"{t['role'].upper()}: {t['content']}"
-        for t in updated_transcript
-    )
+    transcript_text = "\n".join(f"{t['role'].upper()}: {t['content']}" for t in updated_transcript)
     prep.mock_transcript = transcript_text
     await db.commit()
 

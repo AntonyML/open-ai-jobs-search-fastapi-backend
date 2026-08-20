@@ -41,18 +41,14 @@ class NotEnoughCreditsError(Exception):
         self.required = required
         self.available = available
         self.correlation_id = correlation_id
-        super().__init__(
-            f"Not enough credits for '{action}': need {required}, have {available}."
-        )
+        super().__init__(f"Not enough credits for '{action}': need {required}, have {available}.")
 
 
 async def get_or_create_credit_account(
     db: AsyncSession, user_id: str, subscription: UserSubscription | None = None
 ) -> CreditAccount:
     """Return the user's credit account, creating it lazily if needed."""
-    result = await db.execute(
-        select(CreditAccount).where(CreditAccount.user_id == user_id)
-    )
+    result = await db.execute(select(CreditAccount).where(CreditAccount.user_id == user_id))
     account = result.scalar_one_or_none()
     if account is None:
         # Anchor the last refill 7 days in the past so the very first check
@@ -343,9 +339,7 @@ def next_quota_reset_at(account: CreditAccount) -> datetime | None:
     return min(candidates) if candidates else None
 
 
-async def check_quota(
-    db: AsyncSession, user_id: str, plan: Plan, count: int = 1
-) -> bool:
+async def check_quota(db: AsyncSession, user_id: str, plan: Plan, count: int = 1) -> bool:
     """Return True if ``count`` more quota units fit within the plan quotas."""
     account = await get_or_create_credit_account(db, user_id)
     now = datetime.now(UTC)
@@ -405,9 +399,7 @@ async def record_llm_usage(
     """
     if not correlation_id:
         return None
-    result = await db.execute(
-        select(CreditTransaction).where(CreditTransaction.correlation_id == correlation_id)
-    )
+    result = await db.execute(select(CreditTransaction).where(CreditTransaction.correlation_id == correlation_id))
     txn = result.scalars().first()
     if txn is None:
         return None
@@ -423,9 +415,7 @@ async def record_llm_usage(
     return txn
 
 
-async def relink_transaction(
-    db: AsyncSession, correlation_id: str, new_correlation_id: str
-) -> bool:
+async def relink_transaction(db: AsyncSession, correlation_id: str, new_correlation_id: str) -> bool:
     """Point a ledger row at a correlation id only known after consumption.
 
     Used by the rank flow: the credit is consumed before the ExecutionJob
@@ -434,9 +424,7 @@ async def relink_transaction(
     """
     if not correlation_id or not new_correlation_id:
         return False
-    result = await db.execute(
-        select(CreditTransaction).where(CreditTransaction.correlation_id == correlation_id)
-    )
+    result = await db.execute(select(CreditTransaction).where(CreditTransaction.correlation_id == correlation_id))
     txn = result.scalars().first()
     if txn is None:
         return False
@@ -445,9 +433,7 @@ async def relink_transaction(
     return True
 
 
-async def get_recent_transactions(
-    db: AsyncSession, user_id: str, limit: int = 30
-) -> list[CreditTransaction]:
+async def get_recent_transactions(db: AsyncSession, user_id: str, limit: int = 30) -> list[CreditTransaction]:
     """Most recent ledger rows for the user."""
     result = await db.execute(
         select(CreditTransaction)

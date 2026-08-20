@@ -6,10 +6,9 @@ motor de ranking los evalúe.  Todo es determinista (regex + catálogo), cero LL
 
 from __future__ import annotations
 
-
 import re
-from datetime import date, datetime
 from typing import Any
+
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -20,35 +19,51 @@ logger = get_logger(__name__)
 
 SKILL_SYNONYMS: dict[str, str] = {
     # Bases de datos
-    "postgresql": "postgresql", "postgres": "postgresql", "psql": "postgresql",
-    "mysql": "mysql", "mariadb": "mysql",
-    "mongodb": "mongodb", "mongo": "mongodb",
+    "postgresql": "postgresql",
+    "postgres": "postgresql",
+    "psql": "postgresql",
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "mongodb": "mongodb",
+    "mongo": "mongodb",
     "redis": "redis",
-    "elasticsearch": "elasticsearch", "es": "elasticsearch",
+    "elasticsearch": "elasticsearch",
+    "es": "elasticsearch",
     "sqlite": "sqlite",
     "cassandra": "cassandra",
     "dynamodb": "dynamodb",
     "bigquery": "bigquery",
     "snowflake": "snowflake",
-    "sql server": "sql server", "mssql": "sql server",
+    "sql server": "sql server",
+    "mssql": "sql server",
     # Cloud
-    "aws": "aws", "amazon web services": "aws",
-    "gcp": "gcp", "google cloud": "gcp", "google cloud platform": "gcp",
-    "azure": "azure", "microsoft azure": "azure",
+    "aws": "aws",
+    "amazon web services": "aws",
+    "gcp": "gcp",
+    "google cloud": "gcp",
+    "google cloud platform": "gcp",
+    "azure": "azure",
+    "microsoft azure": "azure",
     # Contenedores / orquestación
     "docker": "docker",
-    "kubernetes": "kubernetes", "k8s": "kubernetes",
+    "kubernetes": "kubernetes",
+    "k8s": "kubernetes",
     "terraform": "terraform",
     "ansible": "ansible",
     # Lenguajes
     "python": "python",
-    "javascript": "javascript", "js": "javascript",
-    "typescript": "typescript", "ts": "typescript",
+    "javascript": "javascript",
+    "js": "javascript",
+    "typescript": "typescript",
+    "ts": "typescript",
     "java": "java",
-    "go": "go", "golang": "go",
+    "go": "go",
+    "golang": "go",
     "rust": "rust",
-    "c++": "c++", "cpp": "c++",
-    "c#": "c#", "csharp": "c#",
+    "c++": "c++",
+    "cpp": "c++",
+    "c#": "c#",
+    "csharp": "c#",
     "ruby": "ruby",
     "php": "php",
     "swift": "swift",
@@ -56,41 +71,60 @@ SKILL_SYNONYMS: dict[str, str] = {
     "scala": "scala",
     "r": "r",
     "sql": "sql",
-    "bash": "bash", "shell": "bash",
+    "bash": "bash",
+    "shell": "bash",
     # ML / DL
-    "pytorch": "pytorch", "torch": "pytorch",
-    "tensorflow": "tensorflow", "tf": "tensorflow",
-    "scikit-learn": "scikit-learn", "sklearn": "scikit-learn",
+    "pytorch": "pytorch",
+    "torch": "pytorch",
+    "tensorflow": "tensorflow",
+    "tf": "tensorflow",
+    "scikit-learn": "scikit-learn",
+    "sklearn": "scikit-learn",
     "pandas": "pandas",
     "numpy": "numpy",
     "jax": "jax",
-    "huggingface": "huggingface", "hugging face": "huggingface",
+    "huggingface": "huggingface",
+    "hugging face": "huggingface",
     "langchain": "langchain",
     "llama": "llama",
     "mlflow": "mlflow",
     "kubeflow": "kubeflow",
     # Web frameworks
-    "react": "react", "react.js": "react", "reactjs": "react",
-    "angular": "angular", "angular.js": "angular",
-    "vue": "vue", "vue.js": "vue", "vuejs": "vue",
+    "react": "react",
+    "react.js": "react",
+    "reactjs": "react",
+    "angular": "angular",
+    "angular.js": "angular",
+    "vue": "vue",
+    "vue.js": "vue",
+    "vuejs": "vue",
     "django": "django",
     "flask": "flask",
     "fastapi": "fastapi",
-    "spring boot": "spring boot", "spring": "spring boot",
-    "node.js": "node.js", "nodejs": "node.js", "node": "node.js",
-    "express": "express", "express.js": "express",
-    "next.js": "next.js", "nextjs": "next.js",
+    "spring boot": "spring boot",
+    "spring": "spring boot",
+    "node.js": "node.js",
+    "nodejs": "node.js",
+    "node": "node.js",
+    "express": "express",
+    "express.js": "express",
+    "next.js": "next.js",
+    "nextjs": "next.js",
     "svelte": "svelte",
     # Big data / streaming
-    "spark": "spark", "apache spark": "spark",
+    "spark": "spark",
+    "apache spark": "spark",
     "hadoop": "hadoop",
-    "kafka": "kafka", "apache kafka": "kafka",
-    "airflow": "airflow", "apache airflow": "airflow",
+    "kafka": "kafka",
+    "apache kafka": "kafka",
+    "airflow": "airflow",
+    "apache airflow": "airflow",
     "flink": "flink",
     "beam": "beam",
     # CI/CD / DevOps
     "jenkins": "jenkins",
-    "github actions": "github actions", "gh actions": "github actions",
+    "github actions": "github actions",
+    "gh actions": "github actions",
     "gitlab ci": "gitlab ci",
     "circleci": "circleci",
     "argocd": "argocd",
@@ -102,14 +136,54 @@ SKILL_SYNONYMS: dict[str, str] = {
 
 # Categorías de skills
 SKILL_CATEGORIES: dict[str, set[str]] = {
-    "lenguaje": {"python", "javascript", "typescript", "java", "go", "rust", "c++", "c#", "ruby", "php", "swift", "kotlin", "scala", "r", "sql", "bash"},
+    "lenguaje": {
+        "python",
+        "javascript",
+        "typescript",
+        "java",
+        "go",
+        "rust",
+        "c++",
+        "c#",
+        "ruby",
+        "php",
+        "swift",
+        "kotlin",
+        "scala",
+        "r",
+        "sql",
+        "bash",
+    },
     "framework_backend": {"django", "flask", "fastapi", "spring boot", "express", "node.js", "next.js"},
     "framework_frontend": {"react", "angular", "vue", "svelte"},
-    "base_datos": {"postgresql", "mysql", "mongodb", "redis", "elasticsearch", "sqlite", "cassandra", "dynamodb", "bigquery", "snowflake", "sql server"},
+    "base_datos": {
+        "postgresql",
+        "mysql",
+        "mongodb",
+        "redis",
+        "elasticsearch",
+        "sqlite",
+        "cassandra",
+        "dynamodb",
+        "bigquery",
+        "snowflake",
+        "sql server",
+    },
     "cloud": {"aws", "gcp", "azure"},
     "contenedores": {"docker", "kubernetes", "helm"},
     "infra_as_code": {"terraform", "ansible", "pulumi"},
-    "ml_dl": {"pytorch", "tensorflow", "scikit-learn", "pandas", "numpy", "jax", "huggingface", "langchain", "mlflow", "kubeflow"},
+    "ml_dl": {
+        "pytorch",
+        "tensorflow",
+        "scikit-learn",
+        "pandas",
+        "numpy",
+        "jax",
+        "huggingface",
+        "langchain",
+        "mlflow",
+        "kubeflow",
+    },
     "big_data": {"spark", "hadoop", "kafka", "airflow", "flink", "beam"},
     "ci_cd": {"jenkins", "github actions", "gitlab ci", "circleci", "argocd"},
     "monitoring": {"prometheus", "grafana", "datadog"},
@@ -131,24 +205,100 @@ def clean_html(text: str | None) -> str:
 
 
 RELEVANT_STOPWORDS: set[str] = {
-    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
-    "for", "of", "with", "by", "from", "as", "is", "was", "are",
-    "were", "be", "been", "being", "have", "has", "had", "do",
-    "does", "did", "will", "would", "could", "should", "may",
-    "might", "must", "shall", "can", "about", "into", "through",
-    "during", "before", "after", "above", "below", "between",
-    "out", "off", "over", "under", "again", "further", "then",
-    "once", "here", "there", "when", "where", "why", "how",
-    "all", "each", "every", "both", "few", "more", "most",
-    "other", "some", "such", "no", "nor", "not", "only",
-    "own", "same", "so", "than", "too", "very", "just",
-    "because", "also", "if", "then", "else", "this", "that",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "with",
+    "by",
+    "from",
+    "as",
+    "is",
+    "was",
+    "are",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "can",
+    "about",
+    "into",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "between",
+    "out",
+    "off",
+    "over",
+    "under",
+    "again",
+    "further",
+    "then",
+    "once",
+    "here",
+    "there",
+    "when",
+    "where",
+    "why",
+    "how",
+    "all",
+    "each",
+    "every",
+    "both",
+    "few",
+    "more",
+    "most",
+    "other",
+    "some",
+    "such",
+    "no",
+    "nor",
+    "not",
+    "only",
+    "own",
+    "same",
+    "so",
+    "than",
+    "too",
+    "very",
+    "just",
+    "because",
+    "also",
+    "if",
+    "else",
+    "this",
+    "that",
 }
 
 
 def normalize_skill(text: str) -> str:
     """Normalize a skill name against the synonym catalog.
-    
+
     Returns the canonical form, or the original if not found.
     """
     key = text.lower().strip()
@@ -160,7 +310,7 @@ def extract_structured_requirements(
     requirements: list[str] | None = None,
 ) -> dict[str, Any]:
     """Extrae requisitos estructurados de una oferta.
-    
+
     Returns:
         skills: set[str] — skills normalizadas
         years_experience: int | None — años requeridos
@@ -184,7 +334,7 @@ def extract_structured_requirements(
     # Bigram skills
     words = combined.split()
     for i in range(len(words) - 1):
-        bigram = f"{words[i]} {words[i+1]}"
+        bigram = f"{words[i]} {words[i + 1]}"
         canon = normalize_skill(bigram)
         if canon in known_canonicals:
             raw_skills.add(canon)
@@ -283,14 +433,23 @@ def detect_structured_location(
 
     # Country
     country_map = {
-        "denmark": "DK", "danmark": "DK",
-        "sweden": "SE", "sverige": "SE",
-        "norway": "NO", "norge": "NO",
-        "finland": "FI", "suomi": "FI",
-        "germany": "DE", "deutschland": "DE",
-        "united kingdom": "GB", "uk": "GB", "england": "GB",
-        "united states": "US", "usa": "US",
-        "netherlands": "NL", "holland": "NL",
+        "denmark": "DK",
+        "danmark": "DK",
+        "sweden": "SE",
+        "sverige": "SE",
+        "norway": "NO",
+        "norge": "NO",
+        "finland": "FI",
+        "suomi": "FI",
+        "germany": "DE",
+        "deutschland": "DE",
+        "united kingdom": "GB",
+        "uk": "GB",
+        "england": "GB",
+        "united states": "US",
+        "usa": "US",
+        "netherlands": "NL",
+        "holland": "NL",
         "switzerland": "CH",
         "france": "FR",
         "spain": "ES",
@@ -298,9 +457,22 @@ def detect_structured_location(
     }
     # Same cities as before
     danish_cities = {
-        "copenhagen", "københavn", "aarhus", "odense", "aalborg", "esbjerg",
-        "randers", "kolding", "horsens", "vejle", "roskilde", "herning",
-        "silkeborg", "naestved", "fredericia", "viborg",
+        "copenhagen",
+        "københavn",
+        "aarhus",
+        "odense",
+        "aalborg",
+        "esbjerg",
+        "randers",
+        "kolding",
+        "horsens",
+        "vejle",
+        "roskilde",
+        "herning",
+        "silkeborg",
+        "naestved",
+        "fredericia",
+        "viborg",
     }
     for city in danish_cities:
         if city in t:
@@ -373,8 +545,10 @@ def extract_salary_range(text: str | None) -> dict[str, Any]:
     for pat in patterns:
         m = re.search(pat, t)
         if m:
+
             def _clean(v: str) -> int:
                 return int(v.replace(",", "").replace(".", ""))
+
             result["salary_min"] = _clean(m.group(1))
             result["salary_max"] = _clean(m.group(2))
             break
@@ -429,7 +603,7 @@ def detect_education_requirement(description: str) -> dict[str, Any]:
 
     # Campos específicos
     field_patterns = [
-        r"(computer science|software engineering|data science|machine learning|ai|artificial intelligence|information technology|information systems|mathematics|statistics|physics|engineering)",
+        r"(computer science|software engineering|data science|machine learning|ai|artificial intelligence|information technology|information systems|mathematics|statistics|physics|engineering)",  # noqa: E501
     ]
     for pat in field_patterns:
         for m in re.finditer(pat, t):

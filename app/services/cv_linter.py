@@ -57,9 +57,7 @@ def _placeholder_issues(node: Any, profile: Any, issues: list[str], path: str = 
             _placeholder_issues(value, profile, issues, f"{path}[{index}]")
     elif isinstance(node, str):
         for match in PLACEHOLDER_RE.finditer(node):
-            issues.append(
-                f"Placeholder found: {match.group(0)!r} in {path} — {_placeholder_fix(path, profile)}"
-            )
+            issues.append(f"Placeholder found: {match.group(0)!r} in {path} — {_placeholder_fix(path, profile)}")
 
 
 def _placeholder_fix(path: str, profile: Any) -> str:
@@ -70,10 +68,14 @@ def _placeholder_fix(path: str, profile: Any) -> str:
         return f"replace with the candidate's real name ({name})" if name else "replace with the candidate's real name"
     if leaf == "email":
         email = _safe_profile_attr(profile, "email")
-        return f"replace with the candidate's real email ({email})" if email else "replace with the candidate's real email"
+        return (
+            f"replace with the candidate's real email ({email})" if email else "replace with the candidate's real email"
+        )
     if leaf == "phone":
         phone = _safe_profile_attr(profile, "phone")
-        return f"replace with the candidate's real phone ({phone})" if phone else "replace with the candidate's real phone"
+        return (
+            f"replace with the candidate's real phone ({phone})" if phone else "replace with the candidate's real phone"
+        )
     return "replace with real data from the candidate profile"
 
 
@@ -93,13 +95,11 @@ def _bullet_issues(cv: dict, issues: list[str]) -> None:
                     f"Bullet {b_index} in experience entry {index} ({company}) is only "
                     f"{len(text)} chars — too short; rewrite it with the X-Y-Z formula"
                 )
-            opener = next(
-                (o for o in FORBIDDEN_BULLET_OPENERS if lowered.startswith(o)), None
-            )
+            opener = next((o for o in FORBIDDEN_BULLET_OPENERS if lowered.startswith(o)), None)
             if opener is not None:
                 issues.append(
                     f"Bullet {b_index} in experience entry {index} ({company}) starts with "
-                    f"\"{opener}\" — rewrite it with a strong past-tense action verb"
+                    f'"{opener}" — rewrite it with a strong past-tense action verb'
                 )
 
 
@@ -107,10 +107,7 @@ def _bullet_issues(cv: dict, issues: list[str]) -> None:
 
 
 def _company_issues(cv: dict, profile: Any, issues: list[str]) -> None:
-    profile_companies = [
-        str(entry.get("company") or "").strip()
-        for entry in _profile_list(profile, "experience")
-    ]
+    profile_companies = [str(entry.get("company") or "").strip() for entry in _profile_list(profile, "experience")]
     profile_companies = [c for c in profile_companies if c]
     if not profile_companies:
         return  # nothing to cross-check against
@@ -121,11 +118,9 @@ def _company_issues(cv: dict, profile: Any, issues: list[str]) -> None:
         if not company:
             continue
         nc = _normalize_company(company)
-        if nc and not any(
-            nc == pc or (len(nc) > 3 and (nc in pc or pc in nc)) for pc in normalized
-        ):
+        if nc and not any(nc == pc or (len(nc) > 3 and (nc in pc or pc in nc)) for pc in normalized):
             issues.append(
-                f"Company \"{company}\" in experience entry {index} does not appear in "
+                f'Company "{company}" in experience entry {index} does not appear in '
                 f"the candidate profile ({', '.join(profile_companies)}) — do not "
                 "invent employers, use the profile companies"
             )
@@ -147,29 +142,23 @@ def _ats_basics_issues(cv: dict, profile: Any, issues: list[str]) -> None:
     cv_email = str(cv.get("email") or "").strip()
     if profile_email and cv_email and cv_email.lower() != profile_email.lower():
         issues.append(
-            f"Header email \"{cv_email}\" does not match the candidate profile "
-            f"({profile_email}) — use the real email"
+            f'Header email "{cv_email}" does not match the candidate profile ({profile_email}) — use the real email'
         )
 
     profile_phone = _safe_profile_attr(profile, "phone")
     cv_phone = str(cv.get("phone") or "").strip()
     if profile_phone and cv_phone and cv_phone != profile_phone:
         issues.append(
-            f"Header phone \"{cv_phone}\" does not match the candidate profile "
-            f"({profile_phone}) — use the real phone"
+            f'Header phone "{cv_phone}" does not match the candidate profile ({profile_phone}) — use the real phone'
         )
 
     for group in cv.get("skills") or []:
         label = str(group.get("label") or "Untitled group")
         if not (group.get("skills") or []):
-            issues.append(
-                f"Skill group \"{label}\" is empty — populate it from the candidate profile skills"
-            )
+            issues.append(f'Skill group "{label}" is empty — populate it from the candidate profile skills')
 
     if _profile_list(profile, "education") and not (cv.get("education") or []):
-        issues.append(
-            "Education is missing from the CV — include the candidate's education from the profile"
-        )
+        issues.append("Education is missing from the CV — include the candidate's education from the profile")
 
 
 # ── Defensive profile access ───────────────────────────────────────────

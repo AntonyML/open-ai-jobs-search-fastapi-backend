@@ -107,9 +107,7 @@ def check_gitignore() -> None:
 
 
 def check_package_manifests() -> None:
-    manifests = [
-        p for p in ROOT.glob(".agents/**/package.json") if "node_modules" not in p.parts
-    ]
+    manifests = [p for p in ROOT.glob(".agents/**/package.json") if "node_modules" not in p.parts]
     if not manifests:
         errors.append(".agents: no package.json files found - glob roots are wrong or the tree moved")
     for manifest in manifests:

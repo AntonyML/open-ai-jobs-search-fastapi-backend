@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 
 from app.db.session import async_session_factory
 from app.services.premium_migration import (
@@ -50,9 +49,7 @@ async def run(target: str, dry_run: bool) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Migrate legacy premium users to a real plan (idempotent guard)."
-    )
+    parser = argparse.ArgumentParser(description="Migrate legacy premium users to a real plan (idempotent guard).")
     parser.add_argument(
         "--target",
         default=DEFAULT_TARGET_PLAN,

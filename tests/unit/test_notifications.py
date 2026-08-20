@@ -1,5 +1,7 @@
 """Tests for the notifications router (app_notifications)."""
 
+from datetime import UTC
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -61,12 +63,16 @@ async def test_list_returns_only_own_notifications(db_session):
     from sqlalchemy import select
 
     rows = (
-        await db_session.execute(
-            select(AppNotification)
-            .where(AppNotification.user_id == admin.id)
-            .order_by(AppNotification.created_at.desc())
+        (
+            await db_session.execute(
+                select(AppNotification)
+                .where(AppNotification.user_id == admin.id)
+                .order_by(AppNotification.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     assert len(rows) == 2
     assert {r.type for r in rows} == {"purchase_request", "quota_exhausted"}
@@ -247,9 +253,7 @@ def test_create_and_clear_endpoints(api_client, db_session):
     assert len(res.json()) == 3
 
     # Validation: missing title → 422.
-    res = api_client.post(
-        "/api/v1/notifications", headers=headers, json={"type": "rank"}
-    )
+    res = api_client.post("/api/v1/notifications", headers=headers, json={"type": "rank"})
     assert res.status_code == 422
 
     # Clear removes everything.
@@ -309,9 +313,7 @@ async def test_mark_purchase_requests_read_matches_payload_user(db_session):
 
     from sqlalchemy import select
 
-    rows = (
-        await db_session.execute(select(AppNotification).order_by(AppNotification.title))
-    ).scalars().all()
+    rows = (await db_session.execute(select(AppNotification).order_by(AppNotification.title))).scalars().all()
     state = {r.title: r.is_read for r in rows}
     assert state["Compra: Pro (user-A)"] is True
     assert state["Compra: Pro (user-B)"] is False
@@ -323,12 +325,12 @@ async def test_mark_purchase_requests_read_matches_payload_user(db_session):
 
 
 async def test_purge_expired_notifications_deletes_only_old(db_session):
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from app.services.notifications import purge_expired_notifications
 
     admin = await _make_user(db_session, "admin-ttl", "ttl@example.com")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     db_session.add_all(
         [
@@ -354,20 +356,18 @@ async def test_purge_expired_notifications_deletes_only_old(db_session):
     assert purged == 1
     from sqlalchemy import select
 
-    remaining = (
-        (await db_session.execute(select(AppNotification))).scalars().all()
-    )
+    remaining = (await db_session.execute(select(AppNotification))).scalars().all()
     assert [r.title for r in remaining] == ["Reciente"]
 
 
 def test_list_endpoint_purges_old_notifications(api_client, db_session):
     import asyncio
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     user_id = "user-ttl-ep"
     asyncio.run(_make_user(db_session, user_id, "ttl-ep@example.com"))
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async def seed():
         db_session.add_all(
@@ -426,25 +426,21 @@ async def test_get_set_notification_ttl_roundtrip(db_session):
     from app.db.models import AppConfig
     from app.services.notifications import NOTIFICATION_TTL_CONFIG_KEY
 
-    row = (
-        await db_session.execute(
-            select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY)
-        )
-    ).scalar_one()
+    row = (await db_session.execute(select(AppConfig).where(AppConfig.key == NOTIFICATION_TTL_CONFIG_KEY))).scalar_one()
     row.value = {"days": "nope"}
     await db_session.commit()
     assert await get_notification_ttl_days(db_session) == NOTIFICATION_TTL_DAYS
 
 
 async def test_purge_uses_configured_ttl(db_session):
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from sqlalchemy import select
 
     from app.services.notifications import purge_expired_notifications, set_notification_ttl_days
 
     user = await _make_user(db_session, "user-ttl-cfg", "ttl-cfg@example.com")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     db_session.add_all(
         [
@@ -471,9 +467,7 @@ async def test_purge_uses_configured_ttl(db_session):
     await db_session.commit()
 
     assert purged == 1
-    remaining = (
-        (await db_session.execute(select(AppNotification))).scalars().all()
-    )
+    remaining = (await db_session.execute(select(AppNotification))).scalars().all()
     assert [r.title for r in remaining] == ["Reciente (2 días)"]
 
 
@@ -482,7 +476,7 @@ async def test_purge_uses_configured_ttl(db_session):
 
 def test_startup_purge_deletes_stale_notifications(api_client, db_session):
     import asyncio
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     from unittest.mock import patch
 
     from fastapi.testclient import TestClient
@@ -492,7 +486,7 @@ def test_startup_purge_deletes_stale_notifications(api_client, db_session):
     user_id = "user-startup-ttl"
     asyncio.run(_make_user(db_session, user_id, "startup-ttl@example.com"))
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     async def seed():
         db_session.add_all(
@@ -539,9 +533,7 @@ def test_startup_purge_deletes_stale_notifications(api_client, db_session):
     from sqlalchemy import select
 
     async def check():
-        remaining = (
-            (await db_session.execute(select(AppNotification))).scalars().all()
-        )
+        remaining = (await db_session.execute(select(AppNotification))).scalars().all()
         return [r.title for r in remaining]
 
     assert asyncio.run(check()) == ["Reciente"]
@@ -610,7 +602,5 @@ async def test_mark_purchase_requests_read_no_match(db_session):
     # The unrelated notification stays unread.
     from sqlalchemy import select
 
-    row = (
-        await db_session.execute(select(AppNotification))
-    ).scalar_one()
+    row = (await db_session.execute(select(AppNotification))).scalar_one()
     assert row.is_read is False

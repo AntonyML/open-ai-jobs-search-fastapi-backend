@@ -8,13 +8,12 @@ Usage:
     app = create_app(settings=test_settings)
 """
 
-import sys
 import asyncio
+import sys
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -25,10 +24,10 @@ from fastapi.responses import JSONResponse
 from app.api.v1.router import router as v1_router
 from app.core.logging import get_logger, setup_logging
 from app.core.logging.middleware import RequestLoggingMiddleware
-
-logger = get_logger("app")
 from app.core.settings import Settings, get_settings
 from app.exceptions import AppError, app_error_handler, validation_error_handler
+
+logger = get_logger("app")
 
 
 @asynccontextmanager
@@ -78,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # SQLAlchemy query logging (goes to logs/sql.log, not terminal)
     from app.core.logging.interceptors import setup_sqlalchemy_logging
     from app.db.session import engine
+
     setup_sqlalchemy_logging(engine)
 
     # ── Create FastAPI app ─────────────────────────────────────
@@ -115,10 +115,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if settings.sentry_dsn:
             import sentry_sdk
+
             sentry_sdk.capture_exception(exc)
 
         origin = request.headers.get("origin", "")
-        allow_origin = origin if origin in settings.cors_origins else (settings.cors_origins[0] if settings.cors_origins else "")
+        allow_origin = (
+            origin if origin in settings.cors_origins else (settings.cors_origins[0] if settings.cors_origins else "")
+        )
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},

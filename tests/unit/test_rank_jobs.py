@@ -6,8 +6,8 @@ Uses SQLite in-memory and patches the orchestrator queue.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -80,6 +80,7 @@ def db_factory(db_session):
 
 _call_count = 0
 
+
 @pytest.fixture
 def mock_queue():
     """Patch the ExecutionQueue to avoid real DB orchestration.
@@ -119,8 +120,8 @@ async def seed_ingested_jobs(db: AsyncSession, count: int = 3) -> list[IngestedJ
             source_channel="test_channel",
             source_message_id=i,
             raw_text=f"ML Engineer {i} at TechCorp {i}",
-            ingested_at=datetime.now(timezone.utc),
-            expires_at=datetime(2099, 12, 31, tzinfo=timezone.utc),  # far future — not expired
+            ingested_at=datetime.now(UTC),
+            expires_at=datetime(2099, 12, 31, tzinfo=UTC),  # far future — not expired
         )
         db.add(j)
         jobs.append(j)
@@ -147,7 +148,7 @@ async def test_adapter_preserves_all_fields(db_session, db_factory, mock_queue):
     result = await start(db_factory, "test-user-id", {"job_ids": [ij.id]})
 
     assert result["status"] == "queued", f"Expected queued, got {result}"
-    assert result["accepted_jobs"] == 1, f"Expected 1 accepted job"
+    assert result["accepted_jobs"] == 1, "Expected 1 accepted job"
 
     # Read back the JobPosting that was created
     jp = await db_session.get(JobPosting, ij.id)
@@ -159,11 +160,11 @@ async def test_adapter_preserves_all_fields(db_session, db_factory, mock_queue):
     assert jp.company == ij.company, f"company mismatch: {jp.company} != {ij.company}"
     assert jp.location == ij.location, f"location mismatch: {jp.location} != {ij.location}"
     assert jp.url == ij.url, f"url mismatch: {jp.url} != {ij.url}"
-    assert jp.description == ij.description, f"description mismatch (truncated?)"
+    assert jp.description == ij.description, "description mismatch (truncated?)"
     assert jp.salary == ij.salary, f"salary LOST: {jp.salary} != {ij.salary}"
-    assert jp.portal == (ij.portal or "web"), f"portal mismatch"
+    assert jp.portal == (ij.portal or "web"), "portal mismatch"
     assert jp.status == "new", f"status should be 'new', got {jp.status}"
-    assert jp.user_id == "test-user-id", f"user_id mismatch"
+    assert jp.user_id == "test-user-id", "user_id mismatch"
 
 
 @pytest.mark.asyncio
@@ -198,7 +199,7 @@ async def test_adapter_handles_null_fields(db_session, db_factory, mock_queue):
         source_channel="test",
         source_message_id=1,
         raw_text="test",
-        ingested_at=datetime.now(timezone.utc),
+        ingested_at=datetime.now(UTC),
     )
     db_session.add(j)
     await db_session.commit()
@@ -231,10 +232,10 @@ async def test_job_ids_selects_exactly_those(db_session, db_factory, mock_queue)
 
     # Verify ExecutionJobItem records
     items = (
-        await db_session.execute(
-            select(ExecutionJobItem).where(ExecutionJobItem.execution_job_id == exec_job_id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ExecutionJobItem).where(ExecutionJobItem.execution_job_id == exec_job_id)))
+        .scalars()
+        .all()
+    )
 
     assert len(items) == 3, f"Expected 3 items, got {len(items)}"
     item_job_ids = {i.job_posting_id for i in items}
@@ -254,7 +255,7 @@ async def test_job_ids_selects_exactly_those(db_session, db_factory, mock_queue)
 async def test_job_ids_none_requires_selection(db_session, db_factory, mock_queue):
     """C3 removed: Without job_ids, start() refuses the run instead of ranking everything."""
     # Seed the shared ingested_jobs pool — must NOT be auto-ranked now
-    ingested = await seed_ingested_jobs(db_session, 2)
+    await seed_ingested_jobs(db_session, 2)
 
     result = await start(db_factory, "test-user-id", {})
     assert result["status"] == "skipped", f"Expected skipped, got {result}"
@@ -277,11 +278,7 @@ async def test_job_ids_none_does_not_autoimport_ingested(db_session, db_factory,
     assert result["status"] == "skipped"
 
     # Nothing should have been imported into JobPosting for the user
-    jps = (
-        await db_session.execute(
-            select(JobPosting).where(JobPosting.user_id == "test-user-id")
-        )
-    ).scalars().all()
+    jps = (await db_session.execute(select(JobPosting).where(JobPosting.user_id == "test-user-id"))).scalars().all()
     assert len(jps) == 0, f"No JobPosting import expected, got {len(jps)}"
 
 
@@ -336,10 +333,10 @@ async def test_user_selects_exact_count(db_session, db_factory, mock_queue):
 
     exec_job_id = result["job_id"]
     items = (
-        await db_session.execute(
-            select(ExecutionJobItem).where(ExecutionJobItem.execution_job_id == exec_job_id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(ExecutionJobItem).where(ExecutionJobItem.execution_job_id == exec_job_id)))
+        .scalars()
+        .all()
+    )
     assert len(items) == 2
     ranked_ids = {i.job_posting_id for i in items}
     assert ranked_ids == set(selection), f"Ranked {ranked_ids} != selected {set(selection)}"
@@ -360,15 +357,19 @@ async def test_worker_items_have_correct_references(db_session, db_factory, mock
     exec_job_id = result["job_id"]
 
     items = (
-        await db_session.execute(
-            select(ExecutionJobItem)
-            .where(ExecutionJobItem.execution_job_id == exec_job_id)
-            .order_by(ExecutionJobItem.job_posting_id)
+        (
+            await db_session.execute(
+                select(ExecutionJobItem)
+                .where(ExecutionJobItem.execution_job_id == exec_job_id)
+                .order_by(ExecutionJobItem.job_posting_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     assert len(items) == 2
-    for item, ij_id in zip(items, sorted(ids)):
+    for item, ij_id in zip(items, sorted(ids), strict=False):
         assert item.execution_job_id == exec_job_id
         assert item.job_posting_id == ij_id
         assert item.user_id == "test-user-id"
@@ -434,7 +435,8 @@ async def test_idempotency_same_key_returns_existing(db_session, db_factory, moc
 
     # Call with same key — should return existing
     result = await start(
-        db_factory, "test-user-id",
+        db_factory,
+        "test-user-id",
         {"job_ids": [ij.id]},
         idempotency_key="rank-key-1",
     )
@@ -589,8 +591,7 @@ async def test_substance_good_match_scores_higher_than_poor_match():
     assert not poor_result.get("_veto"), f"Poor match was vetoed: {poor_result.get('_veto_reason')}"
 
     # All 5 dimension scores must be non-null (C9)
-    for dim_name in ("technical_fit", "relevant_experience", "constraints_fit",
-                     "career_alignment", "behavioral_fit"):
+    for dim_name in ("technical_fit", "relevant_experience", "constraints_fit", "career_alignment", "behavioral_fit"):
         dim = good_result[dim_name]
         assert 0 <= dim["score"] <= 100, f"{dim_name} score {dim['score']} out of range"
         assert dim["confidence"] in ("high", "medium", "low"), f"{dim_name} confidence invalid"
@@ -605,7 +606,7 @@ async def test_substance_good_match_scores_higher_than_poor_match():
         f"Experience: good={good_result['experience_score']} should be > poor={poor_result['experience_score']}"
     )
     assert good_result["career_alignment"]["score"] > poor_result["career_alignment"]["score"], (
-        f"Career: good={good_result['career_alignment']['score']} should be > poor={poor_result['career_alignment']['score']}"
+        f"Career: good={good_result['career_alignment']['score']} should be > poor={poor_result['career_alignment']['score']}"  # noqa: E501
     )
 
     # Overall score should be higher for good match
@@ -632,9 +633,7 @@ async def test_substance_salary_penalty_applied():
     good_job = _make_job_dict_good_match()  # 90k-110k → above minimum
     low_salary_job = _make_job_dict_good_match().copy()
     # Lower the salary below the candidate's minimum
-    low_salary_job["description"] = low_salary_job["description"].replace(
-        "90k-110k DKK", "50k-65k DKK"
-    )
+    low_salary_job["description"] = low_salary_job["description"].replace("90k-110k DKK", "50k-65k DKK")
     low_salary_job["salary"] = "50k-65k DKK"
 
     good_result = compute_quantitative_scores(candidate, good_job, job_target)
@@ -662,8 +661,7 @@ async def test_substance_skills_drive_technical_score():
     # Job with no skill overlap (asking for all different tech)
     no_match_job = _make_job_dict_good_match().copy()
     no_match_job["description"] = (
-        "Looking for a Senior Engineer with React, Angular, Ruby on Rails, "
-        "and MongoDB experience. No Python required."
+        "Looking for a Senior Engineer with React, Angular, Ruby on Rails, and MongoDB experience. No Python required."
     )
     no_match_job["requirements"] = [
         "5+ years full-stack experience",
@@ -737,33 +735,39 @@ async def test_rank_evaluation_persisted(db_session, db_factory, mock_queue):
     quantitative = compute_quantitative_scores(job_dict, candidate_dict)
 
     llm_output = RankQualitativeOutput(
-        behavioral_score=75, career_score=80,
+        behavioral_score=75,
+        career_score=80,
         strengths=["Strong technical background"],
         gaps=["Limited cloud experience"],
-        red_flags=[], confidence="high",
+        red_flags=[],
+        confidence="high",
     )
 
-    result = await db_session.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == "test-user-id")
-    )
+    result = await db_session.execute(select(CandidateProfile).where(CandidateProfile.user_id == "test-user-id"))
     candidate = result.scalar_one()
 
     evaluation = await _build_rank_evaluation(
-        db=db_session, candidate=candidate, job=job,
+        db=db_session,
+        candidate=candidate,
+        job=job,
         user_id="test-user-id",
         quantitative=quantitative,
         llm_output=llm_output,
         provider_config={},
         technical_score=quantitative["technical_score"],
         experience_score=quantitative["experience_score"],
-        behavioral_score=75, career_score=80,
-        overall=80, verdict="Good Fit",
+        behavioral_score=75,
+        career_score=80,
+        overall=80,
+        verdict="Good Fit",
         location_status=quantitative["location_status"],
         deadline=quantitative.get("deadline"),
         deadline_urgent=quantitative["deadline_urgent"],
-        strengths=llm_output.strengths, gaps=llm_output.gaps,
+        strengths=llm_output.strengths,
+        gaps=llm_output.gaps,
         missing_keywords=quantitative["missing_keywords"],
-        red_flags=llm_output.red_flags, language="en",
+        red_flags=llm_output.red_flags,
+        language="en",
         technical_fit=quantitative.get("technical_fit"),
         relevant_experience=quantitative.get("relevant_experience"),
         constraints_fit=quantitative.get("constraints_fit"),
@@ -782,9 +786,7 @@ async def test_rank_evaluation_persisted(db_session, db_factory, mock_queue):
     assert len(evaluation.strengths) > 0
 
     await db_session.commit()
-    result = await db_session.execute(
-        select(RankEvaluation).where(RankEvaluation.job_posting_id == "test-c12-eval")
-    )
+    result = await db_session.execute(select(RankEvaluation).where(RankEvaluation.job_posting_id == "test-c12-eval"))
     persisted = result.scalar_one()
     assert persisted.id == evaluation.id
     assert persisted.overall_score == 80

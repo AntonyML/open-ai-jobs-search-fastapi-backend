@@ -16,7 +16,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-
 # ── LLM Content Check output schema ─────────────────────────────────
 # Must be a Pydantic model class because the adapter uses
 # output_schema.model_json_schema() and output_schema.model_validate().
@@ -56,12 +55,8 @@ class VerificationCheck(BaseModel):
         description="One of: content, formatting, ats, llm",
     )
     passed: bool = Field(..., description="Whether this check passed")
-    details: str | None = Field(
-        None, description="Explanation of what was checked and result"
-    )
-    suggestion: str | None = Field(
-        None, description="How to fix if failed (actionable)"
-    )
+    details: str | None = Field(None, description="Explanation of what was checked and result")
+    suggestion: str | None = Field(None, description="How to fix if failed (actionable)")
 
 
 class VerificationResult(BaseModel):
@@ -83,9 +78,7 @@ class VerificationResult(BaseModel):
     """
 
     application_id: str
-    checks: list[VerificationCheck] = Field(
-        default_factory=list, max_length=20
-    )
+    checks: list[VerificationCheck] = Field(default_factory=list, max_length=20)
     overall_pass: bool = False
     passes: list[str] = Field(default_factory=list)
     failures: list[str] = Field(default_factory=list)

@@ -4,25 +4,23 @@ Fase 6: POST /rank/ supports Idempotency-Key header, returns
 {job_id, status, total_jobs, accepted_jobs}.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import select, func as sa_func
+from sqlalchemy import func as sa_func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_locale, require_max_or_admin
 from app.core.i18n.locale import t
 from app.core.settings import get_settings
 from app.db.models import ExecutionJob
-from app.db.session import get_db as _get_db
-from app.schemas.rank import RankRequest, RankResult
-from app.schemas.rank import RankEvaluationOut as RankEvaluationOutSchema
-from app.schemas.rank import JobPostingSummary
-from app.services import rank
-from app.services import rank_jobs
-from app.services.access_gate import enforce_action_gate
 from app.db.session import async_session_factory
-from app.services.rank import count_jobs_to_rank
+from app.db.session import get_db as _get_db
+from app.schemas.rank import JobPostingSummary, RankRequest
+from app.schemas.rank import RankEvaluationOut as RankEvaluationOutSchema
+from app.services import rank, rank_jobs
+from app.services.access_gate import enforce_action_gate
 
 router = APIRouter(prefix="/rank", tags=["rank"])
 
@@ -45,7 +43,7 @@ async def trigger_rank(
     already exists, the existing job is returned instead of creating a new one.
     """
     settings = get_settings()
-    window = datetime.now(timezone.utc) - timedelta(seconds=settings.rate_limit_window_seconds)
+    window = datetime.now(UTC) - timedelta(seconds=settings.rate_limit_window_seconds)
     count_result = await db.execute(
         select(sa_func.count(ExecutionJob.id)).where(
             ExecutionJob.user_id == user["sub"],
@@ -57,7 +55,7 @@ async def trigger_rank(
     if recent_count >= settings.rate_limit_attempts:
         raise HTTPException(
             status_code=429,
-            detail=f"Rate limit exceeded. Max {settings.rate_limit_attempts} rank runs per {settings.rate_limit_window_seconds // 60} minutes.",
+            detail=f"Rate limit exceeded. Max {settings.rate_limit_attempts} rank runs per {settings.rate_limit_window_seconds // 60} minutes.",  # noqa: E501
         )
 
     pdata = payload.model_dump()
@@ -65,9 +63,7 @@ async def trigger_rank(
     # Gate LLM usage (quota/credits) and get a correlation_id for usage accounting.
     # The credit is consumed now; the ledger row is relinked to the ExecutionJob
     # id inside rank_jobs.start so the worker's usage can accumulate on it.
-    correlation_id = await enforce_action_gate(
-        db, user, "rank", label=f"Rank run (recent={recent_count})"
-    )
+    correlation_id = await enforce_action_gate(db, user, "rank", label=f"Rank run (recent={recent_count})")
 
     result = await rank_jobs.start(
         async_session_factory,

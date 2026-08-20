@@ -28,4 +28,6 @@ async def get_public_catalog(
     try:
         return ProductCatalogOut(**await build_catalog(db))
     except NoPlansConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"code": "no_plans_configured", "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"code": "no_plans_configured", "message": str(exc)}
+        ) from exc

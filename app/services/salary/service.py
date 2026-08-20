@@ -11,7 +11,6 @@ runs it in a thread executor so it doesn't block the event loop.
 from __future__ import annotations
 
 import asyncio
-import json
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -26,10 +25,10 @@ from app.schemas.salary import SalaryBenchmark
 # Re-export the synchronous functions for callers that want them.
 from app.services.salary.salary_lookup import (  # noqa: F401
     format_entry,
+    load_data,
     match_score,
     normalize,
     search_company,
-    load_data,
 )
 
 DATA_FILE = Path(__file__).parent / "salary_data.json"
@@ -38,16 +37,12 @@ DATA_FILE = Path(__file__).parent / "salary_data.json"
 # ── DB-backed per-user lookup ───────────────────────────────────────
 
 
-async def get_user_salary_data(
-    db: AsyncSession, user_id: str
-) -> dict[str, Any] | None:
+async def get_user_salary_data(db: AsyncSession, user_id: str) -> dict[str, Any] | None:
     """Get the user's uploaded salary data from the DB.
 
     Returns a dict with "companies", "metadata" keys, or None if no data.
     """
-    result = await db.execute(
-        select(UserSalaryData).where(UserSalaryData.user_id == user_id)
-    )
+    result = await db.execute(select(UserSalaryData).where(UserSalaryData.user_id == user_id))
     record = result.scalar_one_or_none()
     if record is None or not record.companies:
         return None
@@ -80,9 +75,7 @@ async def save_user_salary_data(
     from app.db.models import UserSalaryData
 
     # Upsert: find existing or create new
-    result = await db.execute(
-        select(UserSalaryData).where(UserSalaryData.user_id == user_id)
-    )
+    result = await db.execute(select(UserSalaryData).where(UserSalaryData.user_id == user_id))
     record = result.scalar_one_or_none()
 
     if record is None:
@@ -180,9 +173,7 @@ async def benchmark_job(
         return None
 
     # Try user data first, then global file
-    match = await lookup_company_for_user(
-        db, user_id, company_name, city=job_location, salary_data=salary_data
-    )
+    match = await lookup_company_for_user(db, user_id, company_name, city=job_location, salary_data=salary_data)
     if match is None:
         return None
 
@@ -197,7 +188,7 @@ async def benchmark_job(
     market_median = None
     salary_delta_pct = None
 
-    if index_value is not None and isinstance(index_value, (int, float)):
+    if index_value is not None and isinstance(index_value, int | float):
         # Index is relative to baseline 100.0 (e.g. 105 = 5% above median)
         salary_estimate = index_value
         market_median = 100.0  # baseline index
@@ -218,9 +209,7 @@ async def benchmark_job(
 # ── Legacy file-based lookup (unchanged) ────────────────────────────
 
 
-async def lookup_company(
-    company_name: str, city: str | None = None
-) -> dict[str, Any]:
+async def lookup_company(company_name: str, city: str | None = None) -> dict[str, Any]:
     """Look up a company in salary_data.json asynchronously.
 
     Args:

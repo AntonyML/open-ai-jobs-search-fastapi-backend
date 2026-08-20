@@ -77,9 +77,7 @@ async def _collect_cv_rows() -> dict[str, tuple[str, bool]]:
     from app.db.session import engine
 
     async with engine.connect() as conn:
-        result = await conn.execute(
-            text("SELECT id, user_id, is_deleted FROM generated_cvs")
-        )
+        result = await conn.execute(text("SELECT id, user_id, is_deleted FROM generated_cvs"))
         return {row[0]: (row[1], bool(row[2])) for row in result.all()}
 
 
@@ -126,9 +124,7 @@ def _classify_cv_files(
         else:
             category = "unexpected"
             unexpected.append(file)
-        classified.append(
-            {"file": file, "rel": rel.as_posix(), "size": size, "category": category}
-        )
+        classified.append({"file": file, "rel": rel.as_posix(), "size": size, "category": category})
     return classified, unexpected
 
 
@@ -178,9 +174,7 @@ def _render_markdown(
     lines: list[str] = []
     lines.append("# Artifact storage audit")
     lines.append("")
-    lines.append(
-        f"- Storage roots: `{cv_root}` (CV generator), `{apply_root}` (apply pipeline)"
-    )
+    lines.append(f"- Storage roots: `{cv_root}` (CV generator), `{apply_root}` (apply pipeline)")
     lines.append(f"- Database reachable: {db_ok}")
     lines.append("")
     lines.append("## Summary")
@@ -199,9 +193,7 @@ def _render_markdown(
             continue
         merged = _merge_categories(cat, cv_items, apply_items)
         action = order.get(cat, "review")
-        lines.append(
-            f"| {cat} | {merged['count']} | {_human(merged['bytes'])} | {action} |"
-        )
+        lines.append(f"| {cat} | {merged['count']} | {_human(merged['bytes'])} | {action} |")
     lines.append("")
     lines.append(f"- Empty directories: **{len(empty_dirs)}**")
     lines.append(f"- Active rows with a missing file (broken download): **{len(active_missing)}**")
@@ -248,9 +240,7 @@ def _merge_categories(cat: str, *groups: list[dict[str, Any]]) -> dict[str, int]
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Dry-run audit of artifact storage vs database rows."
-    )
+    parser = argparse.ArgumentParser(description="Dry-run audit of artifact storage vs database rows.")
     settings = get_settings()
     parser.add_argument(
         "--storage-root",
@@ -294,9 +284,7 @@ async def run(args: argparse.Namespace) -> int:
         from app.db.session import engine
 
         async with engine.connect() as conn:
-            result = await conn.execute(
-                text("SELECT id, pdf_path, is_deleted FROM generated_cvs")
-            )
+            result = await conn.execute(text("SELECT id, pdf_path, is_deleted FROM generated_cvs"))
             for row in result.all():
                 cv_id, pdf_path, is_deleted = row[0], row[1], bool(row[2])
                 if pdf_path is None:
@@ -324,9 +312,7 @@ async def run(args: argparse.Namespace) -> int:
     summary = _summarize(cv_items + apply_items)
     lines_out = (
         f"{cat:>11}: {count:>3} files, {_human(bytes_)}"
-        for cat, count, bytes_ in (
-            (cat, e["count"], e["bytes"]) for cat, e in summary.items()
-        )
+        for cat, count, bytes_ in ((cat, e["count"], e["bytes"]) for cat, e in summary.items())
     )
     print("\n".join(lines_out))
     if not db_ok:

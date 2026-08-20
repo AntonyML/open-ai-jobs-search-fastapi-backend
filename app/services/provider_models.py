@@ -11,8 +11,6 @@ requested provider, ProviderAuthError is raised.
 
 from __future__ import annotations
 
-from typing import Any
-
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,8 +74,7 @@ async def _resolve_credential(
     # Remote providers require an API key
     if provider not in _NO_KEY_PROVIDERS and not api_key:
         raise ProviderAuthError(
-            f"No API key configured for provider '{provider}'. "
-            f"Set it via PUT /admin/providers before listing models."
+            f"No API key configured for provider '{provider}'. Set it via PUT /admin/providers before listing models."
         )
 
     return api_key, api_base
@@ -99,9 +96,7 @@ async def _list_openai_compatible(
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
-        raise LLMError(
-            f"{provider} returned HTTP {exc.response.status_code}: {exc.response.text[:200]}"
-        ) from exc
+        raise LLMError(f"{provider} returned HTTP {exc.response.status_code}: {exc.response.text[:200]}") from exc
     except httpx.RequestError as exc:
         raise LLMError(f"Could not reach {provider} at {url}: {exc}") from exc
 
@@ -132,9 +127,7 @@ async def _list_ollama(url: str) -> list[ModelInfo]:
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
-        raise LLMError(
-            f"ollama returned HTTP {exc.response.status_code}: {exc.response.text[:200]}"
-        ) from exc
+        raise LLMError(f"ollama returned HTTP {exc.response.status_code}: {exc.response.text[:200]}") from exc
     except httpx.RequestError as exc:
         raise LLMError(f"Could not reach ollama at {url}: {exc}") from exc
 

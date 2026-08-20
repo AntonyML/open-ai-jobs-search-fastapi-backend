@@ -27,14 +27,16 @@ async def db_session():
 
 
 async def _add_user(db: AsyncSession, user_id: str, tier: str, role: str = "client") -> None:
-    db.add(User(
-        id=user_id,
-        email=f"{user_id}@example.com",
-        hashed_password="fakehash",
-        full_name=f"User {user_id}",
-        tier=tier,
-        role=role,
-    ))
+    db.add(
+        User(
+            id=user_id,
+            email=f"{user_id}@example.com",
+            hashed_password="fakehash",
+            full_name=f"User {user_id}",
+            tier=tier,
+            role=role,
+        )
+    )
     await db.commit()
 
 

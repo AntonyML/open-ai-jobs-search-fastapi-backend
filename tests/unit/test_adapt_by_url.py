@@ -121,9 +121,7 @@ async def test_llm_completion_with_web_search_anthropic_uses_web_fetch():
     assert text == "Adapted CV JSON"
     kwargs = mock_acompletion.call_args.kwargs
     assert kwargs["model"] == "anthropic/claude-sonnet-4-5"
-    assert kwargs["tools"] == [
-        {"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 3}
-    ]
+    assert kwargs["tools"] == [{"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 3}]
 
 
 async def test_llm_completion_with_web_search_auth_error():
@@ -132,9 +130,7 @@ async def test_llm_completion_with_web_search_auth_error():
     with (
         patch(
             "app.llm.adapter.responses",
-            new=AsyncMock(
-                side_effect=AuthenticationError("bad key", llm_provider="openai", model="gpt-5")
-            ),
+            new=AsyncMock(side_effect=AuthenticationError("bad key", llm_provider="openai", model="gpt-5")),
         ),
         pytest.raises(ProviderAuthError),
     ):

@@ -1,20 +1,20 @@
 """Job search service — reads from ingested_jobs, triggers microservice if needed."""
 
 import logging
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, timezone
 
 from app.core.settings import get_settings
 from app.db.models import IngestedJob, IngestJob
 from app.schemas.jobs import (
+    IngestStatusResponse,
+    JobOut,
     JobSearchRequest,
     JobSearchResponse,
-    JobOut,
-    IngestStatusResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,9 +27,7 @@ async def search_jobs(
     req: JobSearchRequest,
     user: dict,
 ) -> JobSearchResponse:
-    query = select(IngestedJob).where(
-        IngestedJob.expires_at > datetime.now(timezone.utc)
-    )
+    query = select(IngestedJob).where(IngestedJob.expires_at > datetime.now(UTC))
 
     if req.keywords:
         terms = [t.strip() for t in req.keywords.split() if len(t.strip()) > 2]
@@ -104,7 +102,8 @@ async def trigger_ingest(category_id: str, keywords: str) -> str | None:
     if resp.status_code >= 500:
         logger.warning(
             "[INGEST] Microservice returned %s for category=%s",
-            resp.status_code, category_id,
+            resp.status_code,
+            category_id,
         )
         return None
 
@@ -114,9 +113,7 @@ async def trigger_ingest(category_id: str, keywords: str) -> str | None:
     return data["ingest_job_id"]
 
 
-async def get_ingest_status(
-    db: AsyncSession, ingest_job_id: str
-) -> IngestStatusResponse:
+async def get_ingest_status(db: AsyncSession, ingest_job_id: str) -> IngestStatusResponse:
     job = await db.get(IngestJob, ingest_job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Ingest job not found")

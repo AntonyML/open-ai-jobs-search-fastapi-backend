@@ -19,7 +19,7 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError, BotoCoreError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.logging import get_logger
 from app.core.settings import get_settings
@@ -177,10 +177,9 @@ def download_to_temp(key: str) -> Path | None:
     client = _get_client()
 
     try:
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-        client.download_file(s.r2_bucket_name, key, tmp.name)
-        tmp.close()
-        return Path(tmp.name)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            client.download_file(s.r2_bucket_name, key, tmp.name)
+            return Path(tmp.name)
     except (ClientError, BotoCoreError):
         logger.warning("R2 download failed | key=%s", key, exc_info=True)
         return None

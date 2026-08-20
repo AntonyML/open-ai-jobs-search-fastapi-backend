@@ -12,8 +12,8 @@ from starlette.responses import Response
 from app.core.logging.context import (
     LogContext,
     new_request_id,
-    set_context,
     reset_context,
+    set_context,
 )
 
 access_logger = logging.getLogger("app.access")
@@ -22,9 +22,7 @@ access_logger = logging.getLogger("app.access")
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Assign request_id, measure latency, log one access line per request."""
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = new_request_id()
         user_id = getattr(request.state, "user_id", "")
         if not user_id:
@@ -54,12 +52,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             request.url.path,
             response.status_code,
             elapsed_ms,
-            extra={"extra_data": {
-                "request_id": request_id,
-                "user_id": user_id,
-                "status": response.status_code,
-                "latency_ms": round(elapsed_ms, 1),
-            }},
+            extra={
+                "extra_data": {
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "status": response.status_code,
+                    "latency_ms": round(elapsed_ms, 1),
+                }
+            },
         )
 
         response.headers["X-Request-ID"] = request_id

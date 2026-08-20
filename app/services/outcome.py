@@ -11,18 +11,18 @@ Implements the /outcome workflow from the original repo:
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.logging import bind_context, get_logger
 from app.core.settings import get_settings
 from app.db.models import Application, Outcome
 from app.exceptions import NotFoundError
 from app.schemas.outcome import OutcomeCreate, OutcomeUpdate, TrackerRowOut
-from app.core.logging import get_logger, bind_context
 
 logger = get_logger(__name__)
 
@@ -66,9 +66,7 @@ def _get_applications_dir() -> Path:
 def _validate_status(status: str) -> None:
     """Validate that status is a known value."""
     if status not in ALL_STATUSES:
-        raise ValueError(
-            f"Invalid status: {status}. Must be one of: {', '.join(sorted(ALL_STATUSES))}"
-        )
+        raise ValueError(f"Invalid status: {status}. Must be one of: {', '.join(sorted(ALL_STATUSES))}")
 
 
 def _is_resolution(status: str) -> bool:
@@ -99,9 +97,9 @@ def _get_tracker_fieldnames() -> list[str]:
 
 
 async def execute_outcome(
-        db: AsyncSession,
-        user_id: str,
-        payload: OutcomeCreate,
+    db: AsyncSession,
+    user_id: str,
+    payload: OutcomeCreate,
 ) -> Outcome:
     """Execute the outcome workflow.
 
@@ -159,7 +157,7 @@ async def execute_outcome(
 
         # 5. Set date_resolved if this is a resolution status
         if _is_resolution(payload.status) and not outcome.date_resolved:
-            outcome.date_resolved = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            outcome.date_resolved = datetime.now(UTC).strftime("%Y-%m-%d")
 
         # 6. Update interview stage dates
         if payload.phone_screen_date:
@@ -195,11 +193,7 @@ async def update_outcome(
     payload: OutcomeUpdate,
 ) -> Outcome:
     """Update an existing outcome."""
-    result = await db.execute(
-        select(Outcome)
-        .where(Outcome.id == outcome_id)
-        .where(Outcome.user_id == user_id)
-    )
+    result = await db.execute(select(Outcome).where(Outcome.id == outcome_id).where(Outcome.user_id == user_id))
     outcome = result.scalar_one_or_none()
     if outcome is None:
         raise NotFoundError("Outcome not found.")
@@ -208,7 +202,7 @@ async def update_outcome(
         _validate_status(payload.status)
         outcome.status = payload.status
         if _is_resolution(payload.status) and not outcome.date_resolved:
-            outcome.date_resolved = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            outcome.date_resolved = datetime.now(UTC).strftime("%Y-%m-%d")
 
     if payload.date_resolved:
         outcome.date_resolved = payload.date_resolved
@@ -271,7 +265,7 @@ async def _update_tracker_csv(
 
     rows = []
     if tracker_path.exists():
-        with open(tracker_path, "r", encoding="utf-8") as f:
+        with open(tracker_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
 
@@ -284,7 +278,7 @@ async def _update_tracker_csv(
             break
 
     tracker_row = {
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "company": company,
         "sector": job.description[:100] if job.description else "",
         "role": role,
@@ -359,15 +353,9 @@ async def _archive_outcome_md(
 # ── Query helpers ───────────────────────────────────────────────────
 
 
-async def get_outcome(
-    db: AsyncSession, outcome_id: str, user_id: str
-) -> Outcome:
+async def get_outcome(db: AsyncSession, outcome_id: str, user_id: str) -> Outcome:
     """Get an outcome by ID, verifying ownership."""
-    result = await db.execute(
-        select(Outcome)
-        .where(Outcome.id == outcome_id)
-        .where(Outcome.user_id == user_id)
-    )
+    result = await db.execute(select(Outcome).where(Outcome.id == outcome_id).where(Outcome.user_id == user_id))
     outcome = result.scalar_one_or_none()
     if outcome is None:
         raise NotFoundError("Outcome not found.")
@@ -392,27 +380,21 @@ async def list_outcomes(
     return list(result.scalars().all())
 
 
-async def get_outcome_by_application(
-    db: AsyncSession, application_id: str, user_id: str
-) -> Outcome | None:
+async def get_outcome_by_application(db: AsyncSession, application_id: str, user_id: str) -> Outcome | None:
     """Get the outcome for a specific application."""
     result = await db.execute(
-        select(Outcome)
-        .where(Outcome.application_id == application_id)
-        .where(Outcome.user_id == user_id)
+        select(Outcome).where(Outcome.application_id == application_id).where(Outcome.user_id == user_id)
     )
     return result.scalar_one_or_none()
 
 
-async def list_tracker_rows(
-    db: AsyncSession, user_id: str, limit: int = 50, offset: int = 0
-) -> list[TrackerRowOut]:
+async def list_tracker_rows(db: AsyncSession, user_id: str, limit: int = 50, offset: int = 0) -> list[TrackerRowOut]:
     """List tracker rows for a user with pagination (reads from CSV)."""
     tracker_path = _get_tracker_path()
     if not tracker_path.exists():
         return []
 
-    with open(tracker_path, "r", encoding="utf-8") as f:
+    with open(tracker_path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
 

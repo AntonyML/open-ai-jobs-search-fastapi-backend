@@ -52,7 +52,7 @@ def safe_name(value: str, fallback: str = "artifact") -> str:
     s = re.sub(r"\s+", " ", s)
     s = s.strip(" .")
     s = re.sub(r"\.{2,}", ".", s)
-    s = s[: _MAX_NAME_LEN].rstrip(" .")
+    s = s[:_MAX_NAME_LEN].rstrip(" .")
     if not s or s in {".", ".."}:
         s = fallback
     return s
@@ -62,9 +62,7 @@ def _check_component(value: str, label: str) -> str:
     """Validate a caller-supplied path component (ids, user ids). Raises."""
     s = str(value or "").strip()
     if not s or s in {".", ".."} or "/" in s or "\\" in s or "\x00" in s:
-        raise ValueError(
-            f"Invalid {label} {value!r}: must be a single safe path component."
-        )
+        raise ValueError(f"Invalid {label} {value!r}: must be a single safe path component.")
     return s
 
 
@@ -72,9 +70,7 @@ def _scope_attr(scope: str) -> str:
     """Settings attribute holding the storage root for a scope. Raises."""
     attr = SCOPE_SETTINGS.get(scope)
     if attr is None:
-        raise ValueError(
-            f"Unknown artifact scope {scope!r} (known: {sorted(SCOPE_SETTINGS)})"
-        )
+        raise ValueError(f"Unknown artifact scope {scope!r} (known: {sorted(SCOPE_SETTINGS)})")
     return attr
 
 
@@ -166,9 +162,7 @@ def remove_file(scope: str, rel: str | Path | None) -> bool:
         resolve(scope, rel).unlink(missing_ok=True)
         return True
     except (OSError, ValueError):
-        logger.warning(
-            "Failed to remove artifact %r (scope=%s)", rel, scope, exc_info=True
-        )
+        logger.warning("Failed to remove artifact %r (scope=%s)", rel, scope, exc_info=True)
         return False
 
 

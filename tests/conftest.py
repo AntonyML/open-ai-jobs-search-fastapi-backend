@@ -15,6 +15,7 @@ def clear_settings_cache():
     adding new fields like R2 configuration.
     """
     from app.core.settings import get_settings
+
     get_settings.cache_clear()
     yield
 
@@ -35,9 +36,7 @@ def mock_r2_s3():
         # Default stubs for S3 operations
         mock_client.put_object.return_value = {}
         mock_client.delete_object.return_value = {}
-        mock_client.generate_presigned_url.return_value = (
-            "https://mock-r2.example.com/test.pdf?signed=abc"
-        )
+        mock_client.generate_presigned_url.return_value = "https://mock-r2.example.com/test.pdf?signed=abc"
         mock_client.head_object.return_value = {}
         mock_client.delete_objects.return_value = {}
         mock_paginator = mock_client.get_paginator.return_value

@@ -29,34 +29,36 @@ class LoggingConfig:
     console_level: str = os.getenv("LOG_CONSOLE_LEVEL", "WARNING")
     console_colorize: bool = os.getenv("LOG_COLORIZE", "true").lower() == "true"
 
-    domain_logs: dict[str, str] = field(default_factory=lambda: {
-        "orchestrator": "orchestrator.log",
-        "services.orchestrator": "orchestrator.log",
-        "llm": "llm.log",
-        "pipeline": "pipeline.log",
-        "sql": "sql.log",
-        "access": "access.log",
-    })
+    domain_logs: dict[str, str] = field(
+        default_factory=lambda: {
+            "orchestrator": "orchestrator.log",
+            "services.orchestrator": "orchestrator.log",
+            "llm": "llm.log",
+            "pipeline": "pipeline.log",
+            "sql": "sql.log",
+            "access": "access.log",
+        }
+    )
 
-    suppressed_loggers: dict[str, str] = field(default_factory=lambda: {
-        "httpx": "WARNING",
-        "httpcore": "WARNING",
-        "asyncpg": "WARNING",
-        "litellm": "WARNING",
-        "LiteLLM": "WARNING",
-        "uvicorn.access": "WARNING",
-        "hpack": "WARNING",
-        "charset_normalizer": "WARNING",
-        "sqlalchemy.engine": "WARNING",
-        "sqlalchemy.pool": "WARNING",
-        "sqlalchemy.dialects": "WARNING",
-        "sqlalchemy.orm": "WARNING",
-    })
+    suppressed_loggers: dict[str, str] = field(
+        default_factory=lambda: {
+            "httpx": "WARNING",
+            "httpcore": "WARNING",
+            "asyncpg": "WARNING",
+            "litellm": "WARNING",
+            "LiteLLM": "WARNING",
+            "uvicorn.access": "WARNING",
+            "hpack": "WARNING",
+            "charset_normalizer": "WARNING",
+            "sqlalchemy.engine": "WARNING",
+            "sqlalchemy.pool": "WARNING",
+            "sqlalchemy.dialects": "WARNING",
+            "sqlalchemy.orm": "WARNING",
+        }
+    )
 
     sentry_dsn: str | None = os.getenv("SENTRY_DSN")
-    sentry_traces_sample_rate: float = float(
-        os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")
-    )
+    sentry_traces_sample_rate: float = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
 
     @property
     def is_production(self) -> bool:

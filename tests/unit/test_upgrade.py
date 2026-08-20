@@ -22,8 +22,8 @@ from app.db.models import AppNotification, Base, User
 from app.schemas.billing import AdminSubscriptionCreate, UpgradeRequest
 from app.services.billing_policy import compute_prorated_due
 from app.services.plans import get_plan
-from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import activate_subscription
+from tests.unit.plan_helpers import seed_test_plans
 
 
 @pytest.fixture
@@ -44,8 +44,11 @@ async def db_session():
 @pytest.fixture
 async def admin_user(db_session):
     u = User(
-        id="admin-1", email="admin@example.com", hashed_password="x",
-        role="admin", tier="free",
+        id="admin-1",
+        email="admin@example.com",
+        hashed_password="x",
+        role="admin",
+        tier="free",
     )
     db_session.add(u)
     await db_session.commit()
@@ -84,7 +87,8 @@ async def test_prorated_due_mid_month(db_session):
     max_ = await get_plan(db_session, "max")
     now = datetime.now(UTC)
     due = compute_prorated_due(
-        pro, max_,
+        pro,
+        max_,
         period_start=now - timedelta(days=15),
         period_end=now + timedelta(days=15),
     )
@@ -95,7 +99,8 @@ async def test_prorated_due_same_plan_is_zero(db_session):
     pro = await get_plan(db_session, "pro")
     now = datetime.now(UTC)
     due = compute_prorated_due(
-        pro, pro,
+        pro,
+        pro,
         period_start=now - timedelta(days=15),
         period_end=now + timedelta(days=15),
     )
@@ -108,7 +113,8 @@ async def test_prorated_due_downgrade_clamped_to_zero(db_session):
     max_ = await get_plan(db_session, "max")
     now = datetime.now(UTC)
     due = compute_prorated_due(
-        max_, pro,
+        max_,
+        pro,
         period_start=now - timedelta(days=15),
         period_end=now + timedelta(days=15),
     )
@@ -120,7 +126,8 @@ async def test_prorated_due_yearly_uses_yearly_prices(db_session):
     max_ = await get_plan(db_session, "max")
     now = datetime.now(UTC)
     due = compute_prorated_due(
-        pro, max_,
+        pro,
+        max_,
         period_start=now - timedelta(days=180),
         period_end=now + timedelta(days=185),
     )
@@ -134,7 +141,8 @@ async def test_prorated_due_expired_period_is_zero(db_session):
     max_ = await get_plan(db_session, "max")
     now = datetime.now(UTC)
     due = compute_prorated_due(
-        pro, max_,
+        pro,
+        max_,
         period_start=now - timedelta(days=31),
         period_end=now - timedelta(days=1),
     )
@@ -280,9 +288,7 @@ async def test_create_subscription_marks_upgrade_requests_read(db_session, user,
     assert len(await _notifications(db_session, "upgrade_prorate")) == 1
 
     await create_subscription(
-        AdminSubscriptionCreate(
-            user_id=user.id, plan_key="max", price_paid=out.amount_due
-        ),
+        AdminSubscriptionCreate(user_id=user.id, plan_key="max", price_paid=out.amount_due),
         admin=_admin_ctx(),
         db=db_session,
     )

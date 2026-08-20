@@ -41,9 +41,7 @@ async def trigger_upskill(
     """
 
     # 1. Get candidate profile
-    candidate_result = await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user["sub"])
-    )
+    candidate_result = await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user["sub"]))
     candidate = candidate_result.scalar_one_or_none()
     if candidate is None:
         raise ProfileIncompleteError("Candidate profile not found. Run /setup first.")
@@ -51,9 +49,7 @@ async def trigger_upskill(
     # 2. Gate LLM usage (quota/credits) and get a correlation_id for usage accounting.
     #    Consumed now; the background worker accumulates real token/cost usage on
     #    the ledger row via the same correlation_id.
-    correlation_id = await enforce_action_gate(
-        db, user, "upskill", label=f"Upskill analysis ({payload.mode})"
-    )
+    correlation_id = await enforce_action_gate(db, user, "upskill", label=f"Upskill analysis ({payload.mode})")
 
     # 3. Create upskill record with pending status
     upskill_record = Upskill(

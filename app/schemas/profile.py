@@ -3,11 +3,11 @@
 These are the API boundary — never expose ORM models directly.
 """
 
+import re
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
-import re
 
+from pydantic import BaseModel, EmailStr, field_validator
 
 # ── Validators ──────────────────────────────────────────────────────
 

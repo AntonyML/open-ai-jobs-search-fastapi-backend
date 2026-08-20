@@ -15,7 +15,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
-
 # ── Shared value objects ──────────────────────────────────────────────
 
 
@@ -210,8 +209,7 @@ class CV(BaseModel):
     # ── Projects / Portfolio ───────────────────────────────────────
     projects: list[ProjectEntry] | None = Field(
         None,
-        description="Key projects or portfolio pieces (especially relevant for developers "
-        "and designers).",
+        description="Key projects or portfolio pieces (especially relevant for developers and designers).",
         max_length=6,
     )
 
@@ -430,9 +428,7 @@ class CVResponse(BaseModel):
     job_posting_id: str | None = Field(
         None, description="ID of the job posting this CV was adapted from (personalized CVs)."
     )
-    job: CVJobOut | None = Field(
-        None, description="Job posting reference for adapted CVs (title, company, location)."
-    )
+    job: CVJobOut | None = Field(None, description="Job posting reference for adapted CVs (title, company, location).")
     job_description_text: str | None = Field(None, description="Job text used for personalization.")
     json_cv: dict[str, Any] = Field(..., description="The structured CV (CV + metadata).")
     pdf_url: str | None = Field(None, description="Download URL for the compiled PDF.")

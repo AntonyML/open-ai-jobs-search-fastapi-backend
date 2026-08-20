@@ -20,8 +20,8 @@ from app.db.models import Base, CreditTransaction, User
 from app.services import credits
 from app.services.access_gate import enforce_action_gate
 from app.services.plans import get_credit_costs, get_plan
-from tests.unit.plan_helpers import seed_test_plans
 from app.services.subscriptions import activate_subscription
+from tests.unit.plan_helpers import seed_test_plans
 
 
 @pytest.fixture
@@ -87,7 +87,9 @@ async def test_gate_cv_base_402_without_credits(db_session, free_user):
 
     with pytest.raises(HTTPException) as exc:
         await enforce_action_gate(
-            db_session, _client_ctx(free_user.id), "cv_base",
+            db_session,
+            _client_ctx(free_user.id),
+            "cv_base",
             label="Base CV generation",
         )
     assert exc.value.status_code == 402
@@ -216,17 +218,15 @@ async def test_gate_cv_base_success_consumes_credit_and_returns_correlation_id(d
     await db_session.commit()
     assert (await credits.get_balance(db_session, free_user.id))["balance"] == 2
 
-    cid = await enforce_action_gate(
-        db_session, _client_ctx(free_user.id), "cv_base", label="Base CV generation"
-    )
+    cid = await enforce_action_gate(db_session, _client_ctx(free_user.id), "cv_base", label="Base CV generation")
     assert cid is not None
 
     bal = await credits.get_balance(db_session, free_user.id)
     assert bal["balance"] == 1  # cv_base costs 1 credit
 
-    txn = (await db_session.execute(
-        select(CreditTransaction).where(CreditTransaction.correlation_id == cid)
-    )).scalar_one()
+    txn = (
+        await db_session.execute(select(CreditTransaction).where(CreditTransaction.correlation_id == cid))
+    ).scalar_one()
     assert txn.action == "cv_base"
     assert txn.credits_delta == -1
 
@@ -249,15 +249,16 @@ async def test_gate_max_charges_quota_and_credit(db_session, max_user):
 async def test_gate_admin_bypass(db_session, free_user):
     """Admin bypasses the gate entirely: no credit consumed, no correlation_id."""
     admin = User(
-        id="admin-1", email="admin@example.com", hashed_password="x",
-        role="admin", tier="free",
+        id="admin-1",
+        email="admin@example.com",
+        hashed_password="x",
+        role="admin",
+        tier="free",
     )
     db_session.add(admin)
     await db_session.commit()
 
-    cid = await enforce_action_gate(
-        db_session, {"sub": admin.id, "role": "admin"}, "apply"
-    )
+    cid = await enforce_action_gate(db_session, {"sub": admin.id, "role": "admin"}, "apply")
     assert cid is None
     # No credit account/ledger rows created for the admin.
     rows = (await db_session.execute(select(CreditTransaction))).scalars().all()
@@ -330,20 +331,26 @@ async def test_record_llm_usage_accumulates_on_ledger_row(db_session, free_user)
 
     # First LLM sub-call
     await credits.record_llm_usage(
-        db_session, cid,
+        db_session,
+        cid,
         model_used="anthropic/claude-sonnet-4-5",
-        tokens_input=100, tokens_output=50, cost_usd_cents=2,
+        tokens_input=100,
+        tokens_output=50,
+        cost_usd_cents=2,
     )
     # Second LLM sub-call (same request) — must accumulate, not overwrite
     await credits.record_llm_usage(
-        db_session, cid,
+        db_session,
+        cid,
         model_used="anthropic/claude-sonnet-4-5",
-        tokens_input=50, tokens_output=25, cost_usd_cents=3,
+        tokens_input=50,
+        tokens_output=25,
+        cost_usd_cents=3,
     )
 
-    txn = (await db_session.execute(
-        select(CreditTransaction).where(CreditTransaction.correlation_id == cid)
-    )).scalar_one()
+    txn = (
+        await db_session.execute(select(CreditTransaction).where(CreditTransaction.correlation_id == cid))
+    ).scalar_one()
     assert txn.tokens_input == 150
     assert txn.tokens_output == 75
     assert txn.cost_usd_cents == 5
@@ -355,7 +362,10 @@ async def test_record_llm_usage_unknown_correlation_id_is_noop(db_session, free_
     """Unknown correlation_id (e.g. admin bypass) → record_llm_usage no-ops
     without raising."""
     result = await credits.record_llm_usage(
-        db_session, "does-not-exist",
-        tokens_input=10, tokens_output=5, cost_usd_cents=1,
+        db_session,
+        "does-not-exist",
+        tokens_input=10,
+        tokens_output=5,
+        cost_usd_cents=1,
     )
     assert result is None

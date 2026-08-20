@@ -5,7 +5,7 @@ landing page and /limits without a token, and returns the same catalog as the
 authenticated /billing/catalog plus usage quotas and last_updated.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -26,35 +26,39 @@ async def db_session():
 
 
 async def _seed_plans(db: AsyncSession) -> None:
-    db.add(Plan(
-        key="free",
-        name="Free",
-        price_monthly_usd=0.0,
-        price_yearly_usd=0.0,
-        credits_per_period=2,
-        refill_cadence="weekly",
-        refill_weekday=0,
-        daily_quota=0,
-        weekly_quota=0,
-        features=["cv_base", "cv_adapted"],
-        is_active=True,
-        sort_order=10,
-        updated_at=datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
-    ))
-    db.add(Plan(
-        key="pro",
-        name="Pro",
-        price_monthly_usd=24.99,
-        price_yearly_usd=249.0,
-        credits_per_period=80,
-        refill_cadence="period",
-        daily_quota=0,
-        weekly_quota=0,
-        features=["cv_base", "cv_adapted"],
-        is_active=True,
-        sort_order=20,
-        updated_at=datetime(2026, 8, 10, 9, 30, tzinfo=timezone.utc),
-    ))
+    db.add(
+        Plan(
+            key="free",
+            name="Free",
+            price_monthly_usd=0.0,
+            price_yearly_usd=0.0,
+            credits_per_period=2,
+            refill_cadence="weekly",
+            refill_weekday=0,
+            daily_quota=0,
+            weekly_quota=0,
+            features=["cv_base", "cv_adapted"],
+            is_active=True,
+            sort_order=10,
+            updated_at=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+        )
+    )
+    db.add(
+        Plan(
+            key="pro",
+            name="Pro",
+            price_monthly_usd=24.99,
+            price_yearly_usd=249.0,
+            credits_per_period=80,
+            refill_cadence="period",
+            daily_quota=0,
+            weekly_quota=0,
+            features=["cv_base", "cv_adapted"],
+            is_active=True,
+            sort_order=20,
+            updated_at=datetime(2026, 8, 10, 9, 30, tzinfo=UTC),
+        )
+    )
     await db.commit()
 
 

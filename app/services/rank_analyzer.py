@@ -14,26 +14,24 @@ Fase 4: Capas A-E integradas.
 
 from __future__ import annotations
 
-
 import re
 from datetime import date, datetime
 from typing import Any
 
+from app.core.logging import get_logger
+from app.schemas.rank import DimensionScore
 from app.services.rank_extractor import (
-    clean_html,
-    extract_structured_requirements,
-    detect_structured_location,
-    extract_salary_range,
-    detect_seniority,
-    detect_education_requirement,
-    detect_work_authorization,
-    check_hard_rejects,
-    match_skills_controlled,
     build_evidence,
+    check_hard_rejects,
+    detect_education_requirement,
+    detect_seniority,
+    detect_structured_location,
+    detect_work_authorization,
+    extract_salary_range,
+    extract_structured_requirements,
+    match_skills_controlled,
     normalize_skill,
 )
-from app.schemas.rank import DimensionScore
-from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -53,28 +51,91 @@ SENIORITY_LEVELS = ["junior", "mid", "senior", "lead", "manager", "director", "e
 
 # Common tech skills (legacy, for keyword extraction)
 COMMON_TECH_SKILLS: set[str] = {
-    "python", "java", "javascript", "typescript", "go", "rust", "c++", "c#",
-    "ruby", "php", "swift", "kotlin", "scala", "r", "matlab", "sql",
-    "pytorch", "tensorflow", "keras", "scikit-learn", "pandas", "numpy",
-    "react", "angular", "vue", "node.js", "express", "django", "flask",
-    "fastapi", "spring", "kubernetes", "docker", "aws", "gcp", "azure",
-    "terraform", "ansible", "jenkins", "git", "linux", "postgresql",
-    "mongodb", "redis", "elasticsearch", "kafka", "spark", "hadoop",
-    "airflow", "mlops", "ci/cd", "rest", "graphql", "grpc",
+    "python",
+    "java",
+    "javascript",
+    "typescript",
+    "go",
+    "rust",
+    "c++",
+    "c#",
+    "ruby",
+    "php",
+    "swift",
+    "kotlin",
+    "scala",
+    "r",
+    "matlab",
+    "sql",
+    "pytorch",
+    "tensorflow",
+    "keras",
+    "scikit-learn",
+    "pandas",
+    "numpy",
+    "react",
+    "angular",
+    "vue",
+    "node.js",
+    "express",
+    "django",
+    "flask",
+    "fastapi",
+    "spring",
+    "kubernetes",
+    "docker",
+    "aws",
+    "gcp",
+    "azure",
+    "terraform",
+    "ansible",
+    "jenkins",
+    "git",
+    "linux",
+    "postgresql",
+    "mongodb",
+    "redis",
+    "elasticsearch",
+    "kafka",
+    "spark",
+    "hadoop",
+    "airflow",
+    "mlops",
+    "ci/cd",
+    "rest",
+    "graphql",
+    "grpc",
 }
 
 # Known remote/hybrid keywords (legacy)
 REMOTE_KEYWORDS: set[str] = {"remote", "work from home", "wfh", "hybrid", "telecommute"}
 ONSITE_KEYWORDS: set[str] = {"onsite", "in-office", "on-site"}
 RELOCATION_KEYWORDS: set[str] = {
-    "relocation", "relocate", "must relocate", "willing to relocate",
+    "relocation",
+    "relocate",
+    "must relocate",
+    "willing to relocate",
 }
 
 # Danish locations (for location matching)
 DANISH_CITIES: set[str] = {
-    "copenhagen", "københavn", "aarhus", "odense", "aalborg", "esbjerg",
-    "randers", "kolding", "horsens", "vejle", "roskilde", "herning",
-    "silkeborg", "naestved", "fredericia", "viborg", "holstebro",
+    "copenhagen",
+    "københavn",
+    "aarhus",
+    "odense",
+    "aalborg",
+    "esbjerg",
+    "randers",
+    "kolding",
+    "horsens",
+    "vejle",
+    "roskilde",
+    "herning",
+    "silkeborg",
+    "naestved",
+    "fredericia",
+    "viborg",
+    "holstebro",
 }
 
 
@@ -99,28 +160,104 @@ def extract_keywords(text: str | None, min_length: int = 2) -> set[str]:
     words = normalized.split()
     keywords: set[str] = set()
     stop_words = {
-        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to",
-        "for", "of", "with", "by", "from", "as", "is", "was", "are",
-        "were", "be", "been", "being", "have", "has", "had", "do",
-        "does", "did", "will", "would", "could", "should", "may",
-        "might", "must", "shall", "can", "about", "into", "through",
-        "during", "before", "after", "above", "below", "between",
-        "out", "off", "over", "under", "again", "further", "then",
-        "once", "here", "there", "when", "where", "why", "how",
-        "all", "each", "every", "both", "few", "more", "most",
-        "other", "some", "such", "no", "nor", "not", "only",
-        "own", "same", "so", "than", "too", "very", "just",
-        "because", "also", "if", "then", "else", "this", "that",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "as",
+        "is",
+        "was",
+        "are",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "about",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "out",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "here",
+        "there",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "nor",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "because",
+        "also",
+        "if",
+        "else",
+        "this",
+        "that",
     }
     for word in words:
         if len(word) >= min_length and word not in stop_words:
             keywords.add(word)
     for i in range(len(words) - 1):
-        bigram = f"{words[i]} {words[i+1]}"
+        bigram = f"{words[i]} {words[i + 1]}"
         if len(bigram) >= min_length and bigram not in stop_words:
             keywords.add(bigram)
     for i in range(len(words) - 2):
-        trigram = f"{words[i]} {words[i+1]} {words[i+2]}"
+        trigram = f"{words[i]} {words[i + 1]} {words[i + 2]}"
         if len(trigram) >= min_length:
             keywords.add(trigram)
     for word in words:
@@ -164,7 +301,13 @@ def analyze_location(
     if candidate_in_dk and job_in_dk:
         return "FLAG"
     if constraints_norm:
-        unwilling_patterns = ["no relocation", "cannot relocate", "not willing", "not open to relocate", "relocation not possible"]
+        unwilling_patterns = [
+            "no relocation",
+            "cannot relocate",
+            "not willing",
+            "not open to relocate",
+            "relocation not possible",
+        ]
         if any(p in constraints_norm for p in unwilling_patterns):
             return "FAIL"
         willing_patterns = ["willing to relocate", "open to relocate", "can relocate", "relocation possible"]
@@ -226,16 +369,49 @@ def detect_language(text: str | None) -> str | None:
         return None
     text_lower = text.lower()
     danish_signals = {
-        "stilling", "ansøgning", "virksomhed", "arbejde", "kvalifikationer",
-        "opgaver", "team", "erfaring", "uddannelse", "sprog", "dansk",
-        "vi tilbyder", "vi forventer", "ansøgningsfrist", "kontakt",
-        "løn", "pension", "ferie", "medarbejder", "chef", "leder",
-        "projekt", "system", "data", "udvikling", "it", "digital",
+        "stilling",
+        "ansøgning",
+        "virksomhed",
+        "arbejde",
+        "kvalifikationer",
+        "opgaver",
+        "team",
+        "erfaring",
+        "uddannelse",
+        "sprog",
+        "dansk",
+        "vi tilbyder",
+        "vi forventer",
+        "ansøgningsfrist",
+        "kontakt",
+        "løn",
+        "pension",
+        "ferie",
+        "medarbejder",
+        "chef",
+        "leder",
+        "projekt",
+        "system",
+        "data",
+        "udvikling",
+        "it",
+        "digital",
     }
     english_signals = {
-        "opportunity", "qualifications", "responsibilities", "requirements",
-        "experience", "education", "skills", "benefits", "salary",
-        "apply", "submit", "resume", "cover letter", "interview",
+        "opportunity",
+        "qualifications",
+        "responsibilities",
+        "requirements",
+        "experience",
+        "education",
+        "skills",
+        "benefits",
+        "salary",
+        "apply",
+        "submit",
+        "resume",
+        "cover letter",
+        "interview",
     }
     danish_count = sum(1 for w in danish_signals if w in text_lower)
     english_count = sum(1 for w in english_signals if w in text_lower)
@@ -376,7 +552,7 @@ def compute_quantitative_scores(
     salary_range = extract_salary_range(combined_text)
     seniority = detect_seniority(title, description)
     edu_req = detect_education_requirement(description)
-    work_auth = detect_work_authorization(description, candidate_location)
+    detect_work_authorization(description, candidate_location)
 
     # Deadline
     deadline_str, is_urgent = extract_deadline(description or "")
@@ -525,7 +701,10 @@ def compute_quantitative_scores(
         "salary_range": salary_range,
     }
     evidence = build_evidence(
-        match_result, extracted_job_data, candidate_skills_set, candidate_years,
+        match_result,
+        extracted_job_data,
+        candidate_skills_set,
+        candidate_years,
     )
 
     # Build DimensionScore objects
@@ -568,8 +747,8 @@ def compute_quantitative_scores(
     missing = sorted(match_result["unmatched_job_skills"])[:5]
 
     return {
-        "technical_score": technical_score,       # legacy
-        "experience_score": experience_score,     # legacy
+        "technical_score": technical_score,  # legacy
+        "experience_score": experience_score,  # legacy
         "location_status": loc_status,
         "deadline": deadline_str,
         "deadline_urgent": is_urgent,

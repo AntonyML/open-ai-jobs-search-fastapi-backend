@@ -35,9 +35,7 @@ def _period_bounds(cycle: str, start: datetime | None = None) -> tuple[datetime,
     return now, now + timedelta(days=days)
 
 
-async def get_active_subscription(
-    db: AsyncSession, user_id: str
-) -> UserSubscription | None:
+async def get_active_subscription(db: AsyncSession, user_id: str) -> UserSubscription | None:
     """The user's latest active subscription row (any plan)."""
     result = await db.execute(
         select(UserSubscription)
@@ -57,9 +55,7 @@ async def _link_credit_account(
     subscription: UserSubscription,
 ) -> None:
     """Point the user's credit account at this subscription period."""
-    result = await db.execute(
-        select(CreditAccount).where(CreditAccount.user_id == user_id)
-    )
+    result = await db.execute(select(CreditAccount).where(CreditAccount.user_id == user_id))
     account = result.scalar_one_or_none()
     if account is None:
         account = CreditAccount(
@@ -195,9 +191,7 @@ async def renew_subscription(db: AsyncSession, subscription: UserSubscription) -
     subscription.auto_renew = True
     # Clear the refill anchor so the credits for the new period are granted
     # (the previous period's remaining credits expire).
-    result = await db.execute(
-        select(CreditAccount).where(CreditAccount.user_id == subscription.user_id)
-    )
+    result = await db.execute(select(CreditAccount).where(CreditAccount.user_id == subscription.user_id))
     account = result.scalar_one_or_none()
     if account is not None:
         account.last_refill_at = None
@@ -219,9 +213,7 @@ async def expire_subscription(db: AsyncSession, subscription: UserSubscription) 
     )
 
 
-async def cancel_subscription(
-    db: AsyncSession, subscription: UserSubscription
-) -> UserSubscription:
+async def cancel_subscription(db: AsyncSession, subscription: UserSubscription) -> UserSubscription:
     """Cancel a subscription at the user's request (plan.md §2 / §9.3).
 
     Stops auto-renewal and stamps ``cancelled_at`` but keeps the
@@ -243,9 +235,7 @@ async def cancel_subscription(
     return subscription
 
 
-async def refund_subscription(
-    db: AsyncSession, subscription: UserSubscription
-) -> tuple[UserSubscription, int]:
+async def refund_subscription(db: AsyncSession, subscription: UserSubscription) -> tuple[UserSubscription, int]:
     """Execute a refund: zero-out the user's credits and mark the sub refunded.
 
     Called by the admin when the manual refund is completed (plan.md §3):

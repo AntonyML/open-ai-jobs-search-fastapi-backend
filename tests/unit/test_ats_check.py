@@ -7,9 +7,9 @@ deterministic and tested through unit tests.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.db.models import CandidateProfile, JobPosting, User
 from app.schemas.ats_check import ATSResult
 from app.services import ats_check
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -28,6 +27,7 @@ async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
     async with engine.begin() as conn:
         from app.db.models import Base
+
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -125,14 +125,16 @@ def _make_ats_text(
         if len(keywords) > 5:
             lines.append(f"  • Led team working with {', '.join(keywords[5:8])}")
 
-    lines.extend([
-        "",
-        "Core Competencies:",
-        "  Python, PyTorch, TensorFlow, scikit-learn",
-        "  Docker, Kubernetes, AWS, Git",
-        "  Machine Learning, NLP, Recommendation Systems",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "Core Competencies:",
+            "  Python, PyTorch, TensorFlow, scikit-learn",
+            "  Docker, Kubernetes, AWS, Git",
+            "  Machine Learning, NLP, Recommendation Systems",
+            "",
+        ]
+    )
 
     text = "\n".join(lines)
 
@@ -355,12 +357,17 @@ async def test_check_ats_from_json_full_pass():
     """Full ATS check with clean CV JSON returns pass=True."""
     job = _create_test_job(requirements=["Python", "PyTorch", "Kubernetes", "AWS", "Docker"])
     candidate = CandidateProfile(
-        id="cand-1", user_id="u1",
-        full_name="Jane Doe", email="jane.doe@example.com", phone="+45 12345678",
+        id="cand-1",
+        user_id="u1",
+        full_name="Jane Doe",
+        email="jane.doe@example.com",
+        phone="+45 12345678",
     )
 
     cv_json = _make_cv_json(
-        include_email=True, include_name=True, include_phone=True,
+        include_email=True,
+        include_name=True,
+        include_phone=True,
         keywords=["Python", "PyTorch", "Kubernetes", "AWS", "Docker"],
     )
 
@@ -379,8 +386,10 @@ async def test_check_ats_from_json_missing_email():
     """CV JSON without email fails ATS check."""
     job = _create_test_job(requirements=["Python"])
     candidate = CandidateProfile(
-        id="cand-1", user_id="u1",
-        full_name="Jane Doe", email="jane@example.com",
+        id="cand-1",
+        user_id="u1",
+        full_name="Jane Doe",
+        email="jane@example.com",
     )
 
     cv_json = _make_cv_json(include_email=False)
@@ -415,7 +424,6 @@ async def test_check_ats_from_json_without_candidate():
 async def test_check_ats_parseability_deprecated_stub():
     """Deprecated check_ats_parseability returns soft-fail stub."""
     import warnings
-    from pathlib import Path
 
     pdf_path = Path("/tmp/test_cv.pdf")
     job = _create_test_job(requirements=["Python"])
@@ -441,11 +449,9 @@ async def test_ats_check_integrated_in_apply(db_session):
     Creates its own job+eval in the DB to avoid cross-file fixture issues.
     """
     from sqlalchemy import select
-    from unittest.mock import patch
 
     from app.db.models import Application, RankEvaluation
     from app.services import apply
-    from tests.unit.test_apply import mock_tailored_experience, mock_cover_letter
 
     # Create a job in DB
     job = JobPosting(
@@ -509,58 +515,78 @@ async def test_ats_check_integrated_in_apply(db_session):
     await db_session.refresh(eval_rec)
 
     from app.schemas.apply import ReviewFeedback
-    from app.schemas.cv import CV, CVMetadata, GenerateCVOutput, CoverLetter
+    from app.schemas.cv import CV, CoverLetter, CVMetadata, GenerateCVOutput
 
     with patch("app.services.apply_json.generate_cv") as mock_gen_cv:
         mock_gen_cv.return_value = GenerateCVOutput(
             cv=CV(
-                first_name="Jane", last_name="Doe", email="jane@example.com",
-                location="Copenhagen", phone="+45 12345678",
+                first_name="Jane",
+                last_name="Doe",
+                email="jane@example.com",
+                location="Copenhagen",
+                phone="+45 12345678",
                 profile_statement="ML engineer.",
-                skills=[], experience=[], education=[],
+                skills=[],
+                experience=[],
+                education=[],
             ),
             metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
         )
         with patch("app.services.apply_json.generate_cover_letter") as mock_cl:
             mock_cl.return_value = CoverLetter(
-                opening_paragraph="I am writing to apply.", body_paragraphs=[],
-                company_connection_paragraph="", personal_fit_paragraph="", closing_paragraph="",
+                opening_paragraph="I am writing to apply.",
+                body_paragraphs=[],
+                company_connection_paragraph="",
+                personal_fit_paragraph="",
+                closing_paragraph="",
             )
             with patch("app.services.apply_json.generate_review") as mock_review:
                 mock_review.return_value = ReviewFeedback(
-                    overall_assessment="Good.", passes=[], issues=[],
-                    missed_keywords=[], strong_recommendations=[],
+                    overall_assessment="Good.",
+                    passes=[],
+                    issues=[],
+                    missed_keywords=[],
+                    strong_recommendations=[],
                 )
                 with patch("app.services.apply_json.generate_revision") as mock_revise:
                     mock_revise.return_value = GenerateCVOutput(
                         cv=CV(
-                            first_name="Jane", last_name="Doe", email="jane@example.com",
-                            location="Copenhagen", phone="+45 12345678",
+                            first_name="Jane",
+                            last_name="Doe",
+                            email="jane@example.com",
+                            location="Copenhagen",
+                            phone="+45 12345678",
                             profile_statement="ML engineer.",
-                            skills=[], experience=[], education=[],
+                            skills=[],
+                            experience=[],
+                            education=[],
                         ),
                         metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
                     )
                     with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
                         mock_compile.return_value = None
-                        with patch("app.services.apply._get_pdf_page_count", return_value=2):
-                            with patch("app.services.ats_check.check_ats_from_json") as mock_ats:
-                                mock_ats.return_value = ATSResult(
-                                    raw_text="Mock PDF text with Python and PyTorch keywords present.",
-                                    has_cid_markers=False,
-                                    has_email=True,
-                                    has_phone=True,
-                                    has_candidate_name=True,
-                                    keyword_coverage=1.0,
-                                    found_keywords=["Python", "PyTorch"],
-                                    missing_keywords=[],
-                                    reading_order_ok=True,
-                                    pass_ats=True,
-                                )
-                                with patch("app.services.apply.Path.mkdir"):
-                                        with patch("app.services.apply.Path.exists", return_value=True):
-                                            with patch("app.services.apply.Path.write_text"):
-                                                result = await apply.execute_apply(
+                        with (
+                            patch("app.services.apply._get_pdf_page_count", return_value=2),
+                            patch("app.services.ats_check.check_ats_from_json") as mock_ats,
+                        ):
+                            mock_ats.return_value = ATSResult(
+                                raw_text="Mock PDF text with Python and PyTorch keywords present.",
+                                has_cid_markers=False,
+                                has_email=True,
+                                has_phone=True,
+                                has_candidate_name=True,
+                                keyword_coverage=1.0,
+                                found_keywords=["Python", "PyTorch"],
+                                missing_keywords=[],
+                                reading_order_ok=True,
+                                pass_ats=True,
+                            )
+                            with (
+                                patch("app.services.apply.Path.mkdir"),
+                                patch("app.services.apply.Path.exists", return_value=True),
+                                patch("app.services.apply.Path.write_text"),
+                            ):
+                                result = await apply.execute_apply(
                                     db=db_session,
                                     user_id="test-user-id",
                                     job_posting_id=job.id,
@@ -568,9 +594,7 @@ async def test_ats_check_integrated_in_apply(db_session):
                                 )
 
     # Verify the application has ATS data
-    app_result = await db_session.execute(
-        select(Application).where(Application.id == result.application_id)
-    )
+    app_result = await db_session.execute(select(Application).where(Application.id == result.application_id))
     app = app_result.scalar_one_or_none()
     assert app is not None
     assert app.ats_pass is True, "ATS check should have passed"
@@ -584,11 +608,9 @@ async def test_ats_check_integrated_in_apply(db_session):
 async def test_ats_check_integrated_ats_fails_but_pipeline_continues(db_session):
     """When ATS check fails, pipeline still completes (non-blocking)."""
     from sqlalchemy import select
-    from unittest.mock import patch
 
     from app.db.models import Application, RankEvaluation
     from app.services import apply
-    from tests.unit.test_apply import mock_tailored_experience, mock_cover_letter
 
     # Create a job in DB
     job = JobPosting(
@@ -651,58 +673,78 @@ async def test_ats_check_integrated_ats_fails_but_pipeline_continues(db_session)
     await db_session.refresh(eval_rec)
 
     from app.schemas.apply import ReviewFeedback
-    from app.schemas.cv import CV, CVMetadata, GenerateCVOutput, CoverLetter
+    from app.schemas.cv import CV, CoverLetter, CVMetadata, GenerateCVOutput
 
     with patch("app.services.apply_json.generate_cv") as mock_gen_cv:
         mock_gen_cv.return_value = GenerateCVOutput(
             cv=CV(
-                first_name="Jane", last_name="Doe", email="jane@example.com",
-                location="Copenhagen", phone="+45 12345678",
+                first_name="Jane",
+                last_name="Doe",
+                email="jane@example.com",
+                location="Copenhagen",
+                phone="+45 12345678",
                 profile_statement="ML engineer.",
-                skills=[], experience=[], education=[],
+                skills=[],
+                experience=[],
+                education=[],
             ),
             metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
         )
         with patch("app.services.apply_json.generate_cover_letter") as mock_cl:
             mock_cl.return_value = CoverLetter(
-                opening_paragraph="I am writing to apply.", body_paragraphs=[],
-                company_connection_paragraph="", personal_fit_paragraph="", closing_paragraph="",
+                opening_paragraph="I am writing to apply.",
+                body_paragraphs=[],
+                company_connection_paragraph="",
+                personal_fit_paragraph="",
+                closing_paragraph="",
             )
             with patch("app.services.apply_json.generate_review") as mock_review:
                 mock_review.return_value = ReviewFeedback(
-                    overall_assessment="Good.", passes=[], issues=[],
-                    missed_keywords=[], strong_recommendations=[],
+                    overall_assessment="Good.",
+                    passes=[],
+                    issues=[],
+                    missed_keywords=[],
+                    strong_recommendations=[],
                 )
                 with patch("app.services.apply_json.generate_revision") as mock_revise:
                     mock_revise.return_value = GenerateCVOutput(
                         cv=CV(
-                            first_name="Jane", last_name="Doe", email="jane@example.com",
-                            location="Copenhagen", phone="+45 12345678",
+                            first_name="Jane",
+                            last_name="Doe",
+                            email="jane@example.com",
+                            location="Copenhagen",
+                            phone="+45 12345678",
                             profile_statement="ML engineer.",
-                            skills=[], experience=[], education=[],
+                            skills=[],
+                            experience=[],
+                            education=[],
                         ),
                         metadata=CVMetadata(incorporated_keywords=[], addressed_red_flags=[]),
                     )
                     with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
                         mock_compile.return_value = None
-                        with patch("app.services.apply._get_pdf_page_count", return_value=2):
-                            with patch("app.services.ats_check.check_ats_from_json") as mock_ats:
-                                mock_ats.return_value = ATSResult(
-                                    raw_text="Bad PDF text with (cid:123) markers. Very little content.",
-                                    has_cid_markers=True,
-                                    has_email=False,
-                                    has_phone=False,
-                                    has_candidate_name=False,
-                                    keyword_coverage=0.2,
-                                    found_keywords=[],
-                                    missing_keywords=["Python", "PyTorch", "Kubernetes"],
-                                    reading_order_ok=False,
-                                    pass_ats=False,
-                                )
-                                with patch("app.services.apply.Path.mkdir"):
-                                        with patch("app.services.apply.Path.exists", return_value=True):
-                                            with patch("app.services.apply.Path.write_text"):
-                                                result = await apply.execute_apply(
+                        with (
+                            patch("app.services.apply._get_pdf_page_count", return_value=2),
+                            patch("app.services.ats_check.check_ats_from_json") as mock_ats,
+                        ):
+                            mock_ats.return_value = ATSResult(
+                                raw_text="Bad PDF text with (cid:123) markers. Very little content.",
+                                has_cid_markers=True,
+                                has_email=False,
+                                has_phone=False,
+                                has_candidate_name=False,
+                                keyword_coverage=0.2,
+                                found_keywords=[],
+                                missing_keywords=["Python", "PyTorch", "Kubernetes"],
+                                reading_order_ok=False,
+                                pass_ats=False,
+                            )
+                            with (
+                                patch("app.services.apply.Path.mkdir"),
+                                patch("app.services.apply.Path.exists", return_value=True),
+                                patch("app.services.apply.Path.write_text"),
+                            ):
+                                result = await apply.execute_apply(
                                     db=db_session,
                                     user_id="test-user-id",
                                     job_posting_id=job.id,
@@ -713,9 +755,7 @@ async def test_ats_check_integrated_ats_fails_but_pipeline_continues(db_session)
     assert result.application_id is not None
     assert result.cv_compiled is True
 
-    app_result = await db_session.execute(
-        select(Application).where(Application.id == result.application_id)
-    )
+    app_result = await db_session.execute(select(Application).where(Application.id == result.application_id))
     app = app_result.scalar_one_or_none()
     assert app is not None
     assert app.ats_pass is False, "ATS should show failure"

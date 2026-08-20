@@ -1,12 +1,11 @@
 """Security utilities: JWT creation/verification, password hashing, API key encryption."""
 
-from datetime import datetime, timedelta, timezone
 import base64
-import os
+from datetime import UTC, datetime, timedelta
 
-from cryptography.fernet import Fernet
 import bcrypt
-from jose import JWTError, jwt
+from cryptography.fernet import Fernet
+from jose import jwt
 
 from app.core.settings import get_settings
 
@@ -14,7 +13,7 @@ settings = get_settings()
 
 # Fernet key for API key encryption (derived from JWT secret)
 # In production, use a separate dedicated key
-_fernet_key = base64.urlsafe_b64encode(settings.jwt_secret_key.encode()[:32].ljust(32, b'0'))
+_fernet_key = base64.urlsafe_b64encode(settings.jwt_secret_key.encode()[:32].ljust(32, b"0"))
 _fernet = Fernet(_fernet_key)
 
 
@@ -42,9 +41,7 @@ def create_access_token(
     tier: str = "free",
 ) -> str:
     """Create a signed JWT for the given subject (user id)."""
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=expires_minutes or settings.jwt_expire_minutes
-    )
+    expire = datetime.now(UTC) + timedelta(minutes=expires_minutes or settings.jwt_expire_minutes)
     to_encode = {"sub": subject, "exp": expire, "role": role, "tier": tier}
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 

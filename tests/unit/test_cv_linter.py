@@ -5,10 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.cv_linter import (
-    FORBIDDEN_BULLET_OPENERS,
-    MIN_BULLET_LENGTH,
     lint_cv,
 )
+
 
 # A real profile-like object (dict-backed) with the attributes the linter reads.
 def _profile(**overrides):
@@ -95,9 +94,7 @@ def test_short_bullet_flagged():
 
 def test_generic_opener_flagged():
     cv = _clean_cv()
-    cv["cv"]["experience"][0]["bullets"] = [
-        "Responsible for building dashboards that helped the team ship faster"
-    ]
+    cv["cv"]["experience"][0]["bullets"] = ["Responsible for building dashboards that helped the team ship faster"]
     issues = lint_cv(cv, _profile())
     assert len(issues) == 1
     assert "responsible for" in issues[0]
@@ -169,7 +166,7 @@ def test_non_dict_output_is_safe():
 def test_build_lint_retry_prompt_contains_issues_and_cv():
     from app.services.apply_json import build_lint_retry_prompt
 
-    issues = ["Bullet 1 in Banco Nacional starts with \"responsible for\" — rewrite"]
+    issues = ['Bullet 1 in Banco Nacional starts with "responsible for" — rewrite']
     messages = build_lint_retry_prompt(_clean_cv(), issues)
     assert len(messages) == 2
     assert "Fix ONLY the following" in messages[1]["content"]
@@ -182,9 +179,7 @@ async def test_directed_retry_skipped_when_clean():
     from app.services.apply_json import _lint_and_directed_retry
 
     with patch("app.services.apply_json._llm_json", new=AsyncMock()) as mock_llm:
-        result = await _lint_and_directed_retry(
-            _clean_cv(), _profile(), {"provider": "openai", "model": "gpt-4o"}
-        )
+        result = await _lint_and_directed_retry(_clean_cv(), _profile(), {"provider": "openai", "model": "gpt-4o"})
     assert result == _clean_cv()
     mock_llm.assert_not_awaited()
 
@@ -203,9 +198,7 @@ async def test_directed_retry_calls_llm_with_fix_instructions():
         return fixed
 
     with patch("app.services.apply_json._llm_json", new=fake_llm_json):
-        result = await _lint_and_directed_retry(
-            bad, _profile(), {"provider": "openai", "model": "gpt-4o"}
-        )
+        result = await _lint_and_directed_retry(bad, _profile(), {"provider": "openai", "model": "gpt-4o"})
     assert result == fixed
 
 
@@ -222,7 +215,5 @@ async def test_directed_retry_keeps_original_on_llm_error():
         raise LLMError("boom")
 
     with patch("app.services.apply_json._llm_json", new=failing_llm_json):
-        result = await _lint_and_directed_retry(
-            bad, _profile(), {"provider": "openai", "model": "gpt-4o"}
-        )
+        result = await _lint_and_directed_retry(bad, _profile(), {"provider": "openai", "model": "gpt-4o"})
     assert result == bad  # graceful degradation, never a crash

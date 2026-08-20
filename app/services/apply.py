@@ -16,31 +16,30 @@ We use SEPARATE LLM calls for draft, review, and revise so that:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-
-from app.core.logging import get_logger, bind_context
-logger = get_logger(__name__)
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.core.logging import bind_context, get_logger
 from app.core.settings import get_settings
-from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation, User
+from app.db.models import Application, CandidateProfile, JobPosting, RankEvaluation
 from app.db.session import async_session_factory
-from app.exceptions import LLMError, NotFoundError, ProfileIncompleteError
-from app.llm.adapter import llm_completion, llm_completion_structured, get_provider_kwargs
-from app.services import artifact_store, ats_check, credits
+from app.exceptions import NotFoundError, ProfileIncompleteError
+from app.llm.adapter import llm_completion
 from app.schemas.apply import (
     AddressedRedFlag,
     ApplyResult,
     IncorporatedKeyword,
     TailoredExperienceEntry,
 )
+from app.services import artifact_store, ats_check, credits
 
+logger = get_logger(__name__)
 settings = get_settings()
 
 # ── Guardrail constant (never user-configurable) ────────────────────
@@ -75,7 +74,7 @@ Examples:
 - "Led a team of 5 engineers (Z) to deliver a real-time fraud detection system (X) processing 10K transactions/sec with <50ms latency (Y)"
 
 Every bullet must have concrete numbers where possible. No vague claims.
-"""
+"""  # noqa: E501
 
 # ── Drafter-Reviewer prompt constants (temperature 0 for reproducibility) ─
 
@@ -163,7 +162,7 @@ Review these draft documents critically. Return JSON with EXACTLY this structure
   "missed_keywords": ["string (keywords from job posting still absent after review)"],
   "strong_recommendations": ["string (top 3 changes that would most improve the application, ordered by impact)"]
 }
-"""
+"""  # noqa: E501
 
 _REVISE_JSON_EXAMPLE = """
     Return the revised experience entries as JSON with EXACTLY this structure (field names must match exactly):
@@ -180,8 +179,6 @@ _REVISE_JSON_EXAMPLE = """
       ]
     }
 """
-
-
 
 
 # ── Prompt builders ─────────────────────────────────────────────────
@@ -210,8 +207,10 @@ def build_tailored_experience_prompt(
             parts.append(f"Priority keywords to highlight: {', '.join(jt['keywords'])}")
         if jt.get("min_salary") or jt.get("max_salary"):
             sal = []
-            if jt.get("min_salary"): sal.append(f"min ${jt['min_salary']:,.0f}")
-            if jt.get("max_salary"): sal.append(f"max ${jt['max_salary']:,.0f}")
+            if jt.get("min_salary"):
+                sal.append(f"min ${jt['min_salary']:,.0f}")
+            if jt.get("max_salary"):
+                sal.append(f"max ${jt['max_salary']:,.0f}")
             parts.append(f"Target salary range: {' – '.join(sal)}")
         if jt.get("seniority"):
             seniority = jt["seniority"]
@@ -227,7 +226,9 @@ def build_tailored_experience_prompt(
             depth = depth_map.get(seniority.lower(), "adjust technical depth accordingly")
             parts.append(f"Target seniority level: {seniority} — {depth}")
         if parts:
-            jt_guidance = "\nJOB TARGET PREFERENCES (align experience toward these):\n" + "\n".join(f"- {p}" for p in parts)
+            jt_guidance = "\nJOB TARGET PREFERENCES (align experience toward these):\n" + "\n".join(
+                f"- {p}" for p in parts
+            )
 
     system_prompt = f"""{APPLY_GUARDRAIL}
 
@@ -240,8 +241,8 @@ JOB POSTING:
 {job_summary}
 
 RANK EVALUATION INSIGHTS:
-- Missing keywords (from job posting, absent in CV): {', '.join(missing_keywords) if missing_keywords else 'None'}
-- Red flags (things recruiter would notice negatively): {', '.join(red_flags) if red_flags else 'None'}
+- Missing keywords (from job posting, absent in CV): {", ".join(missing_keywords) if missing_keywords else "None"}
+- Red flags (things recruiter would notice negatively): {", ".join(red_flags) if red_flags else "None"}
 - Overall fit: {evaluation.verdict} ({evaluation.overall_score}/100)
 {jt_guidance}
 
@@ -255,7 +256,7 @@ Rewrite the candidate's experience section for this specific job application.
 6. Maximum 4 bullets per role, 3 roles max in tailored CV
 
 {_TAILORED_EXPERIENCE_JSON_EXAMPLE}
-"""
+"""  # noqa: E501
 
     user_prompt = "Generate the tailored experience section for this job application."
 
@@ -308,12 +309,12 @@ TAILORED EXPERIENCE (already generated, use as reference):
 
 RANK EVALUATION:
 - Overall fit: {evaluation.verdict} ({evaluation.overall_score}/100)
-- Missing keywords: {', '.join(evaluation.missing_keywords or [])}
-- Red flags: {', '.join(evaluation.red_flags or [])}
+- Missing keywords: {", ".join(evaluation.missing_keywords or [])}
+- Red flags: {", ".join(evaluation.red_flags or [])}
 {jt_guidance}
 
 TASK:
-Write a cover letter in the SAME LANGUAGE as the job posting ({job.language or 'en'}).
+Write a cover letter in the SAME LANGUAGE as the job posting ({job.language or "en"}).
 Follow the structure from the writing style guide:
 1. Opening: Role + strongest connection (2-3 sentences)
 2. Body: Most relevant experience + 3-5 concrete bullets (use tailored experience above)
@@ -377,7 +378,9 @@ def _build_candidate_summary_for_apply(candidate: CandidateProfile) -> str:
     if candidate.skills:
         skill_parts = []
         if candidate.skills.get("programming_ml"):
-            langs = [f"{s.get('language', '')} ({s.get('proficiency', '')})" for s in candidate.skills["programming_ml"]]
+            langs = [
+                f"{s.get('language', '')} ({s.get('proficiency', '')})" for s in candidate.skills["programming_ml"]
+            ]
             skill_parts.append(f"Programming/ML: {', '.join(langs)}")
         if candidate.skills.get("domain_expertise"):
             skill_parts.append(f"Domain: {', '.join(candidate.skills['domain_expertise'])}")
@@ -449,12 +452,14 @@ async def _fetch_company_info(
 
         result = await llm_completion(
             messages=[
-                {"role": "system", "content":
-                 "You are a company research assistant. Given a company name, "
-                 "provide a brief, factual summary (2-3 sentences) of what the "
-                 "company does, its industry, known products/services, and any "
-                 "recent news or growth signals. If you don't know specific details, "
-                 "say so — don't fabricate."},
+                {
+                    "role": "system",
+                    "content": "You are a company research assistant. Given a company name, "
+                    "provide a brief, factual summary (2-3 sentences) of what the "
+                    "company does, its industry, known products/services, and any "
+                    "recent news or growth signals. If you don't know specific details, "
+                    "say so — don't fabricate.",
+                },
                 {"role": "user", "content": f"What is {job.company} known for? Provide a short factual summary."},
             ],
             **provider_kwargs,
@@ -575,9 +580,15 @@ async def execute_apply(
         # ═══════════════════════════════════════════════════════════════
 
         from app.services.apply_json import (
-            generate_cv as _json_cv,
             generate_cover_letter as _json_cl,
+        )
+        from app.services.apply_json import (
+            generate_cv as _json_cv,
+        )
+        from app.services.apply_json import (
             generate_review as _json_review,
+        )
+        from app.services.apply_json import (
             generate_revision as _json_revise,
         )
         from app.services.pdf_compiler_typst import compile_cv as _typst_compile
@@ -594,10 +605,15 @@ async def execute_apply(
         await db.commit()
 
         # STAGE 3: REVIEW (fresh context — reviewer sees JSON, not drafter reasoning)
-        company_research = await _fetch_company_info(job, provider_config, usage=usage)
+        await _fetch_company_info(job, provider_config, usage=usage)
         cv_dict = cv_output.cv.model_dump()
         review_feedback = await _json_review(
-            cv_dict, candidate, job, evaluation, provider_config, usage=usage,
+            cv_dict,
+            candidate,
+            job,
+            evaluation,
+            provider_config,
+            usage=usage,
         )
 
         application.stage = "reviewed"
@@ -607,7 +623,12 @@ async def execute_apply(
 
         # STAGE 4: REVISE
         cv_output = await _json_revise(
-            cv_dict, review_feedback, candidate, job, provider_config, usage=usage,
+            cv_dict,
+            review_feedback,
+            candidate,
+            job,
+            provider_config,
+            usage=usage,
         )
 
         application.stage = "revised"
@@ -615,15 +636,15 @@ async def execute_apply(
 
         # STAGE 5-6: RENDER + COMPILE via Typst
         final_cv_dict = cv_output.cv.model_dump()
-        cv_filename = (
-            f"cv_{artifact_store.safe_name(job.company)}_{artifact_store.safe_name(job.title)}.pdf"
-        )
+        cv_filename = f"cv_{artifact_store.safe_name(job.company)}_{artifact_store.safe_name(job.title)}.pdf"
         cv_pdf_abs, cv_pdf_rel = artifact_store.new_output_path(
-            "apply", user_id, job_posting_id, cv_filename,
+            "apply",
+            user_id,
+            job_posting_id,
+            cv_filename,
         )
         _typst_compile(final_cv_dict, output=cv_pdf_abs)
         cv_pages = _get_pdf_page_count(cv_pdf_abs)
-        cv_compiled = True
 
         if cv_output.cv.cover_letter is not None:
             # Cover letter is embedded in same PDF (after pagebreak)
@@ -638,12 +659,8 @@ async def execute_apply(
         # Store JSON CV for audit
         application.cv_json = final_cv_dict
         application.tailored_experience = final_cv_dict.get("experience", [])
-        application.incorporated_keywords = [
-            kw.model_dump() for kw in (cv_output.metadata.incorporated_keywords or [])
-        ]
-        application.addressed_red_flags = [
-            rf.model_dump() for rf in (cv_output.metadata.addressed_red_flags or [])
-        ]
+        application.incorporated_keywords = [kw.model_dump() for kw in (cv_output.metadata.incorporated_keywords or [])]
+        application.addressed_red_flags = [rf.model_dump() for rf in (cv_output.metadata.addressed_red_flags or [])]
 
         # ATS check (on structured data, no PDF needed)
         ats_result = None
@@ -666,7 +683,7 @@ async def execute_apply(
         application.ats_score = ats_result.keyword_coverage if ats_result else None
         application.ats_missing_keywords = ats_result.missing_keywords if ats_result else None
         application.ats_pass = ats_result.pass_ats if ats_result else None
-        application.ats_checked_at = datetime.now(timezone.utc) if ats_result else None
+        application.ats_checked_at = datetime.now(UTC) if ats_result else None
 
         job.status = "applied"
         await db.commit()
@@ -687,8 +704,8 @@ async def execute_apply(
         if ats_result is not None:
             ats_summary = (
                 f" ATS check passed ({ats_result.keyword_coverage:.0%} keyword coverage)."
-                if ats_result.pass_ats else
-                f" ATS check flagged {len(ats_result.missing_keywords)} missing keywords."
+                if ats_result.pass_ats
+                else f" ATS check flagged {len(ats_result.missing_keywords)} missing keywords."
             )
 
         return ApplyResult(
@@ -697,9 +714,7 @@ async def execute_apply(
             cv_pages=cv_pages,
             cover_letter_compiled=cover_compiled,
             cover_letter_pages=cover_pages,
-            message=f"Application generated: "
-                    f"CV ({cv_pages} pages), Cover Letter ({cover_pages} page)."
-                    f"{ats_summary}",
+            message=f"Application generated: CV ({cv_pages} pages), Cover Letter ({cover_pages} page).{ats_summary}",
         )
 
 
@@ -726,7 +741,7 @@ async def execute_apply_background(
         await session.commit()
         logger.info("execute_apply_background: stage=initializing committed, calling execute_apply")
 
-        result = await execute_apply(
+        await execute_apply(
             db=session,
             user_id=application.user_id,
             job_posting_id=application.job_posting_id,
@@ -743,19 +758,15 @@ async def execute_apply_background(
         logger.error("Pipeline failed for application %s: %s", application_id, e, exc_info=True)
         await _fail_application(session, application_id)
     finally:
-        try:
+        with contextlib.suppress(Exception):
             await session.close()
-        except Exception:
-            pass
 
 
 async def _fail_application(session: AsyncSession, application_id: str) -> None:
     """Set application stage to 'failed'. Errors are swallowed."""
     try:
-        try:
+        with contextlib.suppress(Exception):
             await session.rollback()
-        except Exception:
-            pass
         app = await session.get(Application, application_id)
         if app is not None:
             app.stage = "failed"
@@ -783,9 +794,7 @@ def _extract_incorporated_keywords(
 ) -> list[IncorporatedKeyword]:
     """Extract which missing keywords were incorporated and where."""
     incorporated = []
-    all_text = " ".join(
-        " ".join(exp.bullets) for exp in tailored_experience
-    ).lower()
+    all_text = " ".join(" ".join(exp.bullets) for exp in tailored_experience).lower()
 
     for keyword in missing_keywords:
         if keyword.lower() in all_text:
@@ -793,7 +802,7 @@ def _extract_incorporated_keywords(
             for exp in tailored_experience:
                 for i, bullet in enumerate(exp.bullets):
                     if keyword.lower() in bullet.lower():
-                        where = f"{exp.title} at {exp.company}, bullet {i+1}"
+                        where = f"{exp.title} at {exp.company}, bullet {i + 1}"
                         break
 
             incorporated.append(
@@ -813,9 +822,7 @@ def _extract_addressed_red_flags(
 ) -> list[AddressedRedFlag]:
     """Extract which red flags were addressed."""
     addressed = []
-    all_text = " ".join(
-        " ".join(exp.bullets) for exp in tailored_experience
-    ).lower()
+    all_text = " ".join(" ".join(exp.bullets) for exp in tailored_experience).lower()
 
     for flag in red_flags:
         flag_keywords = flag.lower().split()
@@ -833,14 +840,10 @@ def _extract_addressed_red_flags(
 # ── Query helpers ───────────────────────────────────────────────────
 
 
-async def get_application(
-    db: AsyncSession, application_id: str, user_id: str
-) -> Application:
+async def get_application(db: AsyncSession, application_id: str, user_id: str) -> Application:
     """Get an application by ID, verifying ownership."""
     result = await db.execute(
-        select(Application)
-        .where(Application.id == application_id)
-        .where(Application.user_id == user_id)
+        select(Application).where(Application.id == application_id).where(Application.user_id == user_id)
     )
     application = result.scalar_one_or_none()
     if application is None:

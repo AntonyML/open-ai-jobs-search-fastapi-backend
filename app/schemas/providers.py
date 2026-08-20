@@ -1,10 +1,9 @@
 """Pydantic schemas for LLM provider credentials management."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, HttpUrl
-
 
 # ── Request schemas ─────────────────────────────────────────────────
 
@@ -76,8 +75,7 @@ class ProviderInfo(BaseModel):
     )
     web_search_models: list[str] = Field(
         default_factory=list,
-        description="Models of this provider that support the web_search tool "
-        "(used by the adapt-by-URL feature).",
+        description="Models of this provider that support the web_search tool (used by the adapt-by-URL feature).",
     )
 
 
@@ -240,7 +238,7 @@ KNOWN_PROVIDERS: list[ProviderInfo] = [
         supports_custom_base=True,
         default_model="llama3.2",  # fue: llama3.1 (3.2 es el tag actual en ollama hub)
         example_base_url="http://localhost:11434/v1",
-        ),
+    ),
 ]
 
 PROVIDER_DISPLAY_MAP: dict[str, str] = {p.name: p.display_name for p in KNOWN_PROVIDERS}

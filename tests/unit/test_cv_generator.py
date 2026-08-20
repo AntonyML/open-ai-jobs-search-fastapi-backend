@@ -7,9 +7,8 @@ so no network or typst binary is required.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import AppNotification, Base, CandidateProfile, GeneratedCV, JobPosting, User
 from app.exceptions import (
@@ -51,9 +50,7 @@ async def db_session():
                 location="Copenhagen, Denmark",
                 email="jane@example.com",
                 constraints="No relocation",
-                education=[
-                    {"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020"}
-                ],
+                education=[{"degree": "MSc Computer Science", "institution": "DTU", "period": "2018-2020"}],
                 experience=[
                     {
                         "title": "Software Engineer",
@@ -134,9 +131,7 @@ async def test_generate_base_cv_persists(db_session):
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
 async def test_personalize_cv_persists_analysis(db_session):
-    record = await cv_generator.personalize_cv(
-        db_session, "test-user-id", "Senior Python Engineer at Acme..." * 3
-    )
+    record = await cv_generator.personalize_cv(db_session, "test-user-id", "Senior Python Engineer at Acme..." * 3)
 
     assert record.cv_type == "personalized"
     assert record.analysis["match_score"] == 78
@@ -209,9 +204,7 @@ async def test_list_get_soft_delete_and_rate_count(db_session):
 async def test_adapt_cv_requires_base_cv(db_session):
     """Rule 4 — adapting without a base CV raises PreconditionError."""
     with pytest.raises(PreconditionError):
-        await cv_generator.adapt_cv(
-            db_session, "test-user-id", "missing-base-cv", "missing-job"
-        )
+        await cv_generator.adapt_cv(db_session, "test-user-id", "missing-base-cv", "missing-job")
 
 
 @patch("app.services.cv_generator.compile_cv", new=MagicMock())
@@ -250,9 +243,7 @@ async def test_adapt_cv_persists_new_document_without_touching_base(db_session):
     await db_session.commit()
 
     # 3. Adapt
-    adapted = await cv_generator.adapt_cv(
-        db_session, "test-user-id", base.id, "job-adapt-1"
-    )
+    adapted = await cv_generator.adapt_cv(db_session, "test-user-id", base.id, "job-adapt-1")
 
     assert adapted.cv_type == "personalized"
     assert adapted.job_posting_id == "job-adapt-1"
@@ -302,9 +293,7 @@ async def test_adapt_cv_job_not_owned_raises(db_session):
     await db_session.commit()
 
     with pytest.raises(NotFoundError):
-        await cv_generator.adapt_cv(
-            db_session, "test-user-id", base.id, "job-other-1"
-        )
+        await cv_generator.adapt_cv(db_session, "test-user-id", base.id, "job-other-1")
 
 
 # ── Async PDF compile (CAPA 4) ────────────────────────────────────────
@@ -329,7 +318,7 @@ async def test_compile_cv_in_background_sets_pdf_path(db_session):
             "cv-async-1",
             "test-user-id",
             SAMPLE_OUTPUT,
-            session_factory=getattr(db_session, "_test_factory"),
+            session_factory=db_session._test_factory,
         )
 
     await db_session.refresh(record)
@@ -356,7 +345,7 @@ async def test_compile_cv_in_background_skips_deleted_record(db_session):
             "cv-async-2",
             "test-user-id",
             SAMPLE_OUTPUT,
-            session_factory=getattr(db_session, "_test_factory"),
+            session_factory=db_session._test_factory,
         )
 
     await db_session.refresh(record)
@@ -388,15 +377,13 @@ async def test_compile_cv_in_background_failure_is_non_fatal(db_session):
         "cv-async-3",
         "test-user-id",
         SAMPLE_OUTPUT,
-        session_factory=getattr(db_session, "_test_factory"),
+        session_factory=db_session._test_factory,
     )
 
     await db_session.refresh(record)
     assert record.pdf_path is None
 
-    result = await db_session.execute(
-        select(AppNotification).where(AppNotification.user_id == "admin-user-id")
-    )
+    result = await db_session.execute(select(AppNotification).where(AppNotification.user_id == "admin-user-id"))
     notes = list(result.scalars().all())
     assert len(notes) == 1
     assert notes[0].type == "cv_pdf_compile_failed"
@@ -564,9 +551,7 @@ async def test_soft_delete_personalized_removes_pdf(db_session):
     (it is a derived artifact re-compilable from ``cv_json``), not accumulate
     orphaned files under ``generated_cvs/``.
     """
-    record = await cv_generator.personalize_cv(
-        db_session, "test-user-id", "Senior Python Engineer at Acme..." * 3
-    )
+    record = await cv_generator.personalize_cv(db_session, "test-user-id", "Senior Python Engineer at Acme..." * 3)
     assert record.cv_type == "personalized"
 
     # Compilation is async now — simulate a finished background task by
@@ -678,9 +663,7 @@ async def test_adapt_cv_from_url_persists_with_source(db_session):
 @patch(
     "app.services.cv_generator.adapt_cv_llm_with_url",
     new=AsyncMock(
-        side_effect=WebSearchUnavailableError(
-            "The configured AI model can't open links. Use a model with web search."
-        )
+        side_effect=WebSearchUnavailableError("The configured AI model can't open links. Use a model with web search.")
     ),
 )
 @patch(
@@ -707,18 +690,14 @@ async def test_adapt_cv_from_url_propagates_no_web_search_error_and_notifies_adm
     base = await cv_generator.generate_base_cv(db_session, "test-user-id")
 
     with pytest.raises(WebSearchUnavailableError, match="web search"):
-        await cv_generator.adapt_cv_from_url(
-            db_session, "test-user-id", base.id, "https://www.example.com/job"
-        )
+        await cv_generator.adapt_cv_from_url(db_session, "test-user-id", base.id, "https://www.example.com/job")
 
     # No personalized CV was persisted.
     listed = await cv_generator.list_cvs(db_session, "test-user-id")
     assert [c.id for c in listed] == [base.id]
 
     # The admin received an in-app notification about the config issue.
-    result = await db_session.execute(
-        select(AppNotification).where(AppNotification.user_id == "admin-user-id")
-    )
+    result = await db_session.execute(select(AppNotification).where(AppNotification.user_id == "admin-user-id"))
     notes = list(result.scalars().all())
     assert len(notes) == 1
     assert notes[0].type == "provider_config_issue"
@@ -747,6 +726,4 @@ async def test_adapt_cv_from_url_requires_active_base(db_session):
     assert first.base_status == "obsolete"
 
     with pytest.raises(PreconditionError):
-        await cv_generator.adapt_cv_from_url(
-            db_session, "test-user-id", first.id, "https://www.example.com/job"
-        )
+        await cv_generator.adapt_cv_from_url(db_session, "test-user-id", first.id, "https://www.example.com/job")

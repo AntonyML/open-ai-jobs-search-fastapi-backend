@@ -44,21 +44,15 @@ async def get_dashboard_stats(
     uid = user["sub"]
 
     jobs_scraped = select(func.count(JobPosting.id)).where(JobPosting.user_id == uid)
-    jobs_ranked = select(func.count(JobPosting.id)).where(
-        JobPosting.user_id == uid, JobPosting.rank_score.isnot(None)
-    )
+    jobs_ranked = select(func.count(JobPosting.id)).where(JobPosting.user_id == uid, JobPosting.rank_score.isnot(None))
     applications = select(func.count(Application.id)).where(Application.user_id == uid)
     interviews = select(func.count(InterviewPrep.id)).where(InterviewPrep.user_id == uid)
     # Note: scrape_runs tracking was removed — ingesta is now handled by the microservice
     avg_rank_score = select(func.avg(JobPosting.rank_score)).where(
         JobPosting.user_id == uid, JobPosting.rank_score.isnot(None)
     )
-    hired = select(func.count(Outcome.id)).where(
-        Outcome.user_id == uid, Outcome.status == "hired"
-    )
-    rejected = select(func.count(Outcome.id)).where(
-        Outcome.user_id == uid, Outcome.status == "rejected"
-    )
+    hired = select(func.count(Outcome.id)).where(Outcome.user_id == uid, Outcome.status == "hired")
+    rejected = select(func.count(Outcome.id)).where(Outcome.user_id == uid, Outcome.status == "rejected")
     # Document KPIs (the CV builder flow is the core value of the app)
     base_cv_ready = select(func.count(GeneratedCV.id)).where(
         GeneratedCV.user_id == uid,
@@ -119,14 +113,10 @@ async def get_analytics_funnel(
     uid = user["sub"]
 
     total_jobs = select(func.count(JobPosting.id)).where(JobPosting.user_id == uid)
-    ranked_jobs = select(func.count(JobPosting.id)).where(
-        JobPosting.user_id == uid, JobPosting.rank_score.isnot(None)
-    )
+    ranked_jobs = select(func.count(JobPosting.id)).where(JobPosting.user_id == uid, JobPosting.rank_score.isnot(None))
     applications = select(func.count(Application.id)).where(Application.user_id == uid)
     interviews = select(func.count(InterviewPrep.id)).where(InterviewPrep.user_id == uid)
-    hired = select(func.count(Outcome.id)).where(
-        Outcome.user_id == uid, Outcome.status == "hired"
-    )
+    hired = select(func.count(Outcome.id)).where(Outcome.user_id == uid, Outcome.status == "hired")
 
     stmt = select(
         func.coalesce(total_jobs.scalar_subquery(), 0).label("total_jobs"),
@@ -154,7 +144,9 @@ async def get_analytics_funnel(
 
 
 @analytics_router.get("/trends")
-@cached(ttl=60, cache=Cache.MEMORY, key_builder=lambda f, *a, **kw: f"analytics_trends_{kw['user']['sub']}_{kw['days']}")
+@cached(
+    ttl=60, cache=Cache.MEMORY, key_builder=lambda f, *a, **kw: f"analytics_trends_{kw['user']['sub']}_{kw['days']}"
+)
 async def get_analytics_trends(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -192,13 +184,15 @@ async def get_analytics_trends(
     trends = []
     for offset in range(days):
         key = (start + timedelta(days=offset)).isoformat()
-        trends.append({
-            "date": key,
-            "scraped": scraped.get(key, 0),
-            "applications": applications.get(key, 0),
-            "interviews": interviews.get(key, 0),
-            "ranked": ranked.get(key, 0),
-            "hired": hired.get(key, 0),
-        })
+        trends.append(
+            {
+                "date": key,
+                "scraped": scraped.get(key, 0),
+                "applications": applications.get(key, 0),
+                "interviews": interviews.get(key, 0),
+                "ranked": ranked.get(key, 0),
+                "hired": hired.get(key, 0),
+            }
+        )
 
     return {"days": days, "trends": trends}

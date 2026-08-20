@@ -1,7 +1,8 @@
 """Tests para job_search.py — verificar sin depender del frontend ni del microservicio."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -59,9 +60,9 @@ async def test_trigger_ingest_returns_none_on_500():
 @pytest.mark.asyncio
 async def test_trigger_ingest_returns_none_on_timeout():
     """Si el microservicio no responde (timeout), trigger_ingest retorna None."""
-    from app.services.job_search import trigger_ingest
-
     import httpx
+
+    from app.services.job_search import trigger_ingest
 
     with patch("httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
@@ -104,8 +105,9 @@ async def test_search_returns_empty_when_db_empty():
 @pytest.mark.asyncio
 async def test_trigger_ingest_raises_on_400():
     """Si el microservicio retorna 400, trigger_ingest debe lanzar excepción (no tragarse el error)."""
-    from app.services.job_search import trigger_ingest
     import httpx
+
+    from app.services.job_search import trigger_ingest
 
     mock_response = MagicMock()
     mock_response.status_code = 400

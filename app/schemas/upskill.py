@@ -4,10 +4,8 @@ Request/response shapes for identifying skill gaps and generating a learning pla
 """
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ── Request schemas ─────────────────────────────────────────────────
 
@@ -23,12 +21,8 @@ class UpskillRequest(BaseModel):
         description="Analysis mode: 'aggregate' (all tracked jobs) or 'targeted' (single job URL)",
         pattern="^(aggregate|targeted)$",
     )
-    target_job_url: str | None = Field(
-        None, description="Job posting URL for targeted mode"
-    )
-    target_job_posting_id: str | None = Field(
-        None, description="Job posting ID from DB for targeted mode"
-    )
+    target_job_url: str | None = Field(None, description="Job posting URL for targeted mode")
+    target_job_posting_id: str | None = Field(None, description="Job posting ID from DB for targeted mode")
 
 
 # ── Response schemas ────────────────────────────────────────────────

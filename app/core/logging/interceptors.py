@@ -11,6 +11,7 @@ llm_logger = logging.getLogger("app.llm")
 
 # ─── SQLAlchemy ──────────────────────────────────────────────────────────
 
+
 def setup_sqlalchemy_logging(engine) -> None:
     """Log SQL queries via app.sql logger instead of echo=True.
 
@@ -28,12 +29,15 @@ def setup_sqlalchemy_logging(engine) -> None:
         elapsed = (time.perf_counter() - start) * 1000
         if elapsed > 100 or sql_logger.isEnabledFor(logging.DEBUG):
             sql_logger.debug(
-                "SQL (%.1fms): %s", elapsed, statement[:200],
+                "SQL (%.1fms): %s",
+                elapsed,
+                statement[:200],
                 extra={"extra_data": {"latency_ms": round(elapsed, 1)}},
             )
 
 
 # ─── LiteLLM / LLM calls ────────────────────────────────────────────────
+
 
 class LLMCallLogger:
     """Context manager to log every LLM call with timing.
@@ -59,7 +63,9 @@ class _LLMCallContext:
         self._start = time.perf_counter()
         llm_logger.info(
             "LLM call → %s/%s [%s]",
-            self.provider, self.model, self.purpose,
+            self.provider,
+            self.model,
+            self.purpose,
         )
         return self
 
@@ -68,17 +74,26 @@ class _LLMCallContext:
         if exc_type:
             llm_logger.error(
                 "LLM call FAILED ← %s/%s [%s] (%.0fms): %s",
-                self.provider, self.model, self.purpose, elapsed, exc_val,
+                self.provider,
+                self.model,
+                self.purpose,
+                elapsed,
+                exc_val,
             )
         else:
             llm_logger.info(
                 "LLM call OK ← %s/%s [%s] (%.0fms)",
-                self.provider, self.model, self.purpose, elapsed,
-                extra={"extra_data": {
-                    "provider": self.provider,
-                    "model": self.model,
-                    "purpose": self.purpose,
-                    "latency_ms": round(elapsed),
-                }},
+                self.provider,
+                self.model,
+                self.purpose,
+                elapsed,
+                extra={
+                    "extra_data": {
+                        "provider": self.provider,
+                        "model": self.model,
+                        "purpose": self.purpose,
+                        "latency_ms": round(elapsed),
+                    }
+                },
             )
         return False

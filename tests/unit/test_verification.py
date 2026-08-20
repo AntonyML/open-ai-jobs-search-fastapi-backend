@@ -10,7 +10,6 @@ Tests cover:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +19,6 @@ from app.db.models import Application, CandidateProfile, JobPosting
 from app.schemas.ats_check import ATSResult
 from app.schemas.verification import LlmContentCheckOutput, VerificationCheck, VerificationResult
 from app.services import verification
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -197,7 +195,8 @@ class TestCheckRoleInProfile:
 
     def test_role_found_in_candidate_profile_statement(self):
         result = verification._check_role_in_profile(
-            {"profile_statement": "Generic CV text."}, "Senior ML Engineer",
+            {"profile_statement": "Generic CV text."},
+            "Senior ML Engineer",
             "I am a Senior ML Engineer with 5+ years experience.",
         )
         assert result.passed is True
@@ -216,15 +215,11 @@ class TestCheckRoleInProfile:
 
 class TestCheckCompanyInCover:
     def test_company_found(self):
-        result = verification._check_company_in_cover(
-            "I am excited to join TechCorp.", "TechCorp"
-        )
+        result = verification._check_company_in_cover("I am excited to join TechCorp.", "TechCorp")
         assert result.passed is True
 
     def test_company_not_found(self):
-        result = verification._check_company_in_cover(
-            "I am excited to join this company.", "TechCorp"
-        )
+        result = verification._check_company_in_cover("I am excited to join this company.", "TechCorp")
         assert result.passed is False
 
     def test_no_company(self):
@@ -236,9 +231,7 @@ class TestCheckCompanyInCover:
         assert result.passed is False
 
     def test_multi_word_company(self):
-        result = verification._check_company_in_cover(
-            "I want to work at Google DeepMind.", "Google DeepMind"
-        )
+        result = verification._check_company_in_cover("I want to work at Google DeepMind.", "Google DeepMind")
         assert result.passed is True
 
 
@@ -254,12 +247,14 @@ class TestCheckDateFormat:
         assert result.passed is True
 
     def test_too_many_formats(self):
-        cv = {"experience": [
-            {"date_range": {"start": "2020–2024", "end": None}},
-            {"date_range": {"start": "Jan 2020", "end": None}},
-            {"date_range": {"start": "2020-03", "end": None}},
-            {"date_range": {"start": "03/2020", "end": None}},
-        ]}
+        cv = {
+            "experience": [
+                {"date_range": {"start": "2020–2024", "end": None}},
+                {"date_range": {"start": "Jan 2020", "end": None}},
+                {"date_range": {"start": "2020-03", "end": None}},
+                {"date_range": {"start": "03/2020", "end": None}},
+            ]
+        }
         result = verification._check_date_format(cv)
         assert result.passed is False
         assert "inconsistent" in result.details.lower() or "different" in result.details.lower()
@@ -463,18 +458,24 @@ async def test_run_verification_checklist_full_pass(
         with patch("app.services.verification._run_llm_content_checks") as mock_llm:
             mock_llm.return_value = [
                 VerificationCheck(
-                    name="fabricated_claims_free", label="No fabricated claims",
-                    category="llm", passed=True,
+                    name="fabricated_claims_free",
+                    label="No fabricated claims",
+                    category="llm",
+                    passed=True,
                     details="✅ No fabricated claims detected.",
                 ),
                 VerificationCheck(
-                    name="profile_specific_to_role", label="Profile statement specific to role",
-                    category="llm", passed=True,
+                    name="profile_specific_to_role",
+                    label="Profile statement specific to role",
+                    category="llm",
+                    passed=True,
                     details="✅ Profile statement mentions the specific role.",
                 ),
                 VerificationCheck(
-                    name="tone_consistency", label="Consistent tone CV/cover",
-                    category="llm", passed=True,
+                    name="tone_consistency",
+                    label="Consistent tone CV/cover",
+                    category="llm",
+                    passed=True,
                     details="✅ CV and cover letter have consistent tone.",
                 ),
             ]
@@ -496,9 +497,7 @@ async def test_run_verification_checklist_full_pass(
 
 
 @pytest.mark.asyncio
-async def test_run_verification_checklist_with_failures(
-    sample_application, sample_candidate, sample_job
-):
+async def test_run_verification_checklist_with_failures(sample_application, sample_candidate, sample_job):
     """Verification with some failing checks."""
     bad_cv = {
         "first_name": "[YOUR_NAME]",
@@ -525,33 +524,41 @@ async def test_run_verification_checklist_with_failures(
     with patch("app.services.verification.ats_check.check_ats_from_json") as mock_ats:
         mock_ats.return_value = bad_ats
 
-        with patch("pathlib.Path.exists", return_value=True):  # ATS requires existing PDF
-            with patch("app.services.verification._run_llm_content_checks") as mock_llm:
-                mock_llm.return_value = [
-                    VerificationCheck(
-                        name="fabricated_claims_free", label="No fabricated claims",
-                        category="llm", passed=True,
-                        details="✅ No fabricated claims detected.",
-                    ),
-                    VerificationCheck(
-                        name="profile_specific_to_role", label="Profile statement specific to role",
-                        category="llm", passed=True,
-                        details="✅ Profile statement mentions the specific role.",
-                    ),
-                    VerificationCheck(
-                        name="tone_consistency", label="Consistent tone CV/cover",
-                        category="llm", passed=True,
-                        details="✅ CV and cover letter have consistent tone.",
-                    ),
-                ]
+        with (
+            patch("pathlib.Path.exists", return_value=True),  # ATS requires existing PDF
+            patch("app.services.verification._run_llm_content_checks") as mock_llm,
+        ):
+            mock_llm.return_value = [
+                VerificationCheck(
+                    name="fabricated_claims_free",
+                    label="No fabricated claims",
+                    category="llm",
+                    passed=True,
+                    details="✅ No fabricated claims detected.",
+                ),
+                VerificationCheck(
+                    name="profile_specific_to_role",
+                    label="Profile statement specific to role",
+                    category="llm",
+                    passed=True,
+                    details="✅ Profile statement mentions the specific role.",
+                ),
+                VerificationCheck(
+                    name="tone_consistency",
+                    label="Consistent tone CV/cover",
+                    category="llm",
+                    passed=True,
+                    details="✅ CV and cover letter have consistent tone.",
+                ),
+            ]
 
-                result = await verification.run_verification_checklist(
-                    application=sample_application,
-                    candidate=sample_candidate,
-                    job_posting=sample_job,
-                    cv_json=bad_cv,
-                    cv_pdf_path=Path("/tmp/test_cv.pdf"),
-                )
+            result = await verification.run_verification_checklist(
+                application=sample_application,
+                candidate=sample_candidate,
+                job_posting=sample_job,
+                cv_json=bad_cv,
+                cv_pdf_path=Path("/tmp/test_cv.pdf"),
+            )
 
     assert result.overall_pass is False
     assert len(result.failures) > 0
@@ -561,27 +568,46 @@ async def test_run_verification_checklist_with_failures(
 
 
 @pytest.mark.asyncio
-async def test_run_verification_checklist_no_pdf(
-    sample_application, sample_cv_json, sample_candidate, sample_job
-):
+async def test_run_verification_checklist_no_pdf(sample_application, sample_cv_json, sample_candidate, sample_job):
     """Verification runs gracefully — ATS now uses JSON data, not PDF."""
     sample_ats_pass = ATSResult(
-        raw_text="test text", has_cid_markers=False,
-        has_email=True, has_phone=True, has_candidate_name=True,
-        keyword_coverage=0.9, found_keywords=["Python"], missing_keywords=[],
-        reading_order_ok=True, pass_ats=True,
+        raw_text="test text",
+        has_cid_markers=False,
+        has_email=True,
+        has_phone=True,
+        has_candidate_name=True,
+        keyword_coverage=0.9,
+        found_keywords=["Python"],
+        missing_keywords=[],
+        reading_order_ok=True,
+        pass_ats=True,
     )
 
     with patch("app.services.verification.ats_check.check_ats_from_json") as mock_ats:
         mock_ats.return_value = sample_ats_pass
         with patch("app.services.verification._run_llm_content_checks") as mock_llm:
             mock_llm.return_value = [
-                VerificationCheck(name="fabricated_claims_free", label="No fabricated claims",
-                                  category="llm", passed=True, details="Skipped."),
-                VerificationCheck(name="profile_specific_to_role", label="Profile statement specific to role",
-                                  category="llm", passed=True, details="Skipped."),
-                VerificationCheck(name="tone_consistency", label="Consistent tone CV/cover",
-                                  category="llm", passed=True, details="Skipped."),
+                VerificationCheck(
+                    name="fabricated_claims_free",
+                    label="No fabricated claims",
+                    category="llm",
+                    passed=True,
+                    details="Skipped.",
+                ),
+                VerificationCheck(
+                    name="profile_specific_to_role",
+                    label="Profile statement specific to role",
+                    category="llm",
+                    passed=True,
+                    details="Skipped.",
+                ),
+                VerificationCheck(
+                    name="tone_consistency",
+                    label="Consistent tone CV/cover",
+                    category="llm",
+                    passed=True,
+                    details="Skipped.",
+                ),
             ]
 
             result = await verification.run_verification_checklist(
@@ -597,18 +623,31 @@ async def test_run_verification_checklist_no_pdf(
 
 
 @pytest.mark.asyncio
-async def test_run_verification_checklist_no_candidate(
-    sample_application, sample_cv_json, sample_job
-):
+async def test_run_verification_checklist_no_candidate(sample_application, sample_cv_json, sample_job):
     """Verification runs without candidate profile (some checks skipped)."""
     with patch("app.services.verification._run_llm_content_checks") as mock_llm:
         mock_llm.return_value = [
-            VerificationCheck(name="fabricated_claims_free", label="No fabricated claims",
-                              category="llm", passed=True, details="Skipped."),
-            VerificationCheck(name="profile_specific_to_role", label="Profile statement specific to role",
-                              category="llm", passed=True, details="Skipped."),
-            VerificationCheck(name="tone_consistency", label="Consistent tone CV/cover",
-                              category="llm", passed=True, details="Skipped."),
+            VerificationCheck(
+                name="fabricated_claims_free",
+                label="No fabricated claims",
+                category="llm",
+                passed=True,
+                details="Skipped.",
+            ),
+            VerificationCheck(
+                name="profile_specific_to_role",
+                label="Profile statement specific to role",
+                category="llm",
+                passed=True,
+                details="Skipped.",
+            ),
+            VerificationCheck(
+                name="tone_consistency",
+                label="Consistent tone CV/cover",
+                category="llm",
+                passed=True,
+                details="Skipped.",
+            ),
         ]
 
         result = await verification.run_verification_checklist(

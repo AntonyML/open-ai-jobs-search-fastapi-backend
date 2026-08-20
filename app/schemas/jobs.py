@@ -1,25 +1,25 @@
 """Schemas for job search (reads from ingested_jobs, microservice feeds it)."""
 
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+
+from pydantic import BaseModel, Field
 
 
 class JobSearchRequest(BaseModel):
     keywords: str = Field(..., min_length=2, max_length=200)
-    location: Optional[str] = Field(None, max_length=200)
+    location: str | None = Field(None, max_length=200)
     limit: int = Field(50, ge=1, le=100)
 
 
 class JobOut(BaseModel):
     id: str
     title: str
-    company: Optional[str] = None
-    location: Optional[str] = None
-    url: Optional[str] = None
-    description: Optional[str] = None
-    salary: Optional[str] = None
-    ingested_at: Optional[datetime] = None
+    company: str | None = None
+    location: str | None = None
+    url: str | None = None
+    description: str | None = None
+    salary: str | None = None
+    ingested_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -28,11 +28,11 @@ class JobSearchResponse(BaseModel):
     jobs: list[JobOut]
     count: int
     fresh: bool
-    ingest_job_id: Optional[str] = None
-    message: Optional[str] = None
+    ingest_job_id: str | None = None
+    message: str | None = None
 
 
 class IngestStatusResponse(BaseModel):
     status: str
-    result_count: Optional[int] = None
-    error: Optional[str] = None
+    result_count: int | None = None
+    error: str | None = None

@@ -11,6 +11,7 @@ LLM-assisted extraction (Path A/B) will be added in a later iteration.
 
 from __future__ import annotations
 
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import select
@@ -25,18 +26,13 @@ from app.db.models import (
 )
 from app.exceptions import NotFoundError, ProfileIncompleteError
 
-
 # ── Candidate Profile CRUD ──────────────────────────────────────────
 
 
-async def get_profile(
-    db: AsyncSession, user_id: str
-) -> CandidateProfile:
+async def get_profile(db: AsyncSession, user_id: str) -> CandidateProfile:
     """Return the candidate profile for a user, or raise NotFoundError."""
     result = await db.execute(
-        select(CandidateProfile)
-        .options(joinedload(CandidateProfile.user))
-        .where(CandidateProfile.user_id == user_id)
+        select(CandidateProfile).options(joinedload(CandidateProfile.user)).where(CandidateProfile.user_id == user_id)
     )
     profile = result.scalar_one_or_none()
     if profile is None:
@@ -44,9 +40,7 @@ async def get_profile(
     return profile
 
 
-async def create_profile(
-    db: AsyncSession, user_id: str, data: dict[str, Any]
-) -> CandidateProfile:
+async def create_profile(db: AsyncSession, user_id: str, data: dict[str, Any]) -> CandidateProfile:
     """Create a new candidate profile for the user.
 
     Args:
@@ -89,9 +83,7 @@ async def create_profile(
     return profile
 
 
-async def update_profile(
-    db: AsyncSession, user_id: str, data: dict[str, Any]
-) -> CandidateProfile:
+async def update_profile(db: AsyncSession, user_id: str, data: dict[str, Any]) -> CandidateProfile:
     """Partially update the candidate profile.
 
     Only the fields present in ``data`` are changed.  ``None`` values
@@ -124,9 +116,7 @@ async def delete_profile(db: AsyncSession, user_id: str) -> None:
     await db.flush()
 
 
-async def complete_setup(
-    db: AsyncSession, user_id: str, setup_method: str
-) -> CandidateProfile:
+async def complete_setup(db: AsyncSession, user_id: str, setup_method: str) -> CandidateProfile:
     """Mark the profile setup as completed.
 
     Args:
@@ -137,11 +127,11 @@ async def complete_setup(
     Returns:
         The updated CandidateProfile.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     profile = await get_profile(db, user_id)
     profile.setup_method = setup_method
-    profile.setup_completed_at = datetime.now(timezone.utc)
+    profile.setup_completed_at = datetime.now(UTC)
     await db.flush()
     return profile
 
@@ -149,24 +139,16 @@ async def complete_setup(
 # ── Behavioral Profile CRUD ─────────────────────────────────────────
 
 
-async def get_behavioral_profile(
-    db: AsyncSession, candidate_id: str
-) -> BehavioralProfile:
+async def get_behavioral_profile(db: AsyncSession, candidate_id: str) -> BehavioralProfile:
     """Return the behavioral profile for a candidate."""
-    result = await db.execute(
-        select(BehavioralProfile).where(
-            BehavioralProfile.candidate_id == candidate_id
-        )
-    )
+    result = await db.execute(select(BehavioralProfile).where(BehavioralProfile.candidate_id == candidate_id))
     bp = result.scalar_one_or_none()
     if bp is None:
         raise NotFoundError("Behavioral profile not found.")
     return bp
 
 
-async def upsert_behavioral_profile(
-    db: AsyncSession, candidate_id: str, data: dict[str, Any]
-) -> BehavioralProfile:
+async def upsert_behavioral_profile(db: AsyncSession, candidate_id: str, data: dict[str, Any]) -> BehavioralProfile:
     """Create or update the behavioral profile for a candidate."""
     try:
         bp = await get_behavioral_profile(db, candidate_id)
@@ -184,21 +166,15 @@ async def upsert_behavioral_profile(
 # ── STAR Examples CRUD ──────────────────────────────────────────────
 
 
-async def list_star_examples(
-    db: AsyncSession, candidate_id: str
-) -> list[StarExample]:
+async def list_star_examples(db: AsyncSession, candidate_id: str) -> list[StarExample]:
     """Return all STAR examples for a candidate."""
     result = await db.execute(
-        select(StarExample)
-        .where(StarExample.candidate_id == candidate_id)
-        .order_by(StarExample.created_at)
+        select(StarExample).where(StarExample.candidate_id == candidate_id).order_by(StarExample.created_at)
     )
     return list(result.scalars().all())
 
 
-async def create_star_example(
-    db: AsyncSession, candidate_id: str, data: dict[str, Any]
-) -> StarExample:
+async def create_star_example(db: AsyncSession, candidate_id: str, data: dict[str, Any]) -> StarExample:
     """Create a new STAR example."""
     example = StarExample(candidate_id=candidate_id, **data)
     db.add(example)
@@ -206,9 +182,7 @@ async def create_star_example(
     return example
 
 
-async def delete_star_example(
-    db: AsyncSession, example_id: str, candidate_id: str
-) -> None:
+async def delete_star_example(db: AsyncSession, example_id: str, candidate_id: str) -> None:
     """Delete a STAR example, verifying ownership."""
     result = await db.execute(
         select(StarExample).where(
