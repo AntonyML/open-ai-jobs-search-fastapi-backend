@@ -457,7 +457,7 @@ async def test_run_verification_checklist_full_pass(
     sample_application, sample_cv_json, sample_candidate, sample_job, sample_ats_pass
 ):
     """Full verification with all checks passing."""
-    with patch("app.services.verification.ats_check.check_ats_parseability") as mock_ats:
+    with patch("app.services.verification.ats_check.check_ats_from_json") as mock_ats:
         mock_ats.return_value = sample_ats_pass
 
         with patch("app.services.verification._run_llm_content_checks") as mock_llm:
@@ -522,7 +522,7 @@ async def test_run_verification_checklist_with_failures(
         pass_ats=False,
     )
 
-    with patch("app.services.verification.ats_check.check_ats_parseability") as mock_ats:
+    with patch("app.services.verification.ats_check.check_ats_from_json") as mock_ats:
         mock_ats.return_value = bad_ats
 
         with patch("pathlib.Path.exists", return_value=True):  # ATS requires existing PDF
@@ -564,28 +564,36 @@ async def test_run_verification_checklist_with_failures(
 async def test_run_verification_checklist_no_pdf(
     sample_application, sample_cv_json, sample_candidate, sample_job
 ):
-    """Verification runs gracefully without PDF (ATS checks skipped)."""
-    with patch("app.services.verification._run_llm_content_checks") as mock_llm:
-        mock_llm.return_value = [
-            VerificationCheck(name="fabricated_claims_free", label="No fabricated claims",
-                              category="llm", passed=True, details="Skipped."),
-            VerificationCheck(name="profile_specific_to_role", label="Profile statement specific to role",
-                              category="llm", passed=True, details="Skipped."),
-            VerificationCheck(name="tone_consistency", label="Consistent tone CV/cover",
-                              category="llm", passed=True, details="Skipped."),
-        ]
+    """Verification runs gracefully — ATS now uses JSON data, not PDF."""
+    sample_ats_pass = ATSResult(
+        raw_text="test text", has_cid_markers=False,
+        has_email=True, has_phone=True, has_candidate_name=True,
+        keyword_coverage=0.9, found_keywords=["Python"], missing_keywords=[],
+        reading_order_ok=True, pass_ats=True,
+    )
 
-        result = await verification.run_verification_checklist(
-            application=sample_application,
-            candidate=sample_candidate,
-            job_posting=sample_job,
-            cv_json=sample_cv_json,
-            cv_pdf_path=None,  # No PDF available
-        )
+    with patch("app.services.verification.ats_check.check_ats_from_json") as mock_ats:
+        mock_ats.return_value = sample_ats_pass
+        with patch("app.services.verification._run_llm_content_checks") as mock_llm:
+            mock_llm.return_value = [
+                VerificationCheck(name="fabricated_claims_free", label="No fabricated claims",
+                                  category="llm", passed=True, details="Skipped."),
+                VerificationCheck(name="profile_specific_to_role", label="Profile statement specific to role",
+                                  category="llm", passed=True, details="Skipped."),
+                VerificationCheck(name="tone_consistency", label="Consistent tone CV/cover",
+                                  category="llm", passed=True, details="Skipped."),
+            ]
+
+            result = await verification.run_verification_checklist(
+                application=sample_application,
+                candidate=sample_candidate,
+                job_posting=sample_job,
+                cv_json=sample_cv_json,
+                cv_pdf_path=None,
+            )
 
     assert len(result.checks) >= 9
-    # ATS checks should pass with "skipped" messages
-    assert result.overall_pass is True  # All ATS checks skipped gracefully
+    assert result.overall_pass is True
 
 
 @pytest.mark.asyncio

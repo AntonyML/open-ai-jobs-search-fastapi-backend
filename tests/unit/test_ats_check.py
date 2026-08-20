@@ -1,6 +1,6 @@
 """Tests for the ATS parseability check service.
 
-Uses mocked pdftotext subprocess calls since the actual binary is
+Tests ATS check functions (structured JSON mode and legacy stub).
 not available in the test environment. All ATS check logic is
 deterministic and tested through unit tests.
 """
@@ -97,7 +97,7 @@ def _make_ats_text(
     include_cid: bool = False,
     keywords: list[str] | None = None,
 ) -> str:
-    """Generate a realistic pdftotext output for testing.
+    """Generate realistic ATS text output for testing.
 
     Args:
         include_email: Include candidate email as literal text.
@@ -313,27 +313,58 @@ class TestDetectColumnScramble:
         assert ats_check._detect_column_scramble(text) is False
 
 
-# ── Integration test for check_ats_parseability ─────────────────────
+# ── Helpers for JSON-based ATS tests ──────────────────────────────
+
+
+def _make_cv_json(
+    include_email: bool = True,
+    include_name: bool = True,
+    include_phone: bool = True,
+    keywords: list[str] | None = None,
+) -> dict:
+    """Generate a structured CV JSON for testing check_ats_from_json."""
+    cv: dict[str, Any] = {}
+    if include_name:
+        cv["first_name"] = "Jane"
+        cv["last_name"] = "Doe"
+    if include_email:
+        cv["email"] = "jane.doe@example.com"
+    if include_phone:
+        cv["phone"] = "+45 12345678"
+    cv["location"] = "Copenhagen, Denmark"
+    cv["profile_statement"] = "Senior software engineer with 10 years of experience."
+    cv["core_competencies"] = keywords or ["Python", "Docker"]
+    kw_list = keywords or ["Python"]
+    bullets = [f"Built {kw} pipelines" for kw in kw_list]
+    cv["experience"] = [
+        {
+            "title": "Senior Engineer",
+            "company": "TechCorp",
+            "location": "Copenhagen",
+            "bullets": bullets,
+        }
+    ]
+    return {"cv": cv}
+
+
+# ── check_ats_from_json tests (primary entry point) ────────────────
 
 
 @pytest.mark.asyncio
-async def test_check_ats_parseability_full_pass():
-    """Full ATS check with clean PDF returns pass=True."""
-    pdf_path = Path("/tmp/test_cv.pdf")
+async def test_check_ats_from_json_full_pass():
+    """Full ATS check with clean CV JSON returns pass=True."""
     job = _create_test_job(requirements=["Python", "PyTorch", "Kubernetes", "AWS", "Docker"])
     candidate = CandidateProfile(
         id="cand-1", user_id="u1",
         full_name="Jane Doe", email="jane.doe@example.com", phone="+45 12345678",
     )
 
-    clean_text = _make_ats_text(
+    cv_json = _make_cv_json(
         include_email=True, include_name=True, include_phone=True,
-        include_cid=False,
         keywords=["Python", "PyTorch", "Kubernetes", "AWS", "Docker"],
     )
 
-    with patch("app.services.ats_check._extract_pdf_text", return_value=clean_text):
-        result = await ats_check.check_ats_parseability(pdf_path, job, candidate)
+    result = await ats_check.check_ats_from_json(cv_json, job, candidate)
 
     assert result.pass_ats is True, f"Expected pass_ats=True, got {result.pass_ats}"
     assert result.has_cid_markers is False
@@ -344,69 +375,59 @@ async def test_check_ats_parseability_full_pass():
 
 
 @pytest.mark.asyncio
-async def test_check_ats_parseability_cid_markers():
-    """PDF with CID markers fails ATS check."""
-    pdf_path = Path("/tmp/test_cv.pdf")
+async def test_check_ats_from_json_missing_email():
+    """CV JSON without email fails ATS check."""
     job = _create_test_job(requirements=["Python"])
     candidate = CandidateProfile(
         id="cand-1", user_id="u1",
         full_name="Jane Doe", email="jane@example.com",
     )
 
-    cid_text = _make_ats_text(include_cid=True)
-
-    with patch("app.services.ats_check._extract_pdf_text", return_value=cid_text):
-        result = await ats_check.check_ats_parseability(pdf_path, job, candidate)
-
-    assert result.pass_ats is False, "CID markers should cause ATS failure"
-    assert result.has_cid_markers is True
-
-
-@pytest.mark.asyncio
-async def test_check_ats_parseability_missing_email():
-    """PDF without extractable email fails ATS check."""
-    pdf_path = Path("/tmp/test_cv.pdf")
-    job = _create_test_job(requirements=["Python"])
-    candidate = CandidateProfile(
-        id="cand-1", user_id="u1",
-        full_name="Jane Doe", email="jane@example.com",
-    )
-
-    no_email_text = _make_ats_text(include_email=False)
-
-    with patch("app.services.ats_check._extract_pdf_text", return_value=no_email_text):
-        result = await ats_check.check_ats_parseability(pdf_path, job, candidate)
+    cv_json = _make_cv_json(include_email=False)
+    result = await ats_check.check_ats_from_json(cv_json, job, candidate)
 
     assert result.pass_ats is False, "Missing email should cause ATS failure"
     assert result.has_email is False
 
 
 @pytest.mark.asyncio
-async def test_check_ats_parseability_no_pdftotext():
-    """When pdftotext is not available, returns soft fail (no exception)."""
-    pdf_path = Path("/tmp/test_cv.pdf")
+async def test_check_ats_from_json_empty_cv():
+    """Empty CV JSON returns soft fail."""
     job = _create_test_job()
-    candidate = None
-
-    with patch("app.services.ats_check._extract_pdf_text", return_value=None):
-        result = await ats_check.check_ats_parseability(pdf_path, job, candidate)
-
+    result = await ats_check.check_ats_from_json({}, job, None)
     assert result.pass_ats is False
     assert result.raw_text is None
 
 
 @pytest.mark.asyncio
-async def test_check_ats_parseability_without_candidate():
-    """ATS check works without candidate profile (some checks skipped)."""
+async def test_check_ats_from_json_without_candidate():
+    """ATS check works without candidate profile."""
+    job = _create_test_job(requirements=["Python"])
+    cv_json = _make_cv_json(keywords=["Python"])
+    result = await ats_check.check_ats_from_json(cv_json, job, candidate=None)
+    assert result.pass_ats is not None
+
+
+# ── check_ats_parseability deprecated stub ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_check_ats_parseability_deprecated_stub():
+    """Deprecated check_ats_parseability returns soft-fail stub."""
+    import warnings
+    from pathlib import Path
+
     pdf_path = Path("/tmp/test_cv.pdf")
     job = _create_test_job(requirements=["Python"])
 
-    text = "Python experience with some technical skills."
-    with patch("app.services.ats_check._extract_pdf_text", return_value=text):
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
         result = await ats_check.check_ats_parseability(pdf_path, job, candidate=None)
 
-    assert result.pass_ats is not None
-    # Without candidate, email/name checks use regex patterns
+    assert result.pass_ats is False
+    assert result.raw_text is None
+    assert len(w) == 1
+    assert issubclass(w[0].category, DeprecationWarning)
 
 
 # ── Integration test: ATS check inside execute_apply ────────────────
