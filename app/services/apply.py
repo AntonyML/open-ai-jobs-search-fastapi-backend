@@ -16,7 +16,6 @@ We use SEPARATE LLM calls for draft, review, and revise so that:
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -589,12 +588,9 @@ async def execute_apply(
         if cv_cover is not None:
             cv_output.cv.cover_letter = cv_cover
 
-        # STAGE 2: PERSIST DRAFT — legacy column `draft_cv_tex` stores the
-        # DRAFT CV as JSON (name is historical, it is NOT LaTeX).
+        # STAGE 2: DRAFT persisted (stage marker; the draft JSON itself is
+        # ephemeral — the final structured CV is stored in cv_json at STAGE 5-6)
         application.stage = "draft"
-        application.draft_cv_tex = json.dumps(
-            cv_output.cv.model_dump(), indent=2, ensure_ascii=False
-        )
         await db.commit()
 
         # STAGE 3: REVIEW (fresh context — reviewer sees JSON, not drafter reasoning)
@@ -649,11 +645,11 @@ async def execute_apply(
             rf.model_dump() for rf in (cv_output.metadata.addressed_red_flags or [])
         ]
 
-        # ATS check
+        # ATS check (on structured data, no PDF needed)
         ats_result = None
         try:
-            ats_result = await ats_check.check_ats_parseability(
-                pdf_path=cv_pdf_abs,
+            ats_result = await ats_check.check_ats_from_json(
+                cv_json=final_cv_dict,
                 job_posting=job,
                 candidate=candidate,
             )

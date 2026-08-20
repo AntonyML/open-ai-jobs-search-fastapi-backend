@@ -24,6 +24,7 @@ from pathlib import Path
 
 from app.core.logging import get_logger
 from app.core.settings import get_settings
+from app.services import r2_storage
 
 logger = get_logger(__name__)
 
@@ -151,9 +152,16 @@ def write_bytes(scope: str, rel: str | Path, data: bytes) -> Path:
 
 
 def remove_file(scope: str, rel: str | Path | None) -> bool:
-    """Best-effort, idempotent removal of a single artifact file."""
+    """Best-effort, idempotent removal of a single artifact file.
+
+    When R2 is configured, deletes from R2 instead of local disk.
+    """
     if not rel:
         return False
+    # R2 configured: delete from cloud storage
+    if r2_storage._r2_configured():
+        return r2_storage.delete_pdf(str(rel))
+    # Fallback: delete from local disk
     try:
         resolve(scope, rel).unlink(missing_ok=True)
         return True
@@ -165,7 +173,15 @@ def remove_file(scope: str, rel: str | Path | None) -> bool:
 
 
 def remove_user_dir(scope: str, user_id: str) -> bool:
-    """Best-effort, idempotent removal of a user's whole artifact folder."""
+    """Best-effort, idempotent removal of a user's whole artifact folder.
+
+    When R2 is configured, deletes the user's prefix from R2.
+    """
+    # R2 configured: delete user prefix from cloud storage
+    if r2_storage._r2_configured():
+        deleted = r2_storage.delete_user_prefix(user_id)
+        return deleted >= 0  # No failure if no objects existed
+    # Fallback: delete local directory
     try:
         user = _check_component(user_id, "user_id")
     except ValueError:

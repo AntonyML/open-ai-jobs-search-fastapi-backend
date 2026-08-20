@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -30,7 +30,7 @@ from app.schemas.cv import (
     CVRecoverCreate,
     CVResponse,
 )
-from app.services import credits, cv_generator
+from app.services import credits, cv_generator, r2_storage
 from app.services.access_gate import enforce_action_gate
 from app.services.cv_generator import (
     build_pdf_url,
@@ -231,8 +231,27 @@ async def download_cv(
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download the compiled PDF for a CV."""
+    """Download the compiled PDF for a CV.
+
+    When R2 is configured, redirects to a signed URL.
+    Otherwise, serves the file from local disk.
+    """
     record = await cv_generator.get_cv(db, user["sub"], cv_id)
+    if not record.pdf_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Compiled PDF not found for this CV.",
+        )
+    # R2 configured: redirect to signed URL
+    if r2_storage._r2_configured():
+        if not r2_storage.object_exists(record.pdf_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="PDF not found in storage.",
+            )
+        signed_url = r2_storage.generate_signed_url(record.pdf_path)
+        return RedirectResponse(url=signed_url, status_code=status.HTTP_302_FOUND)
+    # Fallback: local disk
     pdf_path = resolve_pdf_path(record)
     if pdf_path is None or not pdf_path.exists():
         raise HTTPException(
@@ -252,6 +271,30 @@ async def delete_cv(
     user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft-delete a CV: remove its PDF from disk and hide the row."""
+    """Soft-delete a CV: remove its PDF and hide the row."""
     await cv_generator.soft_delete_cv(db, user["sub"], cv_id)
     return None
+
+
+@router.post("/{cv_id}/refresh-url")
+async def refresh_cv_pdf_url(
+    cv_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str | None]:
+    """Regenerate the signed URL for a CV's PDF.
+
+    Useful when the previous URL expired (default TTL: 1h).
+    Does not recompile the PDF — only generates a new signed URL.
+    """
+    record = await cv_generator.get_cv(db, user["sub"], cv_id)
+    if not record.pdf_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF not available for this CV.",
+        )
+    if r2_storage._r2_configured():
+        url = r2_storage.generate_signed_url(record.pdf_path)
+    else:
+        url = build_pdf_url(record)
+    return {"pdf_url": url}

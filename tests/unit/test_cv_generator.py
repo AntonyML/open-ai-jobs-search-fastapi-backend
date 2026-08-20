@@ -323,12 +323,14 @@ async def test_compile_cv_in_background_sets_pdf_path(db_session):
     db_session.add(record)
     await db_session.commit()
 
-    await cv_generator.compile_cv_in_background(
-        "cv-async-1",
-        "test-user-id",
-        SAMPLE_OUTPUT,
-        session_factory=getattr(db_session, "_test_factory"),
-    )
+    # Mock file read to return valid PDF bytes (min 100 bytes for validation)
+    with patch("pathlib.Path.read_bytes", return_value=b"%PDF-1.4" + b" " * 100):
+        await cv_generator.compile_cv_in_background(
+            "cv-async-1",
+            "test-user-id",
+            SAMPLE_OUTPUT,
+            session_factory=getattr(db_session, "_test_factory"),
+        )
 
     await db_session.refresh(record)
     assert record.pdf_path and record.pdf_path.endswith(".pdf")
@@ -347,13 +349,15 @@ async def test_compile_cv_in_background_skips_deleted_record(db_session):
     db_session.add(record)
     await db_session.commit()
 
-    # Must not raise, and must not resurrect the deleted row's pdf_path.
-    await cv_generator.compile_cv_in_background(
-        "cv-async-2",
-        "test-user-id",
-        SAMPLE_OUTPUT,
-        session_factory=getattr(db_session, "_test_factory"),
-    )
+    # Mock file read to return valid PDF bytes (min 100 bytes for validation)
+    with patch("pathlib.Path.read_bytes", return_value=b"%PDF-1.4" + b" " * 100):
+        # Must not raise, and must not resurrect the deleted row's pdf_path.
+        await cv_generator.compile_cv_in_background(
+            "cv-async-2",
+            "test-user-id",
+            SAMPLE_OUTPUT,
+            session_factory=getattr(db_session, "_test_factory"),
+        )
 
     await db_session.refresh(record)
     assert record.pdf_path is None

@@ -48,6 +48,7 @@ from app.services.apply_json import (
 )
 from app.services.notifications import notify_admin
 from app.services.pdf_compiler_typst import compile_cv
+from app.services import r2_storage
 from app.services.artifact_store import new_output_path, remove_file, resolve_existing
 from app.services.provider_config import get_active_provider_config
 from app.services.setup import get_profile
@@ -338,11 +339,31 @@ async def compile_cv_in_background(
             logger.exception("Failed to notify admin about PDF compile failure")
         return
 
+    # Validate PDF before uploading
+    pdf_bytes = abs_pdf_path.read_bytes()
+    if len(pdf_bytes) < 100 or not pdf_bytes.startswith(b"%PDF"):
+        logger.error("Compiled PDF is invalid for CV %s", record_id)
+        abs_pdf_path.unlink(missing_ok=True)
+        return
+
+    # Upload to R2 (if configured), fallback to local disk
+    if r2_storage._r2_configured():
+        try:
+            r2_storage.upload_pdf(pdf_path, pdf_bytes)
+            abs_pdf_path.unlink(missing_ok=True)
+        except Exception:
+            logger.exception("R2 upload failed for CV %s — keeping local", record_id)
+    else:
+        logger.debug("R2 not configured — PDF kept on local disk")
+
     factory = session_factory or async_session_factory
     async with factory() as db:
         record = await db.get(GeneratedCV, record_id)
         if record is None or record.is_deleted:
-            remove_file("cv", pdf_path)
+            if r2_storage._r2_configured():
+                r2_storage.delete_pdf(pdf_path)
+            else:
+                remove_file("cv", pdf_path)
             return
         record.pdf_path = pdf_path
         await db.commit()
@@ -429,21 +450,29 @@ async def _user_obsolete_base_cv(db: AsyncSession, user_id: str) -> GeneratedCV 
 
 
 async def _hard_delete_base(db: AsyncSession, record: GeneratedCV) -> None:
-    """Physically remove a base CV: PDF from disk (best-effort) + DB row.
+    """Physically remove a base CV: PDF from storage (best-effort) + DB row.
 
     This is the only path that actually frees space under ``generated_cvs/``.
     """
-    remove_file("cv", record.pdf_path)
+    if r2_storage._r2_configured():
+        r2_storage.delete_pdf(record.pdf_path)
+    else:
+        remove_file("cv", record.pdf_path)
     await db.delete(record)
 
 
 def _remove_pdf_file(cv: GeneratedCV) -> None:
-    """Best-effort removal of the PDF file from disk.
+    """Best-effort removal of the PDF file from storage.
 
     The PDF is a derived artifact (``cv_json`` is the source of truth), so
-    removal is safe.  ``remove_file`` is idempotent (missing files are fine).
+    removal is safe.  Delete is idempotent (missing files are fine).
     """
-    remove_file("cv", cv.pdf_path)
+    if not cv.pdf_path:
+        return
+    if r2_storage._r2_configured():
+        r2_storage.delete_pdf(cv.pdf_path)
+    else:
+        remove_file("cv", cv.pdf_path)
 
 
 async def _demote_previous_bases(db: AsyncSession, user_id: str) -> None:
@@ -554,8 +583,15 @@ def resolve_pdf_path(record: GeneratedCV) -> Path | None:
 
 
 def build_pdf_url(record: GeneratedCV) -> str | None:
-    """Build the public download URL for a CV."""
+    """Build the download URL for a CV.
+
+    When R2 is configured, returns a signed URL directly.
+    Otherwise, returns the backend download endpoint URL.
+    """
     if not record.pdf_path:
         return None
+    if r2_storage._r2_configured():
+        return r2_storage.generate_signed_url(record.pdf_path)
+    # Fallback: backend download endpoint (local disk)
     base = get_settings().base_url.rstrip("/")
     return f"{base}/api/v1/cv/{record.id}/download"

@@ -347,3 +347,159 @@ async def check_ats_parseability(
             reading_order_ok=reading_order_ok,
             pass_ats=pass_ats,
         )
+
+
+# ── Structured data ATS check (no PDF needed) ──────────────────────
+
+
+def extract_text_from_cv_json(cv_json: dict) -> str:
+    """Extract all renderable text from a structured CV JSON.
+
+    This text is equivalent to what an ATS would read from the PDF.
+    Used for keyword matching, email/phone/name verification, etc.
+    """
+    cv = cv_json.get("cv", cv_json)
+    parts: list[str] = []
+
+    # Header fields
+    for field in [
+        "first_name", "last_name", "email", "phone",
+        "location", "linkedin", "github", "portfolio_url",
+    ]:
+        if cv.get(field):
+            parts.append(str(cv[field]))
+
+    # Profile statement
+    if cv.get("profile_statement"):
+        parts.append(cv["profile_statement"])
+
+    # Core competencies
+    parts.extend(cv.get("core_competencies") or [])
+
+    # Skills
+    for group in (cv.get("skills") or []):
+        if isinstance(group, dict):
+            parts.append(group.get("label", ""))
+            parts.extend(group.get("skills", []))
+        elif isinstance(group, str):
+            parts.append(group)
+
+    # Experience
+    for exp in (cv.get("experience") or []):
+        parts.append(exp.get("title", ""))
+        parts.append(exp.get("company", ""))
+        parts.append(exp.get("location", ""))
+        parts.extend(exp.get("bullets") or [])
+
+    # Projects
+    for proj in (cv.get("projects") or []):
+        parts.append(proj.get("name", ""))
+        parts.append(proj.get("description", ""))
+
+    # Education
+    for edu in (cv.get("education") or []):
+        parts.append(edu.get("degree", ""))
+        parts.append(edu.get("institution", ""))
+        parts.append(edu.get("key_topics", ""))
+
+    # Certifications
+    for cert in (cv.get("certifications") or []):
+        parts.append(cert.get("name", ""))
+        parts.append(cert.get("issuer", ""))
+
+    # Publications
+    for pub in (cv.get("publications") or []):
+        parts.append(pub.get("title", ""))
+        parts.append(pub.get("journal", ""))
+
+    # Awards
+    for award in (cv.get("awards") or []):
+        parts.append(award.get("award", ""))
+        parts.append(award.get("event", ""))
+
+    # References
+    for ref in (cv.get("references") or []):
+        parts.append(ref.get("name", ""))
+        parts.append(ref.get("title", ""))
+        parts.append(ref.get("company", ""))
+
+    # Cover letter
+    cl = cv.get("cover_letter")
+    if cl and isinstance(cl, dict):
+        parts.append(cl.get("opening_paragraph", ""))
+        parts.extend(cl.get("body_paragraphs") or [])
+        parts.append(cl.get("company_connection_paragraph", ""))
+        parts.append(cl.get("closing_paragraph", ""))
+
+    return " ".join(p for p in parts if p)
+
+
+async def check_ats_from_json(
+    cv_json: dict,
+    job_posting: JobPosting,
+    candidate: CandidateProfile | None = None,
+) -> ATSResult:
+    """ATS parseability check directly on structured data.
+
+    Replaces check_ats_parseability() for the main pipeline.
+    No PDF files or pdftotext needed.
+    """
+    with bind_context(stage="ats_check_json"):
+        logger.info("Starting ATS check (JSON mode)")
+
+        # Extract text from structured data
+        raw_text = extract_text_from_cv_json(cv_json)
+
+        if not raw_text.strip():
+            return ATSResult(
+                raw_text=None,
+                has_cid_markers=False,
+                has_email=False,
+                has_phone=False,
+                has_candidate_name=False,
+                keyword_coverage=0.0,
+                found_keywords=[],
+                missing_keywords=[],
+                reading_order_ok=True,
+                pass_ats=False,
+            )
+
+        # CID markers: not applicable in JSON mode
+        has_cid = False
+
+        # Contact info: direct field lookup
+        candidate_email = candidate.email if candidate else None
+        candidate_phone = candidate.phone if candidate else None
+        candidate_name = candidate.full_name if candidate else None
+
+        has_email = _check_email(raw_text, candidate_email)
+        has_phone = _check_phone(raw_text, candidate_phone)
+        has_name = _check_candidate_name(raw_text, candidate_name)
+
+        # Keyword coverage
+        coverage, found_keywords, missing_keywords = _check_keywords(raw_text, job_posting)
+
+        # Reading order: not applicable in JSON mode
+        reading_order_ok = True
+
+        # Overall verdict
+        critical_checks = [
+            not has_cid,
+            coverage >= _KEYWORD_COVERAGE_THRESHOLD,
+            has_email,
+            has_name,
+        ]
+        pass_ats = all(critical_checks)
+
+        return ATSResult(
+            raw_text=raw_text[:500],
+            has_cid_markers=has_cid,
+            has_email=has_email,
+            has_phone=has_phone,
+            has_candidate_name=has_name,
+            keyword_coverage=round(coverage, 2),
+            found_keywords=found_keywords[:30],
+            missing_keywords=missing_keywords[:30],
+            reading_order_ok=reading_order_ok,
+            pass_ats=pass_ats,
+        )

@@ -523,7 +523,7 @@ async def test_ats_check_integrated_in_apply(db_session):
                     with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
                         mock_compile.return_value = None
                         with patch("app.services.apply._get_pdf_page_count", return_value=2):
-                            with patch("app.services.ats_check.check_ats_parseability") as mock_ats:
+                            with patch("app.services.ats_check.check_ats_from_json") as mock_ats:
                                 mock_ats.return_value = ATSResult(
                                     raw_text="Mock PDF text with Python and PyTorch keywords present.",
                                     has_cid_markers=False,
@@ -665,7 +665,7 @@ async def test_ats_check_integrated_ats_fails_but_pipeline_continues(db_session)
                     with patch("app.services.pdf_compiler_typst.compile_cv") as mock_compile:
                         mock_compile.return_value = None
                         with patch("app.services.apply._get_pdf_page_count", return_value=2):
-                            with patch("app.services.ats_check.check_ats_parseability") as mock_ats:
+                            with patch("app.services.ats_check.check_ats_from_json") as mock_ats:
                                 mock_ats.return_value = ATSResult(
                                     raw_text="Bad PDF text with (cid:123) markers. Very little content.",
                                     has_cid_markers=True,
