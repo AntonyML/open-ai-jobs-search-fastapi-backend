@@ -69,6 +69,17 @@ class TestStaticModelsFor:
         assert "gpt-5" in result
         assert "gpt-4o-search-preview" in result
 
+    def test_gemini_returns_static_list(self):
+        result = _static_models_for("gemini")
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert "gemini-2.5-flash" in result
+        assert "gemini-2.5-pro" in result
+
+    def test_custom_returns_none(self):
+        """Custom provider has no static model list."""
+        assert _static_models_for("custom") is None
+
     def test_unknown_returns_none(self):
         assert _static_models_for("unknown_provider") is None
 
@@ -165,6 +176,79 @@ class TestListProviderModels:
         assert result.provider == "ollama"
         assert result.source == "live"
 
+    # ── Gemini ──────────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_gemini_returns_static_list(self, db_session):
+        """Gemini uses a curated static model list (no live HTTP call)."""
+        result = await list_provider_models(db_session, "gemini")
+        assert result.provider == "gemini"
+        assert result.source == "static"
+        assert len(result.models) > 0
+        model_ids = [m.id for m in result.models]
+        assert "gemini-2.5-flash" in model_ids
+        assert "gemini-2.5-pro" in model_ids
+
+    @pytest.mark.asyncio
+    async def test_gemini_static_listing_flag(self):
+        """Gemini has static_listing=True in the catalog."""
+        from app.schemas.providers import KNOWN_PROVIDERS
+
+        gemini = next(p for p in KNOWN_PROVIDERS if p.name == "gemini")
+        assert gemini.static_listing is True
+        assert gemini.requires_api_key is True
+        assert gemini.supports_custom_base is False
+
+    # ── Custom (OpenAI-compatible) ──────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_custom_no_api_base_raises(self, db_session):
+        """Custom provider requires api_base to list models."""
+        db_session.add(_make_global_config("custom", api_base=None))
+        await db_session.commit()
+        with pytest.raises(ProviderAuthError, match="requires an api_base"):
+            await list_provider_models(db_session, "custom")
+
+    @pytest.mark.asyncio
+    async def test_custom_no_key_raises(self, db_session):
+        """Custom provider requires an API key."""
+        db_session.add(_make_global_config("custom", api_key=None, api_base="https://api.example.com/v1"))
+        await db_session.commit()
+        with pytest.raises(ProviderAuthError, match="No API key configured"):
+            await list_provider_models(db_session, "custom")
+
+    @pytest.mark.asyncio
+    async def test_custom_live_success(self, db_session):
+        """Custom provider lists models via OpenAI-compatible endpoint."""
+        db_session.add(_make_global_config("custom", api_base="https://api.example.com/v1"))
+        await db_session.commit()
+        mock_models = [ModelInfo(id="my-model-7b", object="model", owned_by="custom", source="live")]
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "app.services.provider_models._list_openai_compatible",
+            new_callable=AsyncMock,
+            return_value=mock_models,
+        ):
+            result = await list_provider_models(db_session, "custom")
+        assert result.provider == "custom"
+        assert result.source == "live"
+        assert len(result.models) == 1
+        assert result.models[0].id == "my-model-7b"
+
+    @pytest.mark.asyncio
+    async def test_custom_catalog_entry(self):
+        """Custom provider catalog entry has correct metadata."""
+        from app.schemas.providers import KNOWN_PROVIDERS
+
+        custom = next(p for p in KNOWN_PROVIDERS if p.name == "custom")
+        assert custom.static_listing is False
+        assert custom.requires_api_key is True
+        assert custom.supports_custom_base is True
+        assert custom.example_base_url == "https://api.example.com/v1"
+
+    # ── Unknown ─────────────────────────────────────────────────────
+
     @pytest.mark.asyncio
     async def test_unknown_provider_raises(self, db_session):
         with pytest.raises(NotFoundError, match="Unknown provider"):
@@ -230,3 +314,21 @@ class TestAdminProvidersRouterSmoke:
         validated = ModelListOut(provider=result.provider, source=result.source, models=result.models)
         assert validated.provider == "anthropic"
         assert validated.source == "static"
+
+    def test_catalog_includes_all_providers(self):
+        """KNOWN_PROVIDERS catalog includes all expected providers."""
+        from app.schemas.providers import KNOWN_PROVIDERS, PROVIDER_DISPLAY_MAP
+
+        names = [p.name for p in KNOWN_PROVIDERS]
+        assert "anthropic" in names
+        assert "openai" in names
+        assert "nvidia_nim" in names
+        assert "lm_studio" in names
+        assert "ollama" in names
+        assert "gemini" in names
+        assert "custom" in names
+        assert len(KNOWN_PROVIDERS) == 7
+
+        # PROVIDER_DISPLAY_MAP mirrors catalog
+        assert PROVIDER_DISPLAY_MAP["gemini"] == "Google Gemini"
+        assert PROVIDER_DISPLAY_MAP["custom"] == "Custom (OpenAI-Compatible)"
