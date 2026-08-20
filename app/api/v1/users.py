@@ -7,12 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.db.models import Application, InterviewPrep, JobPosting, Outcome
 from app.db.session import get_db as _get_db
-# Inline tier limits (was in app.services.tiers, now deprecated)
-_TIER_LIMITS = {
-    "free": {"max_rank_iterations": 3, "max_apply_count": 5, "max_prepare_count": 5, "max_track_count": 5},
-    "pro": {"max_rank_iterations": 100, "max_apply_count": 1000, "max_prepare_count": 1000, "max_track_count": 1000},
-    "max": {"max_rank_iterations": 100, "max_apply_count": 1000, "max_prepare_count": 1000, "max_track_count": 1000},
-}
+from app.services.plans import get_plan
+# Fallback limits when the user's plan row is missing from the DB
+# (source of truth is the plans catalog — see Plan.limits)
 _PAID_DEFAULTS = {"max_rank_iterations": 100, "max_apply_count": 1000, "max_prepare_count": 1000, "max_track_count": 1000}
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -30,7 +27,8 @@ async def get_user_usage(
     """
     uid = user["sub"]
     tier = user.get("tier", "free")
-    limits = _TIER_LIMITS.get(tier, _PAID_DEFAULTS)
+    plan = await get_plan(db, tier)
+    limits = plan.limits if plan else _PAID_DEFAULTS
 
     apps = select(func.count()).where(Application.user_id == uid)
     preps = select(func.count()).where(InterviewPrep.user_id == uid)

@@ -9,12 +9,7 @@ from app.db.models import Outcome
 from app.db.session import get_db as _get_db
 from app.schemas.outcome import CalibrationReport, OutcomeCreate, OutcomeOut, OutcomeSummaryOut, OutcomeUpdate, TrackerRowOut
 from app.services import fit_calibration, outcome
-# Inline tier limits (was in app.services.tiers, now deprecated)
-_TIER_LIMITS = {
-    "free": {"max_track_count": 5},
-    "pro": {"max_track_count": 1000},
-    "max": {"max_track_count": 1000},
-}
+from app.services.plans import get_plan
 
 router = APIRouter(prefix="/outcome", tags=["outcome"])
 
@@ -39,7 +34,8 @@ async def create_outcome(
     - hired, offer_declined, rejected, no_response, interview_only, withdrawn
     """
     tier = user.get("tier", "free")
-    max_track = _TIER_LIMITS.get(tier, {}).get("max_track_count")
+    plan = await get_plan(db, tier)
+    max_track = plan.limits["max_track_count"] if plan else None
     if max_track is not None and tier == "free":
         result = await db.execute(select(func.count()).where(Outcome.user_id == user["sub"]))
         track_count = result.scalar()
