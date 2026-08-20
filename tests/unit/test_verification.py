@@ -97,7 +97,6 @@ def sample_application(sample_cv_json):
         user_id="user-1",
         job_posting_id="job-1",
         rank_evaluation_id="eval-1",
-        cv_tex_path=None,
         cv_pdf_path="/tmp/test_cv.pdf",
         cv_json=sample_cv_json,
         cv_compiled=True,
@@ -645,30 +644,3 @@ def test_check_company_in_cover_empty_string():
     """Empty company name is skipped gracefully."""
     result = verification._check_company_in_cover("Some cover letter.", "")
     assert result.passed is True
-
-
-@pytest.mark.asyncio
-async def test_legacy_draft_cv_tex_fallback(sample_cv_json, sample_candidate, sample_job):
-    """Historical rows: verification falls back to JSON stored in draft_cv_tex."""
-    import json
-
-    app = Application(
-        id="app-legacy",
-        user_id="user-1",
-        job_posting_id="job-1",
-        rank_evaluation_id="eval-1",
-        cv_json=None,
-        draft_cv_tex=json.dumps(sample_cv_json),
-        stage="compiled",
-    )
-
-    with patch("app.services.verification._run_llm_content_checks") as mock_llm:
-        mock_llm.return_value = []
-        result = await verification.run_verification_checklist(
-            application=app,
-            candidate=sample_candidate,
-            job_posting=sample_job,
-            cv_pdf_path=None,
-        )
-
-    assert any(c.name == "name_in_cv" and c.passed for c in result.checks)

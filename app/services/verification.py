@@ -73,13 +73,6 @@ async def run_verification_checklist(
         # Resolve structured CV JSON from DB if not provided
         if cv_json is None and application.cv_json:
             cv_json = application.cv_json
-        if cv_json is None and application.draft_cv_tex:
-            # Legacy fallback: historical rows store the draft CV JSON in
-            # the misnamed `draft_cv_tex` column.
-            try:
-                cv_json = json.loads(application.draft_cv_tex)
-            except (ValueError, TypeError):
-                cv_json = None
         if not cv_json:
             cv_json = {}
 

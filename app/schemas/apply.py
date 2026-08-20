@@ -68,11 +68,7 @@ class ApplicationOut(BaseModel):
     addressed_red_flags: list[AddressedRedFlag] | None = None
 
     # Generated files
-    # DEPRECATED: legacy LaTeX-era paths, no longer written by the Typst
-    # pipeline. Kept for backward compatibility with historical responses.
-    cv_tex_path: str | None = Field(None, deprecated=True)
     cv_pdf_path: str | None = None
-    cover_letter_tex_path: str | None = Field(None, deprecated=True)
     cover_letter_pdf_path: str | None = None
 
     # Compilation status

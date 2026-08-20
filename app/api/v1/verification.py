@@ -11,8 +11,6 @@ The checklist combines:
 Non-blocking — the pipeline always completes regardless of failures.
 """
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,18 +86,11 @@ async def verify_application(
     )
 
     # 5. Run verification checklist on the structured CV JSON
-    cv_json = app.cv_json
-    if not cv_json and app.draft_cv_tex:
-        try:
-            cv_json = json.loads(app.draft_cv_tex)
-        except (ValueError, TypeError):
-            cv_json = None
-
     verify_result = await verification.run_verification_checklist(
         application=app,
         candidate=candidate,
         job_posting=job,
-        cv_json=cv_json,
+        cv_json=app.cv_json,
         cv_pdf_path=app.cv_pdf_path,
         provider_config=provider_config,
         correlation_id=correlation_id,
