@@ -112,15 +112,14 @@ async def run_verification_checklist(
         checks.append(_check_no_placeholders(cv_json))
 
         # ═══════════════════════════════════════════════════════════════
-        # PASS 2: ATS parseability check (delegates to ats_check service)
+        # PASS 2: ATS check on structured data (no PDF/pdftotext needed)
         # ═══════════════════════════════════════════════════════════════
 
         ats_result: ATSResult | None = None
-        pdf_path_obj = artifact_store.resolve_existing("apply", cv_pdf_path)
-        if pdf_path_obj and pdf_path_obj.exists():
+        if cv_json:
             try:
-                ats_result = await ats_check.check_ats_parseability(
-                    pdf_path=pdf_path_obj,
+                ats_result = await ats_check.check_ats_from_json(
+                    cv_json=cv_json,
                     job_posting=job_posting,
                     candidate=candidate,
                 )
@@ -611,7 +610,7 @@ def _check_cid_markers(ats: ATSResult | None) -> VerificationCheck:
             label="No CID glyph markers",
             category="ats",
             passed=True,
-            details="⚠️ ATS check not run (pdftotext not available) — CID check skipped.",
+            details="⚠️ ATS check not run — CID check skipped.",
         )
 
     if not ats.has_cid_markers:

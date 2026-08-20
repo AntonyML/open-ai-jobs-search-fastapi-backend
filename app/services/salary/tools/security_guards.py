@@ -37,7 +37,6 @@ ALLOWED_PERMISSIONS = {
     "Bash(bun run:*)",
     "Bash(python salary_lookup.py:*)",
     "Bash(python3 salary_lookup.py:*)",
-    "Bash(pdftotext:*)",
 }
 
 # Personal-data ignore rules that must never disappear from .gitignore.

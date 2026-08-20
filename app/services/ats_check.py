@@ -1,24 +1,17 @@
-"""ATS parseability check service — verifies generated PDFs are ATS-compatible.
+"""ATS parseability check service — verifies CVs are ATS-compatible.
 
-This service runs after PDF compilation and checks whether the generated
-PDF would pass through Applicant Tracking System (ATS) parsers without
-losing critical information.
+This service checks whether a CV (from structured JSON or PDF) would pass
+through Applicant Tracking System (ATS) parsers without losing critical
+information.
 
 All checks are 100% DETERMINISTIC — no LLM calls. This is intentional:
 the ATS check is a quality gate, not an AI analysis.
 
-Dependencies (optional — no crash if missing):
-- ``pdftotext`` (from poppler-utils): extracts text from PDF for analysis
-- ``pdfinfo`` (from poppler-utils): provides PDF metadata
-
-If neither binary is available, the service returns a warning result
-with ``pass_ats`` = None and does NOT block the pipeline.
+Primary entry point: ``check_ats_from_json()`` — works directly on
+structured CV data without needing PDF files or external binaries.
 """
 
 from __future__ import annotations
-
-import asyncio
-import subprocess
 
 import re
 from pathlib import Path
@@ -49,55 +42,7 @@ _CID_PATTERN = re.compile(r"\(cid:\d+\)")
 _KEYWORD_COVERAGE_THRESHOLD = 0.7
 
 
-# ── Binary resolution ───────────────────────────────────────────────
 
-
-def _resolve_binary(name: str) -> str:
-    """Return the poppler binary name — resolved from the system PATH by subprocess."""
-    return name
-
-
-# ── Text extraction ─────────────────────────────────────────────────
-
-
-async def _extract_pdf_text(pdf_path: Path) -> str | None:
-    """Extract plain text from a PDF using pdftotext -layout.
-
-    Uses ``pdftotext -layout`` which preserves reading order — critical
-    for detecting multi-column issues in CV PDFs.
-
-    Args:
-        pdf_path: Path to the PDF file.
-
-    Returns:
-        Extracted text as a single string, or ``None`` if pdftotext
-        is not available or extraction fails.
-    """
-    pdftotext_bin = _resolve_binary("pdftotext")
-
-    try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: subprocess.run(
-                [str(pdftotext_bin), "-layout", str(pdf_path), "-"],
-                capture_output=True,
-                timeout=30,
-            ),
-        )
-        stdout, stderr = result.stdout, result.stderr
-
-        if result.returncode == 0:
-            return stdout.decode("utf-8", errors="replace")
-
-        logger.warning(f"pdftotext failed for {pdf_path}: {stderr.decode()}")
-        return None
-    except FileNotFoundError:
-        logger.warning("pdftotext not found — ATS check skipped")
-        return None
-    except Exception as e:
-        logger.warning(f"pdftotext extraction failed for {pdf_path}: {e}")
-        return None
 
 
 # ── Check functions ─────────────────────────────────────────────────
@@ -280,73 +225,40 @@ def _detect_column_scramble(text: str) -> bool:
     return False
 
 
-# ── Main entry point ────────────────────────────────────────────────
+# ── Legacy PDF-based check (DEPRECATED — use check_ats_from_json) ──
 
 
 async def check_ats_parseability(
-    pdf_path: Path,
+    pdf_path: Path,  # noqa: ARG001
     job_posting: JobPosting,
     candidate: CandidateProfile | None = None,
 ) -> ATSResult:
-    """Run full ATS parseability check on a compiled PDF."""
-    with bind_context(stage="ats_check"):
-        logger.info("Starting ATS check | pdf=%s", pdf_path)
-        # ── Step 1: Extract text ────────────────────────────────────────
-        raw_text = await _extract_pdf_text(pdf_path)
+    """DEPRECATED: Use check_ats_from_json() instead.
 
-        if raw_text is None:
-            return ATSResult(
-                raw_text=None,
-                has_cid_markers=False,
-                has_email=False,
-                has_phone=False,
-                has_candidate_name=False,
-                keyword_coverage=0.0,
-                found_keywords=[],
-                missing_keywords=[],
-                reading_order_ok=True,
-                pass_ats=False,
-            )
+    This function relied on pdftotext (poppler) which is no longer
+    a dependency. Kept for backward compatibility — always returns
+    a soft-fail result.
+    """
+    import warnings
 
-        # ── Step 2: CID markers ─────────────────────────────────────────
-        has_cid = _check_cid_markers(raw_text)
-
-        # ── Step 3: Contact info as literal text ────────────────────────
-        candidate_email = candidate.email if candidate else None
-        candidate_phone = candidate.phone if candidate else None
-        candidate_name = candidate.full_name if candidate else None
-
-        has_email = _check_email(raw_text, candidate_email)
-        has_phone = _check_phone(raw_text, candidate_phone)
-        has_name = _check_candidate_name(raw_text, candidate_name)
-
-        # ── Step 4: Keyword coverage ────────────────────────────────────
-        coverage, found_keywords, missing_keywords = _check_keywords(raw_text, job_posting)
-
-        # ── Step 5: Reading order ───────────────────────────────────────
-        reading_order_ok = not _detect_column_scramble(raw_text)
-
-        # ── Step 6: Overall verdict ─────────────────────────────────────
-        critical_checks = [
-            not has_cid,
-            coverage >= _KEYWORD_COVERAGE_THRESHOLD,
-            has_email,
-            has_name,
-        ]
-        pass_ats = all(critical_checks)
-
-        return ATSResult(
-            raw_text=raw_text[:500],
-            has_cid_markers=has_cid,
-            has_email=has_email,
-            has_phone=has_phone,
-            has_candidate_name=has_name,
-            keyword_coverage=round(coverage, 2),
-            found_keywords=found_keywords[:30],
-            missing_keywords=missing_keywords[:30],
-            reading_order_ok=reading_order_ok,
-            pass_ats=pass_ats,
-        )
+    warnings.warn(
+        "check_ats_parseability is deprecated, use check_ats_from_json",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    logger.warning("check_ats_parseability called (deprecated) — returning soft fail")
+    return ATSResult(
+        raw_text=None,
+        has_cid_markers=False,
+        has_email=False,
+        has_phone=False,
+        has_candidate_name=False,
+        keyword_coverage=0.0,
+        found_keywords=[],
+        missing_keywords=[],
+        reading_order_ok=True,
+        pass_ats=False,
+    )
 
 
 # ── Structured data ATS check (no PDF needed) ──────────────────────

@@ -463,38 +463,18 @@ async def _scan_other_urls_async(candidate: CandidateProfile) -> list[dict[str, 
 
 
 def _extract_text_from_pdf(pdf_path: Path) -> str:
-    """Extract text from a PDF file.
-
-    Uses pdftotext if available, falls back to PyMuPDF (fitz).
-    """
-    text = ""
-
+    """Extract text from a PDF file using pypdf (pure Python)."""
     try:
-        import subprocess
+        from pypdf import PdfReader
 
-        result = subprocess.run(
-            ["pdftotext", str(pdf_path), "-"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            text = result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    if not text:
-        try:
-            import fitz
-
-            doc = fitz.open(pdf_path)
-            for page in doc:
-                text += page.get_text()
-            doc.close()
-        except ImportError:
-            logger.warning("No PDF text extractor available (pdftotext or PyMuPDF)")
-
-    return text
+        reader = PdfReader(str(pdf_path))
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+        return text.strip()
+    except ImportError:
+        logger.warning("pypdf not installed — cannot extract PDF text")
+        return ""
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────

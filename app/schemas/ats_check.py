@@ -17,7 +17,7 @@ class ATSResult(BaseModel):
     after PDF compilation and before the application is marked complete.
 
     Attributes:
-        raw_text: Full text extracted from PDF via pdftotext -layout.
+        raw_text: Full text extracted from CV (via JSON structuring or PDF).
         has_cid_markers: True if (cid:*) glyph markers found (fonts not
             embedded correctly → ATS cannot read text).
         has_email: True if email found as literal text in extracted output.
