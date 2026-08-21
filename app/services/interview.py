@@ -33,11 +33,17 @@ from app.llm.adapter import llm_completion_structured
 from app.schemas.interview import (
     CompanyResearchLLMOutput,
     ConsistencyBriefLLMOutput,
+    ConsistencyBriefOut,  # noqa: F401  (re-exported for tests)
+    LikelyQuestionOut,  # noqa: F401  (re-exported for tests)
     LikelyQuestionsLLMOutput,
     LogisticsLLMOutput,
+    NewStarDraftOut,  # noqa: F401  (re-exported for tests)
     NewStarDraftsLLMOutput,
     QuestionsToAskLLMOutput,
+    QuestionToAskOut,  # noqa: F401  (re-exported for tests)
     StarMappingLLMOutput,
+    StarMappingOut,  # noqa: F401  (re-exported for tests)
+    ToughQuestionOut,  # noqa: F401  (re-exported for tests)
     ToughQuestionsLLMOutput,
 )
 from app.services import credits

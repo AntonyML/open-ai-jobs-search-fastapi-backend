@@ -486,6 +486,7 @@ async def test_recover_previous_base_rejects_active_or_foreign(db_session):
     "app.services.cv_generator.get_active_provider_config",
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
+@patch("app.services.r2_storage._r2_configured", new=MagicMock(return_value=False))
 async def test_soft_delete_obsolete_base_hard_deletes_pdf(db_session):
     """Deleting the obsolete base removes the row AND the PDF from disk."""
     first = await cv_generator.generate_base_cv(db_session, "test-user-id")
@@ -544,6 +545,7 @@ async def test_soft_delete_active_base_promotes_previous(db_session):
     "app.services.cv_generator.get_active_provider_config",
     new=AsyncMock(return_value=PROVIDER_CFG),
 )
+@patch("app.services.r2_storage._r2_configured", new=MagicMock(return_value=False))
 async def test_soft_delete_personalized_removes_pdf(db_session):
     """Soft-deleting a personalized CV removes its PDF, marks the row, idempotently.
 

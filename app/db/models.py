@@ -5,7 +5,7 @@ for nested profile data (education, experience, skills, etc.).
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -34,27 +34,47 @@ class Base(DeclarativeBase):
     pass
 
 
+# ── Helpers ────────────────────────────────────────────────────────
+
+
+_last_utcnow: datetime | None = None
+
+
+def _monotonic_utcnow() -> datetime:
+    """Current UTC time, guaranteed strictly increasing within this process.
+
+    System clocks (notably on VMs and CI runners) can return the exact same
+    value for rapid successive calls, which makes "latest row" ordering
+    ambiguous.  When the clock does not advance, bump to the previous value
+    plus 1 microsecond so ``created_at``/``updated_at`` always reflect
+    insertion order.
+    """
+    global _last_utcnow
+    now = datetime.now(UTC)
+    if _last_utcnow is not None and now <= _last_utcnow:
+        now = _last_utcnow + timedelta(microseconds=1)
+    _last_utcnow = now
+    return now
+
+
+def new_uuid() -> str:
+    return str(uuid.uuid4())
+
+
 class TimestampMixin:
     """Add created_at / updated_at columns to any model."""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
+        default=_monotonic_utcnow,
         server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
+        default=_monotonic_utcnow,
+        onupdate=_monotonic_utcnow,
         server_default=func.now(),
     )
-
-
-# ── Helpers ────────────────────────────────────────────────────────
-
-
-def new_uuid() -> str:
-    return str(uuid.uuid4())
 
 
 # Fixed primary key for the global provider config singleton.  A single
