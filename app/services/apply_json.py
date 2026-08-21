@@ -194,8 +194,14 @@ def _build_candidate_summary(candidate: CandidateProfile) -> str:
             )
         if skills.get("domain_expertise"):
             parts.append("  Frameworks/Domain: " + ", ".join(skills["domain_expertise"]))
+        if skills.get("databases"):
+            parts.append("  Databases: " + ", ".join(skills["databases"]))
+        if skills.get("architecture"):
+            parts.append("  Architecture: " + ", ".join(skills["architecture"]))
         if skills.get("software_tools"):
-            parts.append("  Tools/Databases/DevOps: " + ", ".join(skills["software_tools"]))
+            parts.append("  DevOps/Tools: " + ", ".join(skills["software_tools"]))
+        if skills.get("methodologies"):
+            parts.append("  Methodologies: " + ", ".join(skills["methodologies"]))
 
     if candidate.languages:
         parts.append("\nLanguages:")

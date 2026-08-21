@@ -117,6 +117,9 @@ class SkillCategory(BaseModel):
     programming_ml: list[dict[str, Any]] = []
     domain_expertise: list[str] = []
     software_tools: list[str] = []
+    databases: list[str] = []
+    architecture: list[str] = []
+    methodologies: list[str] = []
 
 
 class PublicationEntry(BaseModel):
