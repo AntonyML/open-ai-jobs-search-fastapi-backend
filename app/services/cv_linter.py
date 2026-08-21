@@ -39,6 +39,7 @@ def lint_cv(output: dict[str, Any], profile: Any) -> list[str]:
     _placeholder_issues(cv, profile, issues)
     _bullet_issues(cv, issues)
     _company_issues(cv, profile, issues)
+    _skills_crosscheck_issues(cv, profile, issues)
     _ats_basics_issues(cv, profile, issues)
     return issues
 
@@ -132,6 +133,62 @@ def _normalize_company(name: str) -> str:
     if words and words[-1] in _COMPANY_SUFFIXES:
         words = words[:-1]
     return " ".join(words)
+
+
+# ── Skills & Certifications cross-reference (hallucination guard) ────
+
+
+def _skills_crosscheck_issues(cv: dict, profile: Any, issues: list[str]) -> None:
+    """Flag hallucinated skills and missing certifications."""
+    # 1. Collect all declared skills from profile
+    allowed_skills: set[str] = set()
+
+    profile_skills = getattr(profile, "skills", None) or {}
+    if isinstance(profile_skills, dict):
+        for prog in profile_skills.get("programming_ml") or []:
+            if isinstance(prog, dict) and prog.get("language"):
+                allowed_skills.add(str(prog["language"]).strip().lower())
+                for fw in prog.get("frameworks") or []:
+                    allowed_skills.add(str(fw).strip().lower())
+        for item in profile_skills.get("domain_expertise") or []:
+            allowed_skills.add(str(item).strip().lower())
+        for item in profile_skills.get("software_tools") or []:
+            allowed_skills.add(str(item).strip().lower())
+
+    for lang in _profile_list(profile, "languages"):
+        if isinstance(lang, dict) and lang.get("language"):
+            allowed_skills.add(str(lang["language"]).strip().lower())
+
+    for exp in _profile_list(profile, "experience"):
+        if isinstance(exp, dict):
+            for t in exp.get("technologies") or []:
+                allowed_skills.add(str(t).strip().lower())
+
+    for proj in _profile_list(profile, "projects"):
+        if isinstance(proj, dict):
+            for t in proj.get("technologies") or []:
+                allowed_skills.add(str(t).strip().lower())
+
+    # If the user has declared skills, cross-check generated skill groups
+    if allowed_skills:
+        for group in cv.get("skills") or []:
+            for sk in group.get("skills") or []:
+                name = str(sk.get("name") or "").strip()
+                if not name:
+                    continue
+                nl = name.lower()
+                # Check if this skill or abbreviation is supported
+                if not any(nl == a or (len(nl) > 3 and (nl in a or a in nl)) for a in allowed_skills):
+                    # Flag as ungrounded
+                    issues.append(
+                        f'Skill "{name}" in group "{group.get("label")}" does not appear in candidate profile skills '
+                        f"— do not invent technologies, use only candidate's declared skills"
+                    )
+
+    # 2. Check certifications presence
+    profile_certs = _profile_list(profile, "certifications")
+    if profile_certs and not (cv.get("certifications") or []):
+        issues.append("Certifications exist in the candidate profile but are missing from the CV — include them")
 
 
 # ── ATS basics (header identity + section presence) ────────────────────

@@ -54,15 +54,16 @@ Use the X-Y-Z formula for every experience bullet:
 """
 
 ATS_GUARDRAIL = """
-ATS FORMATTING RULES (follow strictly):
+ATS FORMATTING & FIDELITY RULES (follow strictly):
 - All text fields must be plain text — no markdown (no **, no *, no #, no _)
-- Email and phone must appear as literal characters in the header, not as icons
-- Skills must be comma-separated plain text within each group, no tables or bullets
+- Email, phone, and links must appear as literal characters in the header, not as icons
+- Skills must be comma-separated plain text within each categorized group (Languages, Frameworks, Databases, DevOps/Tools, Architecture/Practices)
 - No section labels with symbols (✓, →, •) — plain labels only
 - Every experience bullet must open with a strong past-tense action verb
 - Never use "Responsible for", "Helped with", "Assisted in", "Worked on" as openers
-- core_competencies: exactly 10 items, 2–3 words each, no trailing punctuation
-- Each experience entry: exactly 3 bullets, each under 20 words, one line each
+- NEVER invent new experience bullets, metrics, or technologies not present in the candidate profile
+- Format existing points into high-impact bullets (Action + Context + Result) without inventing quantitative metrics
+- Include candidate's certifications, languages, education, and links exactly as provided in the profile
 """
 
 REVIEWER_GUARDRAIL = """
@@ -92,8 +93,19 @@ Rules:
 
 
 def _build_candidate_summary(candidate: CandidateProfile) -> str:
-    """Plain-text candidate summary for prompt context."""
+    """Plain-text candidate summary for prompt context with zero arbitrary truncation."""
     parts = []
+    # Identity via User relationship
+    try:
+        full_name = candidate.full_name
+        email = candidate.email
+        if full_name:
+            parts.append(f"Name: {full_name}")
+        if email:
+            parts.append(f"Email: {email}")
+    except Exception:
+        pass
+
     if candidate.location:
         parts.append(f"Location: {candidate.location}")
     if candidate.phone:
@@ -102,61 +114,88 @@ def _build_candidate_summary(candidate: CandidateProfile) -> str:
         parts.append(f"LinkedIn: {candidate.linkedin_url}")
     if candidate.github_url:
         parts.append(f"GitHub: {candidate.github_url}")
-
-    # Identity via User relationship
-    try:
-        full_name = candidate.full_name
-        email = candidate.email
-        if full_name:
-            parts.insert(0, f"Name: {full_name}")
-        if email:
-            parts.append(f"Email: {email}")
-    except Exception:
-        pass
+    if getattr(candidate, "portfolio_url", None):
+        parts.append(f"Portfolio/Website: {candidate.portfolio_url}")
 
     if candidate.profile_statement:
-        parts.append(f"Profile:\n{candidate.profile_statement}")
+        parts.append(f"Profile Statement:\n{candidate.profile_statement}")
 
     if candidate.education:
         parts.append("\nEducation:")
-        for e in candidate.education[:2]:
-            line = f"  - {e.get('degree', '')} at {e.get('institution', '')}"
-            if e.get("period"):
-                line += f" ({e['period']})"
+        for e in candidate.education:
+            deg = e.get("degree", "")
+            inst = e.get("institution", "")
+            dates = ""
+            if e.get("start_date") or e.get("end_date"):
+                dates = f" ({e.get('start_date', '')}–{e.get('end_date', '')})"
+            elif e.get("period"):
+                dates = f" ({e['period']})"
+            line = f"  - {deg} at {inst}{dates}"
+            if e.get("key_topics"):
+                line += f" | Topics: {e['key_topics']}"
             parts.append(line)
 
     if candidate.experience:
         parts.append("\nExperience:")
-        for e in candidate.experience[:3]:
-            line = f"  - {e.get('title', '')} at {e.get('company', '')}"
+        for e in candidate.experience:
+            title = e.get("title", "")
+            company = e.get("company", "")
+            dates = ""
             if e.get("start_date") or e.get("end_date"):
-                line += f" ({e.get('start_date', '')}–{e.get('end_date', '')})"
-            parts.append(line)
-            for b in e.get("bullets", [])[:2]:
+                dates = f" ({e.get('start_date', '')}–{e.get('end_date', '')})"
+            loc = f" — {e.get('location')}" if e.get("location") else ""
+            ctx = f" [{e.get('client_context')}]" if e.get("client_context") else ""
+            parts.append(f"  - {title} at {company}{loc}{ctx}{dates}")
+            if e.get("technologies"):
+                tech_str = ", ".join(e["technologies"]) if isinstance(e["technologies"], list) else str(e["technologies"])
+                parts.append(f"    Technologies: {tech_str}")
+            for b in e.get("bullets", []):
                 parts.append(f"      • {b}")
+
+    if getattr(candidate, "certifications", None) and candidate.certifications:
+        parts.append("\nCertifications:")
+        for c in candidate.certifications:
+            name = c.get("name", "")
+            issuer = c.get("issuer", "")
+            year = c.get("issue_date") or c.get("year", "")
+            url = c.get("credential_url") or c.get("url", "")
+            c_line = f"  - {name} ({issuer})"
+            if year:
+                c_line += f" - {year}"
+            if url:
+                c_line += f" | Verify: {url}"
+            parts.append(c_line)
+
+    if candidate.projects:
+        parts.append("\nProjects:")
+        for p in candidate.projects:
+            name = p.get("name", "")
+            desc = p.get("description", "")
+            techs = p.get("technologies", [])
+            tech_str = f" | Tech: {', '.join(techs)}" if techs else ""
+            p_url = f" | URL: {p.get('url')}" if p.get("url") else ""
+            parts.append(f"  - {name}: {desc}{tech_str}{p_url}")
 
     if candidate.skills:
         parts.append("\nSkills:")
         skills = candidate.skills
         if skills.get("programming_ml"):
             parts.append(
-                "  Programming/ML: "
+                "  Languages/Programming: "
                 + ", ".join(
-                    f"{s.get('language', '')} ({s.get('proficiency', '')})" for s in skills["programming_ml"][:5]
+                    f"{s.get('language', '')}" + (f" ({s.get('proficiency', '')})" if s.get("proficiency") else "")
+                    for s in skills["programming_ml"]
                 )
             )
         if skills.get("domain_expertise"):
-            parts.append("  Domain: " + ", ".join(skills["domain_expertise"][:5]))
+            parts.append("  Frameworks/Domain: " + ", ".join(skills["domain_expertise"]))
         if skills.get("software_tools"):
-            parts.append("  Tools: " + ", ".join(skills["software_tools"][:5]))
+            parts.append("  Tools/Databases/DevOps: " + ", ".join(skills["software_tools"]))
 
     if candidate.languages:
-        parts.append(
-            "  Languages: "
-            + ", ".join(
-                f"{lang.get('language', '')} ({lang.get('proficiency', '')})" for lang in candidate.languages[:3]
-            )
-        )
+        parts.append("\nLanguages:")
+        for lang in candidate.languages:
+            parts.append(f"  - {lang.get('language', '')}: {lang.get('proficiency', '')}")
 
     return "\n".join(parts)
 
@@ -419,12 +458,14 @@ Generate a generic base CV for the following candidate.
 {candidate_summary}
 
 === INSTRUCTIONS ===
-1. Present experience bullets using the X-Y-Z formula
-2. Choose skill group labels appropriate to the profession
-3. Generate a compelling profile statement
-4. Keep the CV generic but polished — it may be tailored to specific jobs later
-5. Set the cv.language field to the candidate's primary language when determinable, otherwise 'en'
-6. If you can generate a strong generic cover letter, include it; otherwise omit it
+1. Present experience bullets using the Action + Context + Result format. Strictly use the technologies and achievements stated for each job.
+2. Group all declared skills into clean, standard categories (e.g. 'Languages', 'Frameworks & Libraries', 'Databases', 'DevOps & Tools', 'Architecture & Practices').
+3. Include ALL certifications from the profile in the cv.certifications array.
+4. Include candidate languages in the skill groups or appropriate section.
+5. Include personal website/portfolio, GitHub, and LinkedIn links in header fields.
+6. Generate a compelling, truthful profile statement reflecting the candidate's actual background.
+7. Set the cv.language field to the candidate's primary language when determinable, otherwise 'en'.
+8. Do NOT invent technologies, metrics, or additional bullets not supported by the candidate profile.
 
 Output a valid GenerateCVOutput JSON object.
 """

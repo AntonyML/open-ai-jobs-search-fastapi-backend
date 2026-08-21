@@ -501,6 +501,7 @@ class CandidateProfile(Base, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(50))
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
     github_url: Mapped[str | None] = mapped_column(String(500))
+    portfolio_url: Mapped[str | None] = mapped_column(String(500))
     languages: Mapped[list[dict[str, Any]] | None] = mapped_column(
         FlexJSON
     )  # [{"language": "...", "proficiency": "..."}]
@@ -513,11 +514,16 @@ class CandidateProfile(Base, TimestampMixin):
 
     # ── Professional Experience ───────────────────────────────
     # [{"title": "...", "company": "...", "start_date": "...", "end_date": "...",
-    #   "location": "...", "bullets": ["...", "..."]}]
+    #   "location": "...", "technologies": ["..."], "bullets": ["...", "..."]}]
     experience: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
+    # ── Certifications ────────────────────────────────────────
+    # [{"name": "...", "issuer": "...", "issue_date": "...", "expiration_date": "...",
+    #   "credential_id": "...", "credential_url": "..."}]
+    certifications: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
+
     # ── Independent Projects ──────────────────────────────────
-    # [{"name": "...", "description": "..."}]
+    # [{"name": "...", "description": "...", "technologies": ["..."], "url": "..."}]
     projects: Mapped[list[dict[str, Any]] | None] = mapped_column(FlexJSON)
 
     # ── Technical Skills ──────────────────────────────────────

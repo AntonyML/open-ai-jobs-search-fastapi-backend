@@ -252,13 +252,16 @@ async def download_cv(
             )
         signed_url = r2_storage.generate_signed_url(record.pdf_path)
         return RedirectResponse(url=signed_url, status_code=status.HTTP_302_FOUND)
-    # Fallback: local disk
+    # Fallback: local disk (recompile on-demand if ephemeral disk wiped the file)
     pdf_path = resolve_pdf_path(record)
     if pdf_path is None or not pdf_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Compiled PDF not found for this CV.",
-        )
+        if record.cv_json:
+            pdf_path = await cv_generator.recompile_pdf_sync(db, record)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Compiled PDF not found for this CV.",
+            )
     return FileResponse(
         path=pdf_path,
         media_type="application/pdf",

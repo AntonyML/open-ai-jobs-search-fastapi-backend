@@ -78,6 +78,8 @@ class ExperienceBullet(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     location: str | None = None
+    client_context: str | None = None
+    technologies: list[str] = []
     bullets: list[str] = []
 
     @field_validator("start_date", "end_date", mode="before")
@@ -89,6 +91,17 @@ class ExperienceBullet(BaseModel):
 class ProjectEntry(BaseModel):
     name: str
     description: str | None = None
+    technologies: list[str] = []
+    url: str | None = None
+
+
+class CertificationEntry(BaseModel):
+    name: str
+    issuer: str
+    issue_date: str | None = None
+    expiration_date: str | None = None
+    credential_id: str | None = None
+    credential_url: str | None = None
 
 
 class SkillCategory(BaseModel):
@@ -159,12 +172,14 @@ class CandidateProfileCreate(BaseModel):
     email: EmailStr | None = None
     linkedin_url: str | None = None
     github_url: str | None = None
+    portfolio_url: str | None = None
     languages: list[LanguageEntry] | None = None
     employment_status: str | None = None
     constraints: str | None = None
 
     education: list[EducationEntry] | None = None
     experience: list[ExperienceBullet] | None = None
+    certifications: list[CertificationEntry] | None = None
     projects: list[ProjectEntry] | None = None
     skills: SkillCategory | None = None
     publications: list[PublicationEntry] | None = None
@@ -200,12 +215,14 @@ class CandidateProfileUpdate(BaseModel):
     email: EmailStr | None = None
     linkedin_url: str | None = None
     github_url: str | None = None
+    portfolio_url: str | None = None
     languages: list[LanguageEntry] | None = None
     employment_status: str | None = None
     constraints: str | None = None
 
     education: list[EducationEntry] | None = None
     experience: list[ExperienceBullet] | None = None
+    certifications: list[CertificationEntry] | None = None
     projects: list[ProjectEntry] | None = None
     skills: SkillCategory | None = None
     publications: list[PublicationEntry] | None = None
@@ -244,12 +261,14 @@ class CandidateProfileOut(BaseModel):
     email: str | None
     linkedin_url: str | None
     github_url: str | None
+    portfolio_url: str | None = None
     languages: list[LanguageEntry] | None
     employment_status: str | None
     constraints: str | None
 
     education: list[EducationEntry] | None
     experience: list[ExperienceBullet] | None
+    certifications: list[CertificationEntry] | None = None
     projects: list[ProjectEntry] | None
     skills: SkillCategory | None
     publications: list[PublicationEntry] | None

@@ -300,6 +300,10 @@ async def _persist_and_compile(
     return record
 
 
+# Semaphore to protect CPU on constrained environments (e.g. Render free tier 0.1 CPU)
+TYPST_SEMAPHORE = asyncio.Semaphore(2)
+
+
 async def compile_cv_in_background(
     record_id: str,
     user_id: str,
@@ -311,20 +315,13 @@ async def compile_cv_in_background(
 
     Scheduled from the endpoints as a FastAPI ``BackgroundTask``.  Runs the
     blocking, in-process Typst compile in a worker thread (``asyncio.to_thread``)
-    so the event loop is never frozen, then records ``pdf_path`` on the row so
-    ``pdf_ready`` becomes true and the download URL appears.
-
-    Failure is non-fatal: the JSON stays the source of truth, the admin is
-    notified, and the row keeps ``pdf_path=None``.  If the CV was deleted while
-    compiling, the freshly written PDF is removed so no orphaned files
-    accumulate under ``generated_cvs/``.
-
-    ``session_factory`` is only used by tests (they pass their in-memory
-    factory); production always uses the app's ``async_session_factory``.
+    guarded by a concurrency semaphore so the event loop is never frozen and
+    CPU limits are respected.
     """
     abs_pdf_path, pdf_path = new_output_path("cv", user_id, f"{record_id}.pdf")
     try:
-        await asyncio.to_thread(compile_cv, cv_json, output=abs_pdf_path)
+        async with TYPST_SEMAPHORE:
+            await asyncio.to_thread(compile_cv, cv_json, output=abs_pdf_path)
     except Exception:
         logger.exception("PDF compile failed for CV %s (user %s)", record_id, user_id)
         try:
@@ -597,6 +594,16 @@ async def count_recent_cvs(
 def resolve_pdf_path(record: GeneratedCV) -> Path | None:
     """Resolve the stored relative ``pdf_path`` to an absolute path."""
     return resolve_existing("cv", record.pdf_path)
+
+
+async def recompile_pdf_sync(db: AsyncSession, record: GeneratedCV) -> Path:
+    """Recompile PDF on-demand from record.cv_json if disk file was wiped (Render Free ephemeral disk)."""
+    abs_pdf_path, pdf_path = new_output_path("cv", record.user_id, f"{record.id}.pdf")
+    async with TYPST_SEMAPHORE:
+        await asyncio.to_thread(compile_cv, record.cv_json, output=abs_pdf_path)
+    record.pdf_path = pdf_path
+    await db.commit()
+    return abs_pdf_path
 
 
 def build_pdf_url(record: GeneratedCV) -> str | None:
