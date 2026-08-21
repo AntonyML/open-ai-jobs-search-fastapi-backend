@@ -57,13 +57,14 @@ ATS_GUARDRAIL = """
 ATS FORMATTING & FIDELITY RULES (follow strictly):
 - All text fields must be plain text — no markdown (no **, no *, no #, no _)
 - Email, phone, and links must appear as literal characters in the header, not as icons
-- Skills must be comma-separated plain text within each categorized group (Languages, Frameworks, Databases, DevOps/Tools, Architecture/Practices)
+- Skills must be plain text grouped under relevant domain categories reflecting the candidate's profession (e.g. Technical/Specialty, Tools/Software, Professional/Operational Competencies)
 - No section labels with symbols (✓, →, •) — plain labels only
 - Every experience bullet must open with a strong past-tense action verb
 - Never use "Responsible for", "Helped with", "Assisted in", "Worked on" as openers
-- NEVER invent new experience bullets, metrics, or technologies not present in the candidate profile
+- NEVER invent new experience bullets, metrics, or technologies/competencies not present in the candidate profile
 - Format existing points into high-impact bullets (Action + Context + Result) without inventing quantitative metrics
 - Include candidate's certifications, languages, education, and links exactly as provided in the profile
+- UNIVERSAL PROFILE PRINCIPLE: The candidate can be from any profession (gastronomy, healthcare, trades, administration, management, education, engineering, software, etc.). The absence of optional sections (such as GitHub, projects, certifications or software tools) is NEVER a deficiency. Select and highlight evidence solely from the real data provided.
 """
 
 REVIEWER_GUARDRAIL = """
@@ -167,41 +168,47 @@ def _build_candidate_summary(candidate: CandidateProfile) -> str:
             parts.append(c_line)
 
     if candidate.projects:
-        parts.append("\nProjects:")
+        parts.append("\nHighlighted Projects & Works:")
         for p in candidate.projects:
             name = p.get("name", "")
             desc = p.get("description", "")
             role_str = f" ({p.get('role')})" if p.get("role") else ""
-            client_str = f" for {p.get('client')}" if p.get("client") else ""
+            client_str = f" at/for {p.get('client')}" if p.get("client") else ""
             dates = ""
             if p.get("start_date") or p.get("end_date"):
                 dates = f" [{p.get('start_date', '')}–{p.get('end_date', '')}]"
             techs = p.get("technologies", [])
-            tech_str = f" | Tech: {', '.join(techs)}" if techs else ""
-            p_url = f" | URL: {p.get('url')}" if p.get("url") else ""
+            tech_str = f" | Tools/Skills: {', '.join(techs)}" if techs else ""
+            p_url = f" | Link: {p.get('url')}" if p.get("url") else ""
             parts.append(f"  - {name}{role_str}{client_str}{dates}: {desc}{tech_str}{p_url}")
 
     if candidate.skills:
-        parts.append("\nSkills:")
+        parts.append("\nSkills & Competencies:")
         skills = candidate.skills
-        if skills.get("programming_ml"):
-            parts.append(
-                "  Languages/Programming: "
-                + ", ".join(
-                    f"{s.get('language', '')}" + (f" ({s.get('proficiency', '')})" if s.get("proficiency") else "")
-                    for s in skills["programming_ml"]
+        if isinstance(skills, dict):
+            # Universal categorization
+            if skills.get("programming_ml"):
+                parts.append(
+                    "  Languages/Technical: "
+                    + ", ".join(
+                        f"{s.get('language', s) if isinstance(s, dict) else s}" + (f" ({s.get('proficiency', '')})" if isinstance(s, dict) and s.get("proficiency") else "")
+                        for s in skills["programming_ml"]
+                    )
                 )
-            )
-        if skills.get("domain_expertise"):
-            parts.append("  Frameworks/Domain: " + ", ".join(skills["domain_expertise"]))
-        if skills.get("databases"):
-            parts.append("  Databases: " + ", ".join(skills["databases"]))
-        if skills.get("architecture"):
-            parts.append("  Architecture: " + ", ".join(skills["architecture"]))
-        if skills.get("software_tools"):
-            parts.append("  DevOps/Tools: " + ", ".join(skills["software_tools"]))
-        if skills.get("methodologies"):
-            parts.append("  Methodologies: " + ", ".join(skills["methodologies"]))
+            if skills.get("domain_expertise"):
+                parts.append("  Specialty/Domain: " + ", ".join(skills["domain_expertise"]))
+            if skills.get("databases"):
+                parts.append("  Databases & Storage: " + ", ".join(skills["databases"]))
+            if skills.get("architecture"):
+                parts.append("  Architecture & Patterns: " + ", ".join(skills["architecture"]))
+            if skills.get("software_tools"):
+                parts.append("  Tools & Software: " + ", ".join(skills["software_tools"]))
+            if skills.get("methodologies"):
+                parts.append("  Professional & Methodological Competencies: " + ", ".join(skills["methodologies"]))
+            if skills.get("custom_skills"):
+                parts.append("  General Skills: " + ", ".join(skills["custom_skills"]))
+        elif isinstance(skills, list):
+            parts.append("  " + ", ".join(str(s) for s in skills))
 
     if candidate.languages:
         parts.append("\nLanguages:")
