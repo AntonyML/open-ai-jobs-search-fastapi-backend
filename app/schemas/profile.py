@@ -91,8 +91,17 @@ class ExperienceBullet(BaseModel):
 class ProjectEntry(BaseModel):
     name: str
     description: str | None = None
+    role: str | None = None
+    client: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
     technologies: list[str] = []
     url: str | None = None
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def validate_dates(cls, v):
+        return validate_date_format(v)
 
 
 class CertificationEntry(BaseModel):

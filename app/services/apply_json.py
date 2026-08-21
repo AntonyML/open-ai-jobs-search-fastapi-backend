@@ -171,10 +171,15 @@ def _build_candidate_summary(candidate: CandidateProfile) -> str:
         for p in candidate.projects:
             name = p.get("name", "")
             desc = p.get("description", "")
+            role_str = f" ({p.get('role')})" if p.get("role") else ""
+            client_str = f" for {p.get('client')}" if p.get("client") else ""
+            dates = ""
+            if p.get("start_date") or p.get("end_date"):
+                dates = f" [{p.get('start_date', '')}–{p.get('end_date', '')}]"
             techs = p.get("technologies", [])
             tech_str = f" | Tech: {', '.join(techs)}" if techs else ""
             p_url = f" | URL: {p.get('url')}" if p.get("url") else ""
-            parts.append(f"  - {name}: {desc}{tech_str}{p_url}")
+            parts.append(f"  - {name}{role_str}{client_str}{dates}: {desc}{tech_str}{p_url}")
 
     if candidate.skills:
         parts.append("\nSkills:")
