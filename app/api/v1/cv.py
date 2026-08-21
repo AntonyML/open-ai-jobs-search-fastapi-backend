@@ -105,7 +105,12 @@ async def create_base_cv(
     """
     usage: dict[str, Any] = {"tokens_input": 0, "tokens_output": 0, "cost_usd_cents": 0, "model_used": None}
     cid = await enforce_action_gate(db, user, "cv_base", label="Base CV generation")
-    record = await cv_generator.generate_base_cv(db, user["sub"], usage=usage)
+    record = await cv_generator.generate_base_cv(
+        db,
+        user["sub"],
+        usage=usage,
+        language=payload.language or "es",
+    )
     background_tasks.add_task(cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json)
     await _record_usage_after(db, cid, usage)
     return _to_response(record)
@@ -142,6 +147,7 @@ async def create_personalized_cv(
         user["sub"],
         payload.job_description_text,
         usage=usage,
+        language=payload.language or "es",
     )
     background_tasks.add_task(cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json)
     await _record_usage_after(db, cid, usage)
@@ -171,6 +177,7 @@ async def create_adapted_cv(
         payload.base_cv_id,
         payload.job_posting_id,
         usage=usage,
+        language=payload.language or "es",
     )
     background_tasks.add_task(cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json)
     await _record_usage_after(db, cid, usage)
@@ -199,6 +206,7 @@ async def create_adapted_cv_from_url(
         payload.base_cv_id,
         payload.url,
         usage=usage,
+        language=payload.language or "es",
     )
     background_tasks.add_task(cv_generator.compile_cv_in_background, record.id, user["sub"], record.cv_json)
     await _record_usage_after(db, cid, usage)

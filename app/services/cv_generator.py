@@ -81,7 +81,12 @@ async def _resolve_provider_or_raise(db: AsyncSession, user_id: str) -> dict[str
 # ── Generation ───────────────────────────────────────────────────────
 
 
-async def generate_base_cv(db: AsyncSession, user_id: str, usage: dict | None = None) -> GeneratedCV:
+async def generate_base_cv(
+    db: AsyncSession,
+    user_id: str,
+    usage: dict | None = None,
+    language: str = "es",
+) -> GeneratedCV:
     """Generate a generic base CV (no job context) and persist it.
 
     Enforces the max-2 base CV invariant: the current active base is demoted
@@ -93,7 +98,7 @@ async def generate_base_cv(db: AsyncSession, user_id: str, usage: dict | None = 
     profile = await _load_profile_or_raise(db, user_id)
     provider_config = await _resolve_provider_or_raise(db, user_id)
 
-    output_dict = await generate_base_cv_llm(profile, provider_config, usage=usage)
+    output_dict = await generate_base_cv_llm(profile, provider_config, usage=usage, language=language)
 
     # Max-2 rule: demote the current active base, hard-delete the previous one.
     await _demote_previous_bases(db, user_id)
@@ -113,6 +118,7 @@ async def personalize_cv(
     user_id: str,
     job_description_text: str,
     usage: dict | None = None,
+    language: str = "es",
 ) -> GeneratedCV:
     """Tailor a CV to a free-text job description and persist it."""
     profile = await _load_profile_or_raise(db, user_id)
@@ -123,6 +129,7 @@ async def personalize_cv(
         job_description_text,
         provider_config,
         usage=usage,
+        language=language,
     )
     return await _persist_and_compile(
         db,
@@ -140,6 +147,7 @@ async def adapt_cv(
     base_cv_id: str,
     job_posting_id: str,
     usage: dict | None = None,
+    language: str = "es",
 ) -> GeneratedCV:
     """Adapt the user's base CV to an existing job posting.
 
@@ -174,6 +182,7 @@ async def adapt_cv(
         job,
         provider_config,
         usage=usage,
+        language=language,
     )
     return await _persist_and_compile(
         db,
@@ -193,6 +202,7 @@ async def adapt_cv_from_url(
     base_cv_id: str,
     url: str,
     usage: dict | None = None,
+    language: str = "es",
 ) -> GeneratedCV:
     """Adapt the user's base CV to a job posting referenced by URL.
 
@@ -229,6 +239,7 @@ async def adapt_cv_from_url(
             url,
             provider_config,
             usage=usage,
+            language=language,
         )
     except WebSearchUnavailableError:
         await notify_admin(

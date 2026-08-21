@@ -348,6 +348,8 @@ class CVAnalysis(BaseModel):
 class CVBaseCreate(BaseModel):
     """Request for POST /cv/base — generate a generic base CV (no job context)."""
 
+    language: str | None = Field("es", description="Target language ('es' or 'en'). Defaults to 'es'.")
+
 
 class CVPersonalizeCreate(BaseModel):
     """Request for POST /cv/personalize — tailor the base CV to a job description.
@@ -362,6 +364,7 @@ class CVPersonalizeCreate(BaseModel):
         min_length=50,
         max_length=20000,
     )
+    language: str | None = Field("es", description="Target language ('es' or 'en'). Defaults to 'es'.")
 
 
 class CVRecoverCreate(BaseModel):
@@ -384,6 +387,7 @@ class CVPersonalizeJobCreate(BaseModel):
 
     base_cv_id: str = Field(..., description="ID of the user's base CV.")
     job_posting_id: str = Field(..., description="ID of an existing job posting (offer).")
+    language: str | None = Field("es", description="Target language ('es' or 'en'). Defaults to 'es'.")
 
 
 class CVAdaptUrlCreate(BaseModel):
@@ -398,9 +402,10 @@ class CVAdaptUrlCreate(BaseModel):
     url: str = Field(
         ...,
         description="Public URL of the job posting (http/https).",
-        min_length=8,
+        min_length=10,
         max_length=2048,
     )
+    language: str | None = Field("es", description="Target language ('es' or 'en'). Defaults to 'es'.")
 
 
 class CVJobOut(BaseModel):

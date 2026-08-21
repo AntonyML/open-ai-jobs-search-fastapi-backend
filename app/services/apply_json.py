@@ -448,13 +448,19 @@ Output the revised CV as a valid GenerateCVOutput JSON object.
 # ── CV generator prompts (FASE 1 — no JobPosting required) ────────────
 
 
-def build_base_cv_prompt(candidate: CandidateProfile) -> list[dict[str, str]]:
+def build_base_cv_prompt(candidate: CandidateProfile, language: str = "es") -> list[dict[str, str]]:
     """Build the prompt for a generic base CV (no job context).
 
     Used by ``POST /cv/base``.  The output is ``GenerateCVOutput`` without any
     job-tailoring, so it can later be personalized via ``POST /cv/personalize``.
     """
     candidate_summary = _build_candidate_summary(candidate)
+    is_spanish = language.lower() in ("es", "es-es", "spanish", "español")
+    lang_instruction = (
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content (profile statement, job titles, experience bullets, skill group labels, descriptions) in SPANISH. Set cv.language = 'es'."
+        if is_spanish else
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content (profile statement, job titles, experience bullets, skill group labels, descriptions) in ENGLISH. Set cv.language = 'en'."
+    )
 
     system = (
         "You are an expert CV writer. Generate a complete, polished CV document "
@@ -477,13 +483,14 @@ Generate a generic base CV for the following candidate.
 
 === INSTRUCTIONS ===
 1. Present experience bullets using the Action + Context + Result format. Strictly use the technologies and achievements stated for each job.
-2. Group all declared skills into clean, standard categories (e.g. 'Languages', 'Frameworks & Libraries', 'Databases', 'DevOps & Tools', 'Architecture & Practices').
+2. Group all declared skills into clean, standard categories.
 3. Include ALL certifications from the profile in the cv.certifications array.
 4. Include candidate languages in the skill groups or appropriate section.
 5. Include personal website/portfolio, GitHub, and LinkedIn links in header fields.
 6. Generate a compelling, truthful profile statement reflecting the candidate's actual background.
-7. Set the cv.language field to the candidate's primary language when determinable, otherwise 'en'.
+{lang_instruction}
 8. Do NOT invent technologies, metrics, or additional bullets not supported by the candidate profile.
+9. CRITICAL DENSITY & 1-PAGE TARGET: Keep bullets concise, punchy and high-impact (max 3-4 bullets per role). The CV must fit cleanly on ONE single page when rendered. Avoid wordy, verbose sentences.
 
 Output a valid GenerateCVOutput JSON object.
 """
@@ -538,9 +545,16 @@ def build_personalize_drafter_prompt(
     candidate: CandidateProfile,
     job_description_text: str,
     analysis: CVAnalysis,
+    language: str = "es",
 ) -> list[dict[str, str]]:
     """Build the personalize drafter prompt — tailors a CV to free-text job text."""
     candidate_summary = _build_candidate_summary(candidate)
+    is_spanish = language.lower() in ("es", "es-es", "spanish", "español")
+    lang_instruction = (
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content in SPANISH. Set cv.language = 'es'."
+        if is_spanish else
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content in ENGLISH. Set cv.language = 'en'."
+    )
 
     system = (
         "You are an expert CV writer. Generate a complete, tailored CV document "
@@ -573,10 +587,10 @@ Tailor the candidate's CV to the job description below.
 4. Apply the adapted_experience reframing suggestions where defensible
 5. Keep the profile statement close to the original — adjust only to mention the target role
 6. Do NOT add sections, roles, projects, skills, or metrics not in the candidate's profile
-7. Set the cv.language field to match the job description language
+{lang_instruction}
 8. Do NOT include a cover letter — output only the CV
 
-CRITICAL: Do NOT expand the CV. Keep it to one page — only the wording of existing bullets changes.
+CRITICAL: Do NOT expand the CV. Keep the CV concise, high-impact and fit on ONE page (max 3-4 bullets per role).
 
 Output a valid GenerateCVOutput JSON object.
 """
@@ -859,10 +873,11 @@ async def generate_base_cv_llm(
     candidate: CandidateProfile,
     provider_config: dict[str, Any] | None = None,
     usage: dict | None = None,
+    language: str = "es",
 ) -> dict[str, Any]:
     """Generate a generic base CV (``GenerateCVOutput``) with no job context."""
     provider_config = provider_config or {}
-    messages = build_base_cv_prompt(candidate)
+    messages = build_base_cv_prompt(candidate, language=language)
     raw_dict = await _llm_json(
         messages,
         GenerateCVOutput,
@@ -879,6 +894,7 @@ async def personalize_cv_llm(
     job_description_text: str,
     provider_config: dict[str, Any] | None = None,
     usage: dict | None = None,
+    language: str = "es",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run the two-step personalize pipeline for free-text job descriptions.
 
@@ -899,7 +915,7 @@ async def personalize_cv_llm(
     analysis = CVAnalysis(**analysis_dict)
 
     output_dict = await _llm_json(
-        build_personalize_drafter_prompt(candidate, job_description_text, analysis),
+        build_personalize_drafter_prompt(candidate, job_description_text, analysis, language=language),
         GenerateCVOutput,
         provider_config,
         temperature=0.3,
@@ -982,11 +998,18 @@ def build_adapt_drafter_prompt(
     base_cv_json: dict[str, Any],
     job: JobPosting,
     analysis: CVAnalysis,
+    language: str = "es",
 ) -> list[dict[str, str]]:
     """Drafter prompt — adapts the base CV to the job posting (never invents)."""
     base_cv_text = json.dumps(base_cv_json, indent=2, ensure_ascii=False)
     job_summary = _build_adapt_job_summary(job)
     candidate_summary = _build_candidate_summary(candidate)
+    is_spanish = language.lower() in ("es", "es-es", "spanish", "español")
+    lang_instruction = (
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content in SPANISH. Set cv.language = 'es'."
+        if is_spanish else
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content in ENGLISH. Set cv.language = 'en'."
+    )
 
     system = (
         "You are an expert CV writer. Adapt a candidate's BASE CV to a specific "
@@ -1022,11 +1045,10 @@ Adapt the candidate's base CV to the job posting below.
 4. Address the red flags by honest reframing — never hide or invent
 5. Apply the adapted_experience reframing suggestions where defensible
 6. Keep the profile statement close to the base CV — adjust only to mention the target role
-7. Set the cv.language field to match the job posting language
+{lang_instruction}
 8. Do NOT include a cover letter — output only the CV
 
-CRITICAL: Do NOT expand the base CV. No new sections, roles, projects, skills, or metrics.
-The adapted CV must fit on ONE page, like the base CV. Only bullet wording changes.
+CRITICAL DENSITY & 1-PAGE TARGET: Keep the CV concise, high-impact and fit on ONE page (max 3-4 bullets per role).
 
 Output a valid GenerateCVOutput JSON object.
 """
@@ -1042,6 +1064,7 @@ async def adapt_cv_llm(
     job: JobPosting,
     provider_config: dict[str, Any] | None = None,
     usage: dict | None = None,
+    language: str = "es",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run the two-step adapt pipeline: recruiter analysis → drafter.
 
@@ -1061,7 +1084,7 @@ async def adapt_cv_llm(
     analysis = CVAnalysis(**analysis_dict)
 
     output_dict = await _llm_json(
-        build_adapt_drafter_prompt(candidate, base_cv_json, job, analysis),
+        build_adapt_drafter_prompt(candidate, base_cv_json, job, analysis, language=language),
         GenerateCVOutput,
         provider_config,
         temperature=0.3,
@@ -1134,10 +1157,17 @@ def build_adapt_url_drafter_prompt(
     base_cv_json: dict[str, Any],
     url: str,
     analysis: CVAnalysis,
+    language: str = "es",
 ) -> list[dict[str, str]]:
     """Drafter prompt — adapts the base CV to the job at the given URL."""
     base_cv_text = json.dumps(base_cv_json, indent=2, ensure_ascii=False)
     candidate_summary = _build_candidate_summary(candidate)
+    is_spanish = language.lower() in ("es", "es-es", "spanish", "español")
+    lang_instruction = (
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content in SPANISH. Set cv.language = 'es'."
+        if is_spanish else
+        "7. CRITICAL LANGUAGE REQUIREMENT: Write the entire CV content in ENGLISH. Set cv.language = 'en'."
+    )
 
     system = (
         "You are an expert CV writer. Adapt a candidate's BASE CV to a specific "
@@ -1177,11 +1207,10 @@ Use your web search capability to open that URL and read the full job posting
 4. Address the red flags by honest reframing — never hide or invent
 5. Apply the adapted_experience reframing suggestions where defensible
 6. Keep the profile statement close to the base CV — adjust only to mention the target role
-7. Set the cv.language field to match the job posting language
+{lang_instruction}
 8. Do NOT include a cover letter — output only the CV
 
-CRITICAL: Do NOT expand the base CV. No new sections, roles, projects, skills, or metrics.
-The adapted CV must fit on ONE page, like the base CV. Only bullet wording changes.
+CRITICAL DENSITY & 1-PAGE TARGET: Keep the CV concise, high-impact and fit on ONE page (max 3-4 bullets per role).
 
 Output a valid GenerateCVOutput JSON object.
 """
@@ -1197,6 +1226,7 @@ async def adapt_cv_llm_with_url(
     url: str,
     provider_config: dict[str, Any] | None = None,
     usage: dict | None = None,
+    language: str = "es",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Two-step adapt pipeline where the job text is read from a URL by the model.
 
@@ -1227,7 +1257,7 @@ async def adapt_cv_llm_with_url(
     analysis = CVAnalysis(**analysis_dict)
 
     output_dict = await _llm_json(
-        build_adapt_url_drafter_prompt(candidate, base_cv_json, url, analysis),
+        build_adapt_url_drafter_prompt(candidate, base_cv_json, url, analysis, language=language),
         GenerateCVOutput,
         provider_config,
         temperature=0.3,
