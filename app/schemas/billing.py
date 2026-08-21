@@ -226,6 +226,7 @@ class ProductCatalogOut(BaseModel):
     whatsapp_number: str = ""
     currency: str = "USD"
     last_updated: datetime | None = None
+    version: int = 1
 
 
 # ── Purchase requests (manual SINPE / WhatsApp) ──────────────────────

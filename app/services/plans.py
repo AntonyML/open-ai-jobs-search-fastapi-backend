@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import select
@@ -71,11 +72,16 @@ async def build_catalog(db: AsyncSession) -> dict[str, Any]:
     plans = await get_active_plans(db)
     if not plans:
         raise NoPlansConfiguredError("No active plans configured. Apply the plans bootstrap migration.")
+    last_updated = max((p.updated_at for p in plans if p.updated_at), default=None)
+    if last_updated is not None and last_updated.tzinfo is None:
+        last_updated = last_updated.replace(tzinfo=UTC)
+    version = int(last_updated.timestamp()) if last_updated else 1
     return {
         "plans": plans,
         "credit_costs": await get_credit_costs(db),
         "topup_packs": await get_topup_packs(db),
         "whatsapp_number": await get_whatsapp_number(),
         "currency": "USD",
-        "last_updated": max(p.updated_at for p in plans),
+        "last_updated": last_updated,
+        "version": version,
     }

@@ -86,6 +86,7 @@ async def test_public_catalog_last_updated_is_max(db_session):
     assert catalog.last_updated.year == 2026
     assert catalog.last_updated.month == 8
     assert catalog.last_updated.day == 10
+    assert catalog.version == int(datetime(2026, 8, 10, 9, 30, tzinfo=UTC).timestamp())
 
 
 @pytest.mark.asyncio
